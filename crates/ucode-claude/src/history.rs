@@ -114,18 +114,24 @@ pub fn list_sessions_in(dir: &Path) -> Vec<SessionMeta> {
 
 /// 列出所有项目,最近有活动的在前。没有任何有效会话的目录会被忽略。
 pub fn list_projects(projects: &Path) -> Vec<ProjectMeta> {
+    list_projects_with_sessions(projects).into_iter().map(|(p, _)| p).collect()
+}
+
+/// 列出所有项目及其会话(只扫描一遍磁盘),项目与会话都按最近活动倒序。
+pub fn list_projects_with_sessions(projects: &Path) -> Vec<(ProjectMeta, Vec<SessionMeta>)> {
     let Ok(rd) = std::fs::read_dir(projects) else { return Vec::new() };
-    let mut out: Vec<ProjectMeta> = rd
+    let mut out: Vec<(ProjectMeta, Vec<SessionMeta>)> = rd
         .filter_map(Result::ok)
         .filter(|e| e.path().is_dir())
         .filter_map(|e| {
             let sessions = list_sessions_in(&e.path());
             let newest = sessions.first()?;
             let cwd = sessions.iter().map(|s| s.cwd.clone()).find(|c| !c.is_empty())?;
-            Some(ProjectMeta { dir: e.path(), cwd, session_count: sessions.len(), modified: newest.modified })
+            let meta = ProjectMeta { dir: e.path(), cwd, session_count: sessions.len(), modified: newest.modified };
+            Some((meta, sessions))
         })
         .collect();
-    out.sort_by(|a, b| b.modified.cmp(&a.modified));
+    out.sort_by(|a, b| b.0.modified.cmp(&a.0.modified));
     out
 }
 

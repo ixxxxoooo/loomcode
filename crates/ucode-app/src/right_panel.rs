@@ -11,8 +11,10 @@ use crate::tool_card::tool_icon;
 use crate::ui::{MONO, caption, empty_state, icon, pill};
 use crate::workbench::RightTab;
 use gpui_kit::assets::IconName;
+use gpui_kit::component::button::{Button, ButtonVariants};
+use gpui_kit::component::input::{Input, InputEvent, InputState};
 use gpui_kit::component::text::TextView;
-use gpui_kit::component::{ActiveTheme, h_flex, v_flex};
+use gpui_kit::component::{ActiveTheme, Sizable, h_flex, v_flex};
 use gpui_kit::prelude::FluentBuilder as _;
 use gpui_kit::*;
 use std::collections::HashSet;
@@ -140,17 +142,124 @@ pub struct RightPanel {
     pub files: FileTree,
     /// 等待在渲染时打开的文件(没有 window 的调用方使用)
     pending_open: Option<String>,
+    /// 当前项目根目录(终端命令的工作目录)
+    root: String,
+    /// 终端命令输入框(演示模式不显示)
+    term_input: Entity<InputState>,
+    /// 用户在终端里手动运行的命令(最新在后)
+    user_runs: Vec<UserRun>,
+    /// 演示模式:不允许运行真实命令
+    demo: bool,
+    _term_sub: Subscription,
+}
+
+/// 用户手动运行的一条命令。
+struct UserRun {
+    run: TerminalRun,
+    pid: Option<u32>,
+}
+
+/// 命令运行线程发回的消息。
+enum TermMsg {
+    Started(u32),
+    Output(String),
+    Exited(Option<i32>),
 }
 
 impl RightPanel {
-    pub fn new(root: String) -> Self {
+    pub fn new(root: String, demo: bool, window: &mut Window, cx: &mut Context<Self>) -> Self {
+        let term_input = cx.new(|cx| InputState::new(window, cx).placeholder("在项目目录运行命令,回车执行"));
+        let sub = cx.subscribe_in(&term_input, window, |this: &mut Self, input, ev: &InputEvent, window, cx| {
+            if let InputEvent::PressEnter { .. } = ev {
+                let cmd = input.read(cx).value().trim().to_string();
+                if !cmd.is_empty() {
+                    input.update(cx, |i, cx| i.set_value(String::new(), window, cx));
+                    this.run_command(cmd, cx);
+                }
+            }
+        });
         Self {
             tab: RightTab::Changes,
             model: None,
             _sub: None,
             open_changes: HashSet::new(),
-            files: FileTree::new(root),
+            files: FileTree::new(root.clone()),
             pending_open: None,
+            root,
+            term_input,
+            user_runs: Vec::new(),
+            demo,
+            _term_sub: sub,
+        }
+    }
+
+    /// 在项目目录里运行一条 shell 命令,输出实时流入终端记录。
+    pub fn run_command(&mut self, command: String, cx: &mut Context<Self>) {
+        if self.demo {
+            return;
+        }
+        let ix = self.user_runs.len();
+        self.user_runs.push(UserRun { run: TerminalRun { command: command.clone(), output: String::new(), exit_code: None, running: true }, pid: None });
+        let (tx, rx) = async_channel::unbounded::<TermMsg>();
+        let root = self.root.clone();
+        let spawned = std::thread::Builder::new().name("ucode-terminal".into()).spawn(move || {
+            use std::io::{BufRead, BufReader};
+            use std::process::{Command, Stdio};
+            // 标准错误并入标准输出,保持与终端一致的交错顺序
+            let child = Command::new("/bin/sh").arg("-c").arg(format!("{{ {command}\n}} 2>&1")).current_dir(&root).stdin(Stdio::null()).stdout(Stdio::piped()).spawn();
+            match child {
+                Ok(mut child) => {
+                    let _ = tx.send_blocking(TermMsg::Started(child.id()));
+                    if let Some(out) = child.stdout.take() {
+                        let mut reader = BufReader::new(out);
+                        let mut buf = Vec::new();
+                        while reader.read_until(b'\n', &mut buf).is_ok_and(|n| n > 0) {
+                            let _ = tx.send_blocking(TermMsg::Output(String::from_utf8_lossy(&buf).into_owned()));
+                            buf.clear();
+                        }
+                    }
+                    let code = child.wait().ok().and_then(|s| s.code());
+                    let _ = tx.send_blocking(TermMsg::Exited(code));
+                }
+                Err(e) => {
+                    let _ = tx.send_blocking(TermMsg::Output(format!("无法启动命令:{e}\n")));
+                    let _ = tx.send_blocking(TermMsg::Exited(Some(127)));
+                }
+            }
+        });
+        if spawned.is_err() {
+            self.user_runs[ix].run.running = false;
+            return;
+        }
+        cx.spawn(async move |this, cx| {
+            while let Ok(msg) = rx.recv().await {
+                let alive = this.update(cx, |this, cx| {
+                    if let Some(u) = this.user_runs.get_mut(ix) {
+                        match msg {
+                            TermMsg::Started(pid) => u.pid = Some(pid),
+                            TermMsg::Output(text) => u.run.output.push_str(&text),
+                            TermMsg::Exited(code) => {
+                                u.run.running = false;
+                                // 被信号终止时没有退出码,按 130 展示
+                                u.run.exit_code = Some(code.unwrap_or(130));
+                            }
+                        }
+                    }
+                    cx.notify();
+                });
+                if alive.is_err() {
+                    break;
+                }
+            }
+        })
+        .detach();
+        cx.notify();
+    }
+
+    /// 终止一条仍在运行的命令。
+    fn stop_command(&mut self, ix: usize) {
+        if let Some(pid) = self.user_runs.get(ix).and_then(|u| u.pid) {
+            let _ = std::process::Command::new("kill").arg(pid.to_string()).status();
         }
     }
 
@@ -159,6 +268,7 @@ impl RightPanel {
         self._sub = model.as_ref().map(|m| cx.observe(m, |_, _, cx| cx.notify()));
         self.model = model;
         self.open_changes.clear();
+        self.root = root.clone();
         self.files.set_root(root);
         cx.notify();
     }
@@ -255,32 +365,47 @@ impl RightPanel {
 
     fn terminal_view(&self, items: &[TimelineItem], cx: &mut Context<Self>) -> AnyElement {
         let t = cx.theme().clone();
-        let runs = collect_terminal(items);
-        if runs.is_empty() {
-            return empty_state(IconName::Terminal, "还没有命令记录", "Claude 执行的命令与输出会显示在这里", cx).into_any_element();
-        }
-        v_flex().id("terminal-scroll").size_full().overflow_y_scroll().p_2().gap_2()
-            .children(runs.into_iter().map(|run| {
-                let shown: String = {
-                    let lines: Vec<&str> = run.output.lines().collect();
-                    let skip = lines.len().saturating_sub(200);
-                    lines[skip..].join("\n")
-                };
-                let parsed = ansi::parse(&shown);
-                v_flex().w(relative(1.)).rounded(px(8.)).border_1().border_color(t.border).bg(t.muted).p_2().gap_1().font_family(MONO).text_size(px(12.))
-                    .child(
-                        h_flex().gap_2().items_center()
-                            .child(div().text_color(t.primary).child("$"))
-                            .child(div().flex_1().min_w_0().child(run.command.lines().next().unwrap_or("").to_string()))
-                            .when(run.running, |d| d.child(pill("运行中", t.info, t.background)))
-                            .when_some(run.exit_code, |d, code| d.child(pill(
-                                if code == 0 { "成功".to_string() } else { format!("退出码 {code}") },
-                                if code == 0 { t.success } else { t.danger },
-                                t.background,
-                            ))),
-                    )
-                    .when(!parsed.text.is_empty(), |d| d.child(StyledText::new(parsed.text).with_highlights(parsed.runs)))
-            }))
+        let mut runs: Vec<(TerminalRun, Option<usize>)> = collect_terminal(items).into_iter().map(|r| (r, None)).collect();
+        runs.extend(self.user_runs.iter().enumerate().map(|(i, u)| (u.run.clone(), Some(i))));
+        let list = if runs.is_empty() {
+            empty_state(IconName::Terminal, "还没有命令记录", "Claude 执行的命令与输出会显示在这里", cx).into_any_element()
+        } else {
+            v_flex().id("terminal-scroll").size_full().overflow_y_scroll().p_2().gap_2()
+                .children(runs.into_iter().map(|(run, user_ix)| {
+                    let shown: String = {
+                        let lines: Vec<&str> = run.output.lines().collect();
+                        let skip = lines.len().saturating_sub(200);
+                        lines[skip..].join("\n")
+                    };
+                    let parsed = ansi::parse(&shown);
+                    v_flex().w(relative(1.)).rounded(px(8.)).border_1().border_color(t.border).bg(t.muted).p_2().gap_1().font_family(MONO).text_size(px(12.))
+                        .child(
+                            h_flex().gap_2().items_center()
+                                .child(div().text_color(t.primary).child("$"))
+                                .child(div().flex_1().min_w_0().child(run.command.lines().next().unwrap_or("").to_string()))
+                                .when(run.running, |d| d.child(pill("运行中", t.info, t.background)))
+                                .when(run.running && user_ix.is_some(), |d| {
+                                    let ix = user_ix.unwrap_or_default();
+                                    d.child(Button::new(SharedString::from(format!("term-stop-{ix}"))).xsmall().ghost().icon(IconName::Square).tooltip("停止")
+                                        .on_click(cx.listener(move |this, _, _, _| this.stop_command(ix))))
+                                })
+                                .when_some(run.exit_code, |d, code| d.child(pill(
+                                    if code == 0 { "成功".to_string() } else { format!("退出码 {code}") },
+                                    if code == 0 { t.success } else { t.danger },
+                                    t.background,
+                                ))),
+                        )
+                        .when(!parsed.text.is_empty(), |d| d.child(StyledText::new(parsed.text).with_highlights(parsed.runs)))
+                }))
+                .into_any_element()
+        };
+        v_flex().size_full()
+            .child(div().flex_1().min_h_0().child(list))
+            .when(!self.demo, |d| d.child(
+                h_flex().px_2().py_1p5().gap_1p5().items_center().border_t_1().border_color(t.border)
+                    .child(div().font_family(MONO).text_color(t.primary).child("$"))
+                    .child(div().flex_1().child(Input::new(&self.term_input))),
+            ))
             .into_any_element()
     }
 

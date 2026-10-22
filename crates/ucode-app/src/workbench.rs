@@ -19,12 +19,13 @@ use gpui_kit::component::status_bar::StatusBar;
 use gpui_kit::component::{ActiveTheme, Selectable, Sizable, h_flex, v_flex};
 use gpui_kit::prelude::FluentBuilder as _;
 use gpui_kit::*;
-use std::collections::HashMap;
+use std::collections::{HashMap, HashSet};
 use std::path::PathBuf;
 use ucode_automation::{AutomationStore, now_ts};
 use ucode_canvas::{CanvasStore, demo_document};
 use ucode_config::{AppSettings, ClaudeConfig, ThemeChoice};
 use ucode_core::*;
+use ucode_claude::{ClaudeBackend, LazyBackend};
 use ucode_demo::DemoBackend;
 use gpui_kit::component::input::{EditorState, InputState};
 
@@ -125,16 +126,24 @@ pub struct Workbench {
     _subs: Vec<Subscription>,
     focus: FocusHandle,
     new_counter: u32,
+    /// 本次运行里新建、还没写进历史的会话 id(启动时用预分配 id,而不是恢复)
+    new_sessions: HashSet<String>,
+    /// 历史加载完成后要打开的会话(调试用 `UCODE_SESSION`)
+    pending_open: Option<String>,
 }
 
 impl Workbench {
     pub fn new(demo: bool, session: Option<String>, window: &mut Window, cx: &mut Context<Self>) -> Self {
-        // 暂时只有演示后端,真实模式接入后再区分
         let demo_root = ucode_demo::workspace::default_root();
-        if let Err(e) = ucode_demo::workspace::seed(&demo_root) {
-            eprintln!("生成演示沙盒失败:{e}");
-        }
-        let projects = ucode_demo::workspace::demo_projects(&demo_root);
+        // 演示沙盒与演示项目只在演示模式出现;真实模式的项目稍后从 Claude 历史里后台读取
+        let projects = if demo {
+            if let Err(e) = ucode_demo::workspace::seed(&demo_root) {
+                eprintln!("生成演示沙盒失败:{e}");
+            }
+            ucode_demo::workspace::demo_projects(&demo_root)
+        } else {
+            Vec::new()
+        };
         let settings_path = if demo { demo_root.join("settings.json") } else { AppSettings::default_path().unwrap_or_else(|| demo_root.join("settings.json")) };
         let settings = AppSettings::load(&settings_path);
         let claude_cfg = if demo {
@@ -145,7 +154,8 @@ impl Workbench {
         };
         let rule_input = settings::new_rule_input(window, cx);
         let focus = cx.focus_handle();
-        let panel = cx.new(|_| RightPanel::new(demo_root.to_string_lossy().to_string()));
+        let panel_root = if demo { demo_root.to_string_lossy().to_string() } else { std::env::var("HOME").unwrap_or_default() };
+        let panel = cx.new(|cx| RightPanel::new(panel_root, demo, window, cx));
         // 画布 / 自动化 / 浏览器三个页面常驻:自动化需要在后台持续调度
         let home = std::env::var_os("HOME").map(PathBuf::from).unwrap_or_default();
         let (canvas_dir, auto_dir) = if demo {
@@ -194,14 +204,21 @@ impl Workbench {
             _subs: Vec::new(),
             focus,
             new_counter: 0,
+            new_sessions: HashSet::new(),
+            pending_open: None,
         };
         let panel_sub = cx.subscribe_in(&wb.panel, window, |this, _, ev: &PanelEvent, window, cx| this.on_panel_event(ev, window, cx));
         wb._subs.push(panel_sub);
-        let id = session.unwrap_or_else(|| "showcase-tour".into());
-        if let Some(pi) = wb.projects.iter().position(|p| p.sessions.iter().any(|s| s.id == id)) {
-            wb.open_session(pi, &id, window, cx);
+        if demo {
+            let id = session.unwrap_or_else(|| "showcase-tour".into());
+            if let Some(pi) = wb.projects.iter().position(|p| p.sessions.iter().any(|s| s.id == id)) {
+                wb.open_session(pi, &id, window, cx);
+            } else {
+                wb.open_scenario(&id, window, cx);
+            }
         } else {
-            wb.open_scenario(&id, window, cx);
+            wb.pending_open = session;
+            wb.reload_projects(window, cx);
         }
         window.focus(&wb.focus, cx);
         let kind = match std::env::var("UCODE_THEME").as_deref() {
@@ -351,7 +368,7 @@ impl Workbench {
     /// 执行面板动作。
     fn run_palette_action(&mut self, action: PaletteAction, window: &mut Window, cx: &mut Context<Self>) {
         match action {
-            PaletteAction::NewSession => self.new_session(0, window, cx),
+            PaletteAction::NewSession => self.new_session(self.target_project(), window, cx),
             PaletteAction::ToggleLeft => { self.left_open = !self.left_open; cx.notify(); }
             PaletteAction::ToggleRight => { self.right_open = !self.right_open; cx.notify(); }
             PaletteAction::ToggleIde => self.toggle_ide(window, cx),
@@ -391,20 +408,39 @@ impl Workbench {
         if !self.views.contains_key(id) {
             let cwd = self.projects[project_ix].path.clone();
             let live = id == "showcase-tour";
-            // 历史会话瞬时回放,只有「进行中」的会话保持真实节奏
-            let backend = DemoBackend { speed: if live { 1.0 } else { 0.0 } };
-            let handle = match backend.start(BackendConfig { cwd: cwd.clone(), ..Default::default() }) {
+            let is_new = self.new_sessions.contains(id);
+            let s = &self.settings;
+            let (backend, config): (Box<dyn AgentBackend>, BackendConfig) = if self.demo {
+                // 历史会话瞬时回放,只有「进行中」的会话保持真实节奏
+                (Box::new(DemoBackend { speed: if live { 1.0 } else { 0.0 } }), BackendConfig { cwd: cwd.clone(), ..Default::default() })
+            } else {
+                // 真实模式:惰性启动 claude;新会话预分配 id,历史会话 --resume
+                let config = BackendConfig {
+                    cwd: cwd.clone(),
+                    resume: (!is_new).then(|| id.to_string()),
+                    session_id: is_new.then(|| id.to_string()),
+                    model: (s.default_model != "default").then(|| s.default_model.clone()),
+                    mode: (s.default_mode != PermissionMode::Default).then_some(s.default_mode),
+                    effort: (s.default_effort != Effort::Medium).then_some(s.default_effort),
+                };
+                (Box::new(LazyBackend::new(ClaudeBackend::new(s.claude_path.clone()))), config)
+            };
+            let handle = match backend.start(config) {
                 Ok(h) => h,
                 Err(e) => {
                     eprintln!("启动后端失败:{e}");
                     return;
                 }
             };
-            let model = cx.new(|cx| SessionModel::new(handle, cwd, cx));
+            let model = cx.new({ let cwd = cwd.clone(); |cx| SessionModel::new(handle, cwd, cx) });
             let composer = cx.new(|cx| Composer::new(model.clone(), self.demo, window, cx));
             // 调试用:预填输入框,方便截图检查补全
             if let Ok(text) = std::env::var("UCODE_PREFILL") {
                 composer.update(cx, |c, cx| c.set_text(&text, window, cx));
+            }
+            // 调试用:打开后自动发送一条提示,用于端到端验证真实后端
+            if let Ok(text) = std::env::var("UCODE_AUTOSEND") {
+                model.update(cx, |m, cx| m.send_prompt(text, cx));
             }
             let subs = vec![
                 cx.observe(&model, |_, _, cx| cx.notify()),
@@ -412,17 +448,28 @@ impl Workbench {
             ];
             // 新会话套用偏好里的默认模型 / 模式 / 强度
             let (dm, dmode, deff) = (self.settings.default_model.clone(), self.settings.default_mode, self.settings.default_effort);
+            let demo = self.demo;
             model.update(cx, |m, cx| {
+                // 演示后端要靠命令切换;真实后端已经通过启动参数带上,这里只同步界面状态
                 if dm != "default" {
-                    m.set_model(dm, cx);
+                    if demo { m.set_model(dm, cx) } else { m.state.model = dm }
                 }
                 if dmode != PermissionMode::Default {
-                    m.set_mode(dmode, cx);
+                    if demo { m.set_mode(dmode, cx) } else { m.state.mode = dmode }
                 }
                 if deff != Effort::Medium {
-                    m.set_effort(deff, cx);
+                    if demo { m.set_effort(deff, cx) } else { m.state.effort = deff }
                 }
             });
+            // 恢复历史会话:后台解析磁盘记录,回放进时间线
+            if !self.demo && !is_new {
+                let (model, cwd, sid) = (model.clone(), cwd.clone(), id.to_string());
+                cx.spawn(async move |_this, cx| {
+                    let events = cx.background_spawn(async move { crate::real::replay(&cwd, &sid) }).await;
+                    let _ = model.update(cx, |m, cx| m.load_history(events, cx));
+                })
+                .detach();
+            }
             if ucode_demo::scenarios::find(id).is_some() {
                 model.update(cx, |m, _| m.handle.send(AgentCommand::RunScenario(id.to_string())));
             }
@@ -430,6 +477,16 @@ impl Workbench {
         }
         self.active = Some(id.to_string());
         self.sync_panel(cx);
+        // 调试用:打开会话后在终端里运行一条命令(只触发一次)
+        if let Ok(cmd) = std::env::var("UCODE_TERM_CMD") {
+            static ONCE: std::sync::atomic::AtomicBool = std::sync::atomic::AtomicBool::new(false);
+            if !ONCE.swap(true, std::sync::atomic::Ordering::SeqCst) {
+                self.panel.update(cx, |p, cx| {
+                    p.set_tab(RightTab::Terminal, cx);
+                    p.run_command(cmd, cx);
+                });
+            }
+        }
         cx.notify();
     }
 
@@ -565,10 +622,23 @@ impl Workbench {
         }
     }
 
-    /// 在指定项目里新建会话。
+    /// 新会话默认落在哪个项目:当前会话所在项目,否则第一个。
+    pub fn target_project(&self) -> usize {
+        self.active.as_ref().and_then(|id| self.views.get(id)).map(|v| v.project_ix).unwrap_or(0)
+    }
+
+    /// 在指定项目里新建会话。真实模式没有任何项目时,先让用户选一个目录。
     pub fn new_session(&mut self, project_ix: usize, window: &mut Window, cx: &mut Context<Self>) {
+        if self.projects.is_empty() && !self.demo {
+            self.add_project(window, cx);
+            return;
+        }
         self.new_counter += 1;
-        let id = format!("new-{}", self.new_counter);
+        // 真实模式的会话 id 同时是 claude 的 session id,必须是 UUID
+        let id = if self.demo { format!("new-{}", self.new_counter) } else { uuid::Uuid::new_v4().to_string() };
+        if !self.demo {
+            self.new_sessions.insert(id.clone());
+        }
         if let Some(p) = self.projects.get_mut(project_ix) {
             p.expanded = true;
             p.sessions.insert(0, SessionMeta { id: id.clone(), title: "新会话".into(), updated: "刚刚".into(), pinned: false, badge: SessionBadge::Idle });
@@ -577,6 +647,110 @@ impl Workbench {
         if let Some(v) = self.views.get(&id) {
             v.composer.update(cx, |c, cx| c.focus(window, cx));
         }
+    }
+
+    // ---------- 真实模式:项目与历史 ----------
+
+    /// 后台读取全部历史项目,完成后合并进侧栏。
+    pub fn reload_projects(&mut self, window: &mut Window, cx: &mut Context<Self>) {
+        let recent = self.settings.recent_projects.clone();
+        cx.spawn_in(window, async move |this, cx| {
+            let projects = cx.background_spawn(async move { crate::real::load_projects(&recent) }).await;
+            let _ = this.update_in(cx, |this, window, cx| this.apply_projects(projects, window, cx));
+        })
+        .detach();
+    }
+
+    /// 用新读到的项目列表替换侧栏,同时保住已打开会话的归属与展开状态。
+    fn apply_projects(&mut self, mut projects: Vec<Project>, window: &mut Window, cx: &mut Context<Self>) {
+        // 已打开会话所在项目的路径(按会话 id),用于重排后重新定位
+        let owner: HashMap<String, String> = self.views.iter().filter_map(|(id, v)| Some((id.clone(), self.projects.get(v.project_ix)?.path.clone()))).collect();
+        for (id, path) in &owner {
+            if !projects.iter().any(|p| &p.path == path) {
+                let name = project_name_from_path(path);
+                projects.push(Project { name, path: path.clone(), branch: None, sessions: Vec::new(), expanded: true });
+            }
+            let _ = id;
+        }
+        for p in projects.iter_mut() {
+            if self.projects.iter().any(|old| old.path == p.path && old.expanded) {
+                p.expanded = true;
+            }
+        }
+        self.projects = projects;
+        for (id, v) in self.views.iter_mut() {
+            if let Some(ix) = owner.get(id).and_then(|path| self.projects.iter().position(|p| &p.path == path)) {
+                v.project_ix = ix;
+            }
+        }
+        self.merge_live_sessions(cx);
+        let list: Vec<(String, String)> = self.projects.iter().map(|p| (p.name.clone(), p.path.clone())).collect();
+        self.automation.update(cx, |a, cx| a.set_projects(list, cx));
+        if let Some(id) = self.pending_open.take() {
+            if let Some(pi) = self.projects.iter().position(|p| p.sessions.iter().any(|s| s.id == id)) {
+                self.open_session(pi, &id, window, cx);
+            }
+        }
+        cx.notify();
+    }
+
+    /// 已打开但还没写进历史的新会话,补回侧栏最上面。
+    fn merge_live_sessions(&mut self, cx: &mut Context<Self>) {
+        for (id, v) in &self.views {
+            let Some(p) = self.projects.get_mut(v.project_ix) else { continue };
+            if p.sessions.iter().any(|s| &s.id == id) {
+                continue;
+            }
+            let title = v.model.read(cx).state.title.clone();
+            let title = if title.is_empty() { "新会话".to_string() } else { title };
+            p.sessions.insert(0, SessionMeta { id: id.clone(), title, updated: "刚刚".into(), pinned: false, badge: SessionBadge::Idle });
+        }
+    }
+
+    /// 一个回合结束后,后台刷新该项目的会话列表与分支。
+    fn refresh_project(&mut self, path: String, cx: &mut Context<Self>) {
+        let query = path.clone();
+        cx.spawn(async move |this, cx| {
+            let (sessions, branch) = cx.background_spawn(async move { crate::real::load_project_sessions(&query) }).await;
+            let _ = this.update(cx, |this, cx| {
+                if let Some(p) = this.projects.iter_mut().find(|p| p.path == path) {
+                    p.sessions = sessions;
+                    p.branch = branch;
+                }
+                this.merge_live_sessions(cx);
+                cx.notify();
+            });
+        })
+        .detach();
+    }
+
+    /// 选一个目录加入项目列表,并在其中新建会话。
+    pub fn add_project(&mut self, window: &mut Window, cx: &mut Context<Self>) {
+        let rx = cx.prompt_for_paths(PathPromptOptions { files: false, directories: true, multiple: false, prompt: Some("选择项目目录".into()) });
+        cx.spawn_in(window, async move |this, cx| {
+            let Ok(Ok(Some(paths))) = rx.await else { return };
+            let Some(path) = paths.into_iter().next() else { return };
+            let _ = this.update_in(cx, |this, window, cx| this.register_project(path.to_string_lossy().to_string(), window, cx));
+        })
+        .detach();
+    }
+
+    fn register_project(&mut self, path: String, window: &mut Window, cx: &mut Context<Self>) {
+        self.update_settings(cx, |s| s.touch_project(&path));
+        let ix = match self.projects.iter().position(|p| p.path == path) {
+            Some(ix) => ix,
+            None => {
+                self.projects.insert(0, Project { name: project_name_from_path(&path), branch: crate::real::git_branch(&path), path: path.clone(), sessions: Vec::new(), expanded: true });
+                // 插在最前,已打开会话的项目下标整体后移
+                for v in self.views.values_mut() {
+                    v.project_ix += 1;
+                }
+                0
+            }
+        };
+        let list: Vec<(String, String)> = self.projects.iter().map(|p| (p.name.clone(), p.path.clone())).collect();
+        self.automation.update(cx, |a, cx| a.set_projects(list, cx));
+        self.new_session(ix, window, cx);
     }
 
     fn on_ui_request(&mut self, ev: &UiRequest, window: &mut Window, cx: &mut Context<Self>) {
@@ -594,6 +768,13 @@ impl Workbench {
             UiRequest::OpenPlan => {
                 self.right_open = true;
                 self.panel.update(cx, |p, cx| p.set_tab(RightTab::Plan, cx));
+            }
+            UiRequest::SessionSettled => {
+                if !self.demo {
+                    if let Some(path) = self.active_project_path() {
+                        self.refresh_project(path, cx);
+                    }
+                }
             }
         }
         cx.notify();
@@ -763,7 +944,7 @@ impl Render for Workbench {
             .on_action(cx.listener(|this, _: &ToggleRight, _, cx| { this.right_open = !this.right_open; cx.notify(); }))
             .on_action(cx.listener(|this, _: &TogglePalette, window, cx| this.toggle_palette(window, cx)))
             .on_action(cx.listener(|this, _: &OpenSettings, _, cx| this.set_page(Page::Settings, cx)))
-            .on_action(cx.listener(|this, _: &NewSession, window, cx| this.new_session(0, window, cx)))
+            .on_action(cx.listener(|this, _: &NewSession, window, cx| this.new_session(this.target_project(), window, cx)))
             .on_action(cx.listener(|this, _: &SaveFile, _, cx| this.save_ide(cx)))
             .on_action(cx.listener(|this, _: &ToggleIde, window, cx| this.toggle_ide(window, cx)))
             .on_action(cx.listener(|this, _: &CycleMode, _, cx| {

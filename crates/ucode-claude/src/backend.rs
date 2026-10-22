@@ -228,6 +228,11 @@ impl Actor {
                         return false;
                     }
                 }
+                // claude 不回显用户输入,这里补上时间线条目(引导消息同样)
+                let echo = self.translator.user_prompt(&text, &images);
+                if !self.emit(echo) {
+                    return false;
+                }
                 self.write(&protocol::user_message(&text, &images, steering));
             }
             AgentCommand::Cancel => {

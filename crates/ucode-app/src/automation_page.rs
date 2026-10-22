@@ -38,6 +38,12 @@ pub struct AutomationPage {
 }
 
 impl AutomationPage {
+    /// 项目列表变化(真实模式下历史加载完成后)时更新可选项目。
+    pub fn set_projects(&mut self, projects: Vec<(String, String)>, cx: &mut Context<Self>) {
+        self.projects = projects;
+        cx.notify();
+    }
+
     pub fn new(store: AutomationStore, demo: bool, claude_path: Option<String>, projects: Vec<(String, String)>, window: &mut Window, cx: &mut Context<Self>) -> Self {
         let name = cx.new(|cx| InputState::new(window, cx).placeholder("例如:每日 TODO 巡检"));
         let prompt = cx.new(|cx| TextareaState::new(window, cx).placeholder("要让 Claude 做什么?例如:检查今天新增的 TODO 并汇总"));

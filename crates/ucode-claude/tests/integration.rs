@@ -72,6 +72,8 @@ fn 允许权限后回合正常结束() {
     let s = reduce(&events);
     assert_eq!(s.last_stop, Some(StopReason::EndTurn));
     assert_eq!(s.phase, Phase::Idle);
+    // claude 不回显用户输入,后端要自己把提示追加进时间线
+    assert!(s.items.iter().any(|i| matches!(i, TimelineItem::User { text, .. } if text == "你好")));
     let assistants = s.items.iter().filter(|i| matches!(i, TimelineItem::Assistant { .. })).count();
     assert_eq!(assistants, 1, "流式文字不重复");
     let perm = s.items.iter().find_map(|i| if let TimelineItem::Permission(p) = i { Some(p) } else { None }).unwrap();

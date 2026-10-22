@@ -50,7 +50,9 @@ pub fn render(wb: &Workbench, cx: &mut Context<Workbench>) -> impl IntoElement {
         .child(
             h_flex().px_2().pt_2().pb_1().gap_1()
                 .child(Button::new("new-chat").small().primary().icon(IconName::Plus).label("新会话").flex_1()
-                    .on_click(cx.listener(|this, _, window, cx| this.new_session(0, window, cx))))
+                    .on_click(cx.listener(|this, _, window, cx| this.new_session(this.target_project(), window, cx))))
+                .when(!wb.demo, |d| d.child(Button::new("add-project").small().ghost().icon(IconName::FolderPlus).tooltip("添加项目目录")
+                    .on_click(cx.listener(|this, _, window, cx| this.add_project(window, cx)))))
                 .child(Button::new("search").small().ghost().icon(IconName::Search)
                     .on_click(cx.listener(|this, _, window, cx| this.toggle_palette(window, cx)))),
         )

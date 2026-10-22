@@ -92,10 +92,29 @@ impl SessionModel {
                 s.remeasure_items(new_count - 1..new_count, cx);
             }
         });
+        if turn_ended {
+            // 回合结束:历史列表与分支可能变了,通知工作台刷新
+            cx.emit(UiRequest::SessionSettled);
+        }
         if turn_ended && !self.queued.is_empty() {
             let next = self.queued.remove(0);
             self.send_prompt(next, cx);
         }
+        cx.notify();
+    }
+
+    /// 载入历史会话的回放事件(真实模式恢复会话时使用)。
+    ///
+    /// 回放是异步完成的,期间用户可能已经发出了消息:历史必须排在这些实时条目的前面。
+    pub fn load_history(&mut self, events: Vec<AgentEvent>, cx: &mut Context<Self>) {
+        let live = std::mem::take(&mut self.state.items);
+        for ev in events {
+            self.state.apply(ev);
+        }
+        self.state.items.extend(live);
+        // 条目整体变了:一次性重置虚拟列表,避免逐条增量与高度缓存错位
+        let n = self.state.items.len();
+        self.scroller.update(cx, |s, cx| s.reset(n, cx));
         cx.notify();
     }
 
@@ -195,6 +214,8 @@ pub enum UiRequest {
     OpenCanvas(String),
     /// 打开计划文档
     OpenPlan,
+    /// 一个回合结束(真实模式下用来刷新侧栏会话列表与 Git 分支)
+    SessionSettled,
 }
 
 impl EventEmitter<UiRequest> for SessionModel {}

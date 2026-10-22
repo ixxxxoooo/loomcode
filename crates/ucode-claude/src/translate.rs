@@ -117,7 +117,15 @@ impl Translator {
 
     fn next_id(&mut self, prefix: &str) -> String {
         self.seq += 1;
-        format!("{prefix}{}", self.seq)
+        // 实时翻译加前缀 `l`,避免与先回放进时间线的历史条目 id(`u3`、`a5`…)撞车
+        let live = if self.replay { "" } else { "l" };
+        format!("{live}{prefix}{}", self.seq)
+    }
+
+    /// 用户发出的提示:claude 不会回显,由界面侧自己追加到时间线。
+    pub fn user_prompt(&mut self, text: &str, images: &[String]) -> AgentEvent {
+        let id = self.next_id("u");
+        AgentEvent::Append { parent: None, item: TimelineItem::User { id, text: text.into(), images: images.to_vec(), files: Vec::new() } }
     }
 
     /// 取走挂起的请求(应答时调用)。

@@ -19,3 +19,4 @@ ucode-claude = { path = "../ucode-claude" }
 serde_json.workspace = true
 async-channel = "2"
 similar = "2"
+uuid = { version = "1", features = ["v4"] }

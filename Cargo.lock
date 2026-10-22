@@ -6753,6 +6753,7 @@ dependencies = [
  "ucode-config",
  "ucode-core",
  "ucode-demo",
+ "uuid",
 ]
 
 [[package]]

@@ -2,7 +2,7 @@
 //!
 //! 启动参数:
 //! - `--demo`(或环境变量 `UCODE_DEMO=1`):演示模式,脚本化后端、沙盒项目;
-//! - 其余情况使用真实 `claude`(尚在接入中,缺省回退到演示模式并提示)。
+//! - 其余情况使用真实 `claude`:读取 `~/.claude/projects` 的历史会话,按需惰性启动子进程。
 
 mod ansi;
 mod automation_page;
@@ -15,6 +15,7 @@ mod model;
 mod file_tree;
 mod ide;
 mod palette;
+mod real;
 mod rich_text;
 mod settings;
 mod right_panel;
