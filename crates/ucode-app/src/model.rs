@@ -106,6 +106,13 @@ impl SessionModel {
         cx.notify();
     }
 
+    /// 带图片与文件引用发送。
+    pub fn send_prompt_with(&mut self, text: String, images: Vec<String>, files: Vec<String>, cx: &mut Context<Self>) {
+        let steer = self.state.phase == Phase::Running;
+        self.handle.send(AgentCommand::Prompt { text, images, files, steer });
+        cx.notify();
+    }
+
     /// 运行中把消息排到队尾。
     pub fn queue_prompt(&mut self, text: String, cx: &mut Context<Self>) {
         self.queued.push(text);

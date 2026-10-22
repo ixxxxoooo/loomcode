@@ -205,6 +205,10 @@ impl Workbench {
             };
             let model = cx.new(|cx| SessionModel::new(handle, cwd, cx));
             let composer = cx.new(|cx| Composer::new(model.clone(), self.demo, window, cx));
+            // 调试用:预填输入框,方便截图检查补全
+            if let Ok(text) = std::env::var("UCODE_PREFILL") {
+                composer.update(cx, |c, cx| c.set_text(&text, window, cx));
+            }
             let subs = vec![
                 cx.observe(&model, |_, _, cx| cx.notify()),
                 cx.subscribe(&model, |this, _m, ev: &UiRequest, cx| this.on_ui_request(ev, cx)),
