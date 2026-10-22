@@ -1,7 +1,7 @@
 //! 用 shell 脚本模拟的 claude 做端到端测试:覆盖进程管理、握手、权限应答、中断与异常退出。
 
 use std::time::{Duration, Instant};
-use ucode_claude::ClaudeBackend;
+use ucode_claude::{ClaudeBackend, LazyBackend};
 use ucode_core::*;
 
 fn mock_backend() -> ClaudeBackend {
@@ -137,6 +137,18 @@ fn 无效自定义路径不会崩溃() {
     if let Ok(h) = r {
         h.send(AgentCommand::Shutdown);
     }
+}
+
+#[test]
+fn 惰性后端收到第一条命令才启动() {
+    let h = LazyBackend::new(mock_backend()).start(BackendConfig { cwd: "/tmp".into(), ..Default::default() }).unwrap();
+    // 启动后没有任何命令:不会有事件(尤其没有 Ready)
+    std::thread::sleep(Duration::from_millis(300));
+    assert!(h.events.try_recv().is_err(), "未发送命令前不应启动子进程");
+    h.send(prompt("你好"));
+    let evs = collect(&h, |e| matches!(e, AgentEvent::PromoteToPermission { .. }));
+    assert!(evs.iter().any(|e| matches!(e, AgentEvent::Ready { .. })), "{evs:?}");
+    h.send(AgentCommand::Shutdown);
 }
 
 /// 真实 claude 的冒烟测试(会产生极小的费用),默认不运行:

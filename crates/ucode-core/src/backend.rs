@@ -24,6 +24,8 @@ pub struct BackendConfig {
     pub cwd: String,
     /// 要恢复的会话 id
     pub resume: Option<String>,
+    /// 新会话预分配的 id(与 `resume` 互斥;为空则由后端自行生成)
+    pub session_id: Option<String>,
     pub model: Option<String>,
     pub mode: Option<crate::modes::PermissionMode>,
     pub effort: Option<crate::modes::Effort>,

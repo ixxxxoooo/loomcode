@@ -26,7 +26,7 @@ pub struct ClaudeOptions {
 impl ClaudeOptions {
     /// 由界面层的后端配置转换而来;没有恢复会话时自动分配一个新的会话 id。
     pub fn from_config(config: &BackendConfig) -> Self {
-        let session_id = if config.resume.is_none() { Some(uuid::Uuid::new_v4().to_string()) } else { None };
+        let session_id = if config.resume.is_none() { Some(config.session_id.clone().unwrap_or_else(|| uuid::Uuid::new_v4().to_string())) } else { None };
         Self {
             cwd: config.cwd.clone(),
             session_id,
