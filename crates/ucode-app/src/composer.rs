@@ -69,7 +69,9 @@ pub fn extract_file_mentions(text: &str) -> Vec<String> {
     let mut out: Vec<String> = Vec::new();
     for w in text.split_whitespace() {
         if let Some(p) = w.strip_prefix('@') {
-            let p = p.trim_end_matches([',', '。', ';', ')', ',']);
+            // 遇到标点就截断,如 `@a.rs,然后`
+            let end = p.find([',', '，', '。', ';', '；', ')', '）', '、']).unwrap_or(p.len());
+            let p = &p[..end];
             if (p.contains('/') || p.contains('.')) && !out.iter().any(|x| x == p) {
                 out.push(p.to_string());
             }
