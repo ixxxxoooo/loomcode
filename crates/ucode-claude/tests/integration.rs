@@ -172,3 +172,23 @@ fn 真实_claude_冒烟() {
     assert!(s.items.iter().any(|i| matches!(i, TimelineItem::Assistant { text, .. } if text.to_lowercase().contains("ok"))));
     h.send(AgentCommand::Shutdown);
 }
+
+/// 性能基线:读取本机全部 Claude 历史并回放最大的会话,打印耗时。
+/// `cargo test -p ucode-claude --release --test integration -- --ignored --nocapture 性能`
+#[test]
+#[ignore]
+fn 性能基线_历史扫描与回放() {
+    use std::time::Instant;
+    let dir = ucode_claude::history::projects_dir();
+    let t = Instant::now();
+    let projects = ucode_claude::history::list_projects_with_sessions(&dir);
+    let sessions: usize = projects.iter().map(|(_, s)| s.len()).sum();
+    println!("扫描 {} 个项目 / {} 个会话:{:?}", projects.len(), sessions, t.elapsed());
+    let biggest = projects.iter().flat_map(|(_, s)| s.iter()).max_by_key(|s| std::fs::metadata(&s.path).map(|m| m.len()).unwrap_or(0));
+    if let Some(s) = biggest {
+        let size = std::fs::metadata(&s.path).map(|m| m.len()).unwrap_or(0);
+        let t = Instant::now();
+        let events = ucode_claude::history::load_session(&s.path, &s.cwd).unwrap();
+        println!("回放最大会话 {:.1} MB → {} 个事件:{:?}", size as f64 / 1e6, events.len(), t.elapsed());
+    }
+}

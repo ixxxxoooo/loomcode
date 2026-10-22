@@ -18,13 +18,11 @@ pub struct SessionModel {
     pub wizard_step: std::collections::HashMap<String, usize>,
     /// 提问向导已选答案草稿(按提问 id → 每题的已选项)
     pub wizard_draft: std::collections::HashMap<String, Vec<Vec<String>>>,
-    /// 折叠的用户长文(已展开的 id)
-    pub cwd: String,
 }
 
 impl SessionModel {
     /// 创建会话并启动事件泵。
-    pub fn new(handle: BackendHandle, cwd: String, cx: &mut Context<Self>) -> Self {
+    pub fn new(handle: BackendHandle, cx: &mut Context<Self>) -> Self {
         let scroller = cx.new(|cx| MessageScrollerState::new(0, cx));
         let rx = handle.events.clone();
         cx.spawn(async move |this, cx| {
@@ -51,7 +49,6 @@ impl SessionModel {
             queued: Vec::new(),
             wizard_step: Default::default(),
             wizard_draft: Default::default(),
-            cwd,
         }
     }
 
@@ -208,12 +205,8 @@ impl SessionModel {
 pub enum UiRequest {
     /// 打开右侧「改动」面板
     OpenChanges,
-    /// 在右侧「文件」面板打开文件
-    OpenFile(String),
     /// 打开 Canvas 画布
     OpenCanvas(String),
-    /// 打开计划文档
-    OpenPlan,
     /// 一个回合结束(真实模式下用来刷新侧栏会话列表与 Git 分支)
     SessionSettled,
 }

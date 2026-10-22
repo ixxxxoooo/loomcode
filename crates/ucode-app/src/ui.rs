@@ -1,7 +1,7 @@
 //! 公共小组件与样式常量。
 
 use gpui_kit::assets::IconName;
-use gpui_kit::component::{ActiveTheme, Icon, Sizable, h_flex, v_flex};
+use gpui_kit::component::{ActiveTheme, Icon, h_flex, v_flex};
 use gpui_kit::*;
 use ucode_core::SessionBadge;
 
@@ -61,11 +61,6 @@ pub fn mono_box(cx: &App) -> Div {
         .font_family(MONO)
         .text_size(px(12.))
         .text_color(t.foreground)
-}
-
-/// 右侧面板与设置里的分段切换按钮行高。
-pub fn row_h() -> Pixels {
-    px(28.)
 }
 
 /// 纵向居中的空状态。

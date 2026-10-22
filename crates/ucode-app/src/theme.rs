@@ -17,18 +17,6 @@ pub enum ThemeKind {
     System,
 }
 
-impl ThemeKind {
-    pub const ALL: [ThemeKind; 3] = [Self::PaperLight, Self::PaperDark, Self::System];
-
-    pub fn label(self) -> &'static str {
-        match self {
-            Self::PaperLight => "纸感浅色",
-            Self::PaperDark => "纸感深色",
-            Self::System => "跟随系统",
-        }
-    }
-}
-
 impl From<ucode_config::ThemeChoice> for ThemeKind {
     fn from(c: ucode_config::ThemeChoice) -> Self {
         match c {
@@ -122,11 +110,6 @@ pub fn apply(kind: ThemeKind, window: Option<&mut Window>, cx: &mut App) {
             });
         }
     }
-}
-
-/// 取当前是否深色(用于 Diff 配色)。
-pub fn is_dark(cx: &App) -> bool {
-    cx.theme().is_dark()
 }
 
 /// Diff 增删行的底色,带透明度,深浅色各一套。

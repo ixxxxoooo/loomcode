@@ -96,7 +96,6 @@ pub struct SessionView {
 
 pub struct Workbench {
     pub demo: bool,
-    pub demo_root: PathBuf,
     pub projects: Vec<Project>,
     pub active: Option<String>,
     pub views: HashMap<String, SessionView>,
@@ -176,7 +175,6 @@ impl Workbench {
         let browser = cx.new(|cx| BrowserPage::new(window, cx));
         let mut wb = Self {
             demo,
-            demo_root,
             projects,
             active: None,
             views: HashMap::new(),
@@ -432,7 +430,7 @@ impl Workbench {
                     return;
                 }
             };
-            let model = cx.new({ let cwd = cwd.clone(); |cx| SessionModel::new(handle, cwd, cx) });
+            let model = cx.new(|cx| SessionModel::new(handle, cx));
             let composer = cx.new(|cx| Composer::new(model.clone(), self.demo, window, cx));
             // 调试用:预填输入框,方便截图检查补全
             if let Ok(text) = std::env::var("UCODE_PREFILL") {
@@ -444,7 +442,7 @@ impl Workbench {
             }
             let subs = vec![
                 cx.observe(&model, |_, _, cx| cx.notify()),
-                cx.subscribe_in(&model, window, |this, _m, ev: &UiRequest, window, cx| this.on_ui_request(ev, window, cx)),
+                cx.subscribe(&model, |this, _m, ev: &UiRequest, cx| this.on_ui_request(ev, cx)),
             ];
             // 新会话套用偏好里的默认模型 / 模式 / 强度
             let (dm, dmode, deff) = (self.settings.default_model.clone(), self.settings.default_mode, self.settings.default_effort);
@@ -753,21 +751,16 @@ impl Workbench {
         self.new_session(ix, window, cx);
     }
 
-    fn on_ui_request(&mut self, ev: &UiRequest, window: &mut Window, cx: &mut Context<Self>) {
+    fn on_ui_request(&mut self, ev: &UiRequest, cx: &mut Context<Self>) {
         match ev {
             UiRequest::OpenChanges => {
                 self.right_open = true;
                 self.panel.update(cx, |p, cx| p.set_tab(RightTab::Changes, cx));
             }
-            UiRequest::OpenFile(path) => self.open_file(path.clone(), window, cx),
             UiRequest::OpenCanvas(id) => {
                 self.page = Page::Canvas;
                 let id = id.clone();
                 self.canvas.update(cx, |c, cx| c.select(&id, cx));
-            }
-            UiRequest::OpenPlan => {
-                self.right_open = true;
-                self.panel.update(cx, |p, cx| p.set_tab(RightTab::Plan, cx));
             }
             UiRequest::SessionSettled => {
                 if !self.demo {
