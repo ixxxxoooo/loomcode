@@ -411,7 +411,7 @@ mod tests {
         }))
     }
 
-    #[test]
+    #[::core::prelude::v1::test]
     fn 同一文件多次编辑合并() {
         let items = vec![edit("1", "a.rs", "x\n", "y\n"), edit("2", "b.rs", "", "n\n"), edit("3", "a.rs", "y\n", "z\n")];
         let c = collect_changes(&items);
@@ -420,7 +420,7 @@ mod tests {
         assert_eq!(c[0].new, "z\n");
     }
 
-    #[test]
+    #[::core::prelude::v1::test]
     fn 路径拆分() {
         assert_eq!(split_path("src/a/b.rs"), ("src/a".into(), "b.rs".into()));
         assert_eq!(split_path("b.rs"), (String::new(), "b.rs".into()));

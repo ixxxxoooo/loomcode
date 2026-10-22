@@ -73,7 +73,7 @@ pub fn render(lines: &[DiffLine], max_lines: usize, cx: &App) -> Div {
 mod tests {
     use super::*;
 
-    #[test]
+    #[::core::prelude::v1::test]
     fn 统计增删行() {
         let (lines, a, r) = compute("a\nb\n", "a\nc\nd\n");
         assert_eq!((a, r), (2, 1));

@@ -103,7 +103,7 @@ pub fn parse(input: &str) -> Ansi {
 mod tests {
     use super::*;
 
-    #[test]
+    #[::core::prelude::v1::test]
     fn 解析颜色与重置() {
         let a = parse("\u{1b}[31mERR\u{1b}[0m ok");
         assert_eq!(a.text, "ERR ok");
@@ -111,7 +111,7 @@ mod tests {
         assert_eq!(a.runs[0].0, 0..3);
     }
 
-    #[test]
+    #[::core::prelude::v1::test]
     fn 无转义的文本原样返回() {
         let a = parse("plain");
         assert_eq!(a.text, "plain");
