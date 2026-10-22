@@ -9,6 +9,7 @@ mod cards;
 mod composer;
 mod diff;
 mod model;
+mod file_tree;
 mod right_panel;
 mod sidebar;
 mod theme;

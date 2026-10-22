@@ -2,6 +2,7 @@
 
 use crate::composer::Composer;
 use crate::model::{SessionModel, UiRequest};
+use crate::right_panel::RightPanel;
 use crate::ui::{empty_state, icon};
 use crate::{sidebar, theme, timeline};
 use gpui_kit::assets::IconName;
@@ -42,6 +43,17 @@ pub enum RightTab {
 impl RightTab {
     pub const ALL: [RightTab; 5] = [Self::Changes, Self::Files, Self::Terminal, Self::Plan, Self::Output];
 
+    /// 英文键(环境变量、持久化用)。
+    pub fn key(self) -> &'static str {
+        match self {
+            Self::Changes => "changes",
+            Self::Files => "files",
+            Self::Terminal => "terminal",
+            Self::Plan => "plan",
+            Self::Output => "output",
+        }
+    }
+
     pub fn label(self) -> &'static str {
         match self {
             Self::Changes => "改动",
@@ -81,7 +93,7 @@ pub struct Workbench {
     pub right_open: bool,
     pub left_w: f32,
     pub right_w: f32,
-    pub right_tab: RightTab,
+    pub panel: Entity<RightPanel>,
     pub page: Page,
     pub theme: theme::ThemeKind,
     pub palette_open: bool,
@@ -98,6 +110,7 @@ impl Workbench {
         }
         let projects = ucode_demo::workspace::demo_projects(&demo_root);
         let focus = cx.focus_handle();
+        let panel = cx.new(|_| RightPanel::new(demo_root.to_string_lossy().to_string()));
         let mut wb = Self {
             demo,
             demo_root,
@@ -108,7 +121,7 @@ impl Workbench {
             right_open: true,
             left_w: 264.,
             right_w: 400.,
-            right_tab: RightTab::Changes,
+            panel,
             page: Page::Chat,
             theme: theme::ThemeKind::PaperLight,
             palette_open: false,
@@ -124,6 +137,16 @@ impl Workbench {
             wb.open_session(0, &id, window, cx);
         }
         window.focus(&wb.focus, cx);
+        // 调试用:通过环境变量直接定位到某个右侧分段 / 文件
+        if let Ok(tab) = std::env::var("UCODE_TAB") {
+            let tab = RightTab::ALL.into_iter().find(|t| t.key() == tab);
+            if let Some(tab) = tab {
+                wb.panel.update(cx, |p, cx| p.set_tab(tab, cx));
+            }
+        }
+        if let Ok(file) = std::env::var("UCODE_FILE") {
+            wb.panel.update(cx, |p, cx| p.request_open(file, cx));
+        }
         wb
     }
 
@@ -192,7 +215,17 @@ impl Workbench {
             self.views.insert(id.to_string(), SessionView { model, composer, project_ix, _subs: subs });
         }
         self.active = Some(id.to_string());
+        self.sync_panel(cx);
         cx.notify();
+    }
+
+    /// 让右侧面板跟随当前会话。
+    fn sync_panel(&mut self, cx: &mut Context<Self>) {
+        let model = self.active_model().cloned();
+        let root = self.active.as_ref().and_then(|id| self.views.get(id)).and_then(|v| self.projects.get(v.project_ix)).map(|p| p.path.clone());
+        if let Some(root) = root {
+            self.panel.update(cx, |p, cx| p.set_session(model, root, cx));
+        }
     }
 
     /// 在指定项目里新建会话。
@@ -213,16 +246,16 @@ impl Workbench {
         match ev {
             UiRequest::OpenChanges => {
                 self.right_open = true;
-                self.right_tab = RightTab::Changes;
+                self.panel.update(cx, |p, cx| p.set_tab(RightTab::Changes, cx));
             }
-            UiRequest::OpenFile(_) => {
+            UiRequest::OpenFile(path) => {
                 self.right_open = true;
-                self.right_tab = RightTab::Files;
+                self.panel.update(cx, |p, cx| p.request_open(path.clone(), cx));
             }
             UiRequest::OpenCanvas(_) => self.page = Page::Canvas,
             UiRequest::OpenPlan => {
                 self.right_open = true;
-                self.right_tab = RightTab::Plan;
+                self.panel.update(cx, |p, cx| p.set_tab(RightTab::Plan, cx));
             }
         }
         cx.notify();
@@ -313,7 +346,7 @@ impl Render for Workbench {
                 h_flex().flex_1().min_h_0().w_full()
                     .when(self.left_open, |d| d.child(sidebar::render(self, cx)))
                     .child(div().flex_1().min_w_0().h_full().child(center))
-                    .when(self.right_open, |d| d.child(crate::right_panel::render(self, cx))),
+                    .when(self.right_open, |d| d.child(div().w(px(self.right_w)).h_full().flex_none().border_l_1().border_color(t.border).child(self.panel.clone()))),
             )
             .child(self.status_bar(cx))
     }
