@@ -6745,8 +6745,19 @@ dependencies = [
  "gpui-kit",
  "serde_json",
  "similar",
+ "ucode-config",
  "ucode-core",
  "ucode-demo",
+]
+
+[[package]]
+name = "ucode-config"
+version = "0.1.0"
+dependencies = [
+ "serde",
+ "serde_json",
+ "thiserror 2.0.21",
+ "ucode-core",
 ]
 
 [[package]]

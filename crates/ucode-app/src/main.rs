@@ -10,7 +10,9 @@ mod composer;
 mod diff;
 mod model;
 mod file_tree;
+mod palette;
 mod rich_text;
+mod settings;
 mod right_panel;
 mod sidebar;
 mod theme;
@@ -23,19 +25,21 @@ use gpui_kit::component::TitleBar;
 use gpui_kit::*;
 use workbench::Workbench;
 
+/// 界面偏好的全局副本,供不持有工作台引用的渲染函数读取。
+#[derive(Clone, Copy, Default)]
+pub struct UiPrefs {
+    pub expand_thinking: bool,
+}
+impl Global for UiPrefs {}
+
 fn main() {
     let args: Vec<String> = std::env::args().collect();
     let demo = args.iter().any(|a| a == "--demo") || std::env::var("UCODE_DEMO").is_ok_and(|v| v == "1");
-    let theme_kind = match std::env::var("UCODE_THEME").as_deref() {
-        Ok("dark") => theme::ThemeKind::PaperDark,
-        Ok("system") => theme::ThemeKind::System,
-        _ => theme::ThemeKind::PaperLight,
-    };
     let session_arg = std::env::var("UCODE_SESSION").ok();
 
     application().with_assets(gpui_kit::assets::AllAssets).run(move |cx| {
         init(cx);
-        theme::apply(theme_kind, None, cx);
+        theme::apply(theme::ThemeKind::PaperLight, None, cx);
         cx.bind_keys([
             KeyBinding::new("cmd-k", workbench::TogglePalette, None),
             KeyBinding::new("cmd-b", workbench::ToggleLeft, None),

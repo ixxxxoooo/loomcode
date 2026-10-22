@@ -22,6 +22,7 @@ fn router_files() -> Vec<(&'static str, String)> {
         ("src/utils.rs", "pub fn normalize_path(p: &str) -> String {\n    p.trim_end_matches('/').to_string()\n}\n".into()),
         ("tests/router_test.rs", "use router_demo::match_route;\n\n#[test]\nfn finds_users() {\n    assert!(match_route(\"/users\").is_some());\n}\n".into()),
         (".gitignore", "target\n".into()),
+        ("CLAUDE.md", "# 项目约定\n\n- 使用 Rust 2024 edition\n- 提交信息使用中文\n- 修改路由逻辑后必须补测试\n".into()),
     ]
 }
 
@@ -158,3 +159,23 @@ mod tests {
         }
     }
 }
+
+/// 演示模式下展示的 Claude 配置(不读取真实的 `~/.claude`)。
+pub const DEMO_CLAUDE_SETTINGS: &str = r#"{
+  "model": "sonnet",
+  "env": { "ANTHROPIC_BASE_URL": "***", "HTTPS_PROXY": "***" },
+  "permissions": {
+    "allow": ["Bash(git status)", "Bash(git diff:*)", "Bash(cargo test:*)", "Read(src/**)"],
+    "deny": ["Bash(rm -rf:*)", "Read(.env)"],
+    "ask": ["Bash(git push:*)"]
+  },
+  "hooks": {
+    "PreToolUse": [{ "matcher": "Bash", "hooks": [{ "type": "command", "command": "echo \"即将执行命令\"" }] }],
+    "PostToolUse": [{ "matcher": "Edit|Write", "hooks": [{ "type": "command", "command": "cargo fmt" }] }]
+  },
+  "mcpServers": {
+    "filesystem": { "command": "npx", "args": ["-y", "@modelcontextprotocol/server-filesystem", "."] },
+    "github": { "type": "http", "url": "https://api.githubcopilot.com/mcp/" },
+    "playwright": { "command": "npx", "args": ["@playwright/mcp@latest"], "disabled": true }
+  }
+}"#;

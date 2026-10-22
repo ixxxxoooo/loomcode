@@ -29,6 +29,16 @@ impl ThemeKind {
     }
 }
 
+impl From<ucode_config::ThemeChoice> for ThemeKind {
+    fn from(c: ucode_config::ThemeChoice) -> Self {
+        match c {
+            ucode_config::ThemeChoice::PaperLight => Self::PaperLight,
+            ucode_config::ThemeChoice::PaperDark => Self::PaperDark,
+            ucode_config::ThemeChoice::System => Self::System,
+        }
+    }
+}
+
 fn hex(v: u32) -> Hsla {
     rgb(v).into()
 }

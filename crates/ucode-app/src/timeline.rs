@@ -90,7 +90,10 @@ fn render_user(session: &Entity<SessionModel>, id: &str, text: &str, images: &[S
 /// 思考:折叠行,流式时显示流光「思考中…」。
 fn render_thinking(session: &Entity<SessionModel>, id: &str, text: &str, streaming: bool, cx: &App) -> AnyElement {
     let t = cx.theme();
-    let expanded = session.read(cx).is_expanded(id);
+    // 偏好「默认展开思考」时,折叠状态取反(再点一次才折叠)
+    let by_default = cx.try_global::<crate::UiPrefs>().is_some_and(|p| p.expand_thinking);
+    let toggled = session.read(cx).is_expanded(id);
+    let expanded = toggled != by_default;
     let s = session.clone();
     let sid = id.to_string();
     v_flex().w_full().gap_1()
