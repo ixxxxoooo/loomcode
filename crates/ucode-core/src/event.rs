@@ -1,0 +1,94 @@
+//! 后端 → 界面的事件,以及界面 → 后端的命令。
+
+use crate::modes::{Effort, ModelInfo, PermissionMode};
+use crate::timeline::{NoticeLevel, TimelineItem, TodoItem};
+use crate::tool::ToolPatch;
+
+/// 回合结束原因。
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum StopReason {
+    EndTurn,
+    Cancelled,
+    Refusal,
+    MaxTokens,
+    /// 请求失败(限流、鉴权等),细节见随后的 Notice
+    Error,
+}
+
+/// 用量快照。
+#[derive(Debug, Clone, Default, PartialEq)]
+pub struct Usage {
+    /// 上下文已用 token
+    pub context_used: u64,
+    /// 上下文窗口大小
+    pub context_size: u64,
+    /// 本会话累计花费(美元)
+    pub cost_usd: f64,
+    /// 5 小时限额使用百分比
+    pub five_hour_pct: Option<f32>,
+    /// 每周限额使用百分比
+    pub weekly_pct: Option<f32>,
+}
+
+impl Usage {
+    /// 上下文使用比例 0..=1。
+    pub fn context_ratio(&self) -> f32 {
+        if self.context_size == 0 {
+            0.0
+        } else {
+            (self.context_used as f32 / self.context_size as f32).clamp(0.0, 1.0)
+        }
+    }
+}
+
+/// 后端产出的事件。`parent` 为子 Agent 卡片 id,表示该事件属于嵌套时间线。
+#[derive(Debug, Clone)]
+pub enum AgentEvent {
+    /// 会话就绪
+    Ready { session_id: String, models: Vec<ModelInfo>, model: String, mode: PermissionMode },
+    TurnStarted,
+    /// 追加一个条目
+    Append { parent: Option<String>, item: TimelineItem },
+    /// 助手文本增量
+    TextDelta { parent: Option<String>, id: String, delta: String },
+    /// 思考增量
+    ThinkingDelta { parent: Option<String>, id: String, delta: String },
+    /// 工具更新
+    ToolUpdate { parent: Option<String>, id: String, patch: ToolPatch },
+    /// 条目流式结束(文本 / 思考)
+    ItemDone { parent: Option<String>, id: String },
+    /// 子 Agent 状态变更
+    SubagentStatus { id: String, status: crate::timeline::SubagentStatus },
+    /// 待办全量替换
+    Todos { id: String, items: Vec<TodoItem> },
+    /// 权限请求被解决(后端确认)
+    PermissionResolved { id: String, option: String },
+    /// 提问被回答
+    QuestionAnswered { id: String, answers: Vec<Vec<String>> },
+    /// 计划批准结果
+    PlanResolved { id: String, approved: bool },
+    Usage(Usage),
+    ModeChanged(PermissionMode),
+    ModelChanged(String),
+    TitleChanged(String),
+    Notice { level: NoticeLevel, text: String },
+    TurnEnded(StopReason),
+}
+
+/// 界面发给后端的命令。
+#[derive(Debug, Clone)]
+pub enum AgentCommand {
+    /// 发送提示;`steer` 为真表示运行中追加的「引导」消息
+    Prompt { text: String, images: Vec<String>, files: Vec<String>, steer: bool },
+    Cancel,
+    SetModel(String),
+    SetMode(PermissionMode),
+    SetEffort(Effort),
+    ResolvePermission { id: String, option: String },
+    AnswerQuestion { id: String, answers: Vec<Vec<String>> },
+    ResolvePlan { id: String, approve: bool },
+    /// 触发演示场景(仅演示后端识别)
+    RunScenario(String),
+    /// 关闭后端(结束子进程)
+    Shutdown,
+}
