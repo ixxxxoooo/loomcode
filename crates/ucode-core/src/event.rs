@@ -92,3 +92,22 @@ pub enum AgentCommand {
     /// 关闭后端(结束子进程)
     Shutdown,
 }
+
+impl AgentEvent {
+    /// 该事件影响的条目 id(用于定位需要重绘的行);无关条目的事件返回 `None`。
+    pub fn target_id(&self) -> Option<&str> {
+        match self {
+            AgentEvent::Append { parent, .. } => parent.as_deref(),
+            AgentEvent::TextDelta { parent, id, .. }
+            | AgentEvent::ThinkingDelta { parent, id, .. }
+            | AgentEvent::ToolUpdate { parent, id, .. }
+            | AgentEvent::ItemDone { parent, id } => Some(parent.as_deref().unwrap_or(id)),
+            AgentEvent::SubagentStatus { id, .. }
+            | AgentEvent::Todos { id, .. }
+            | AgentEvent::PermissionResolved { id, .. }
+            | AgentEvent::QuestionAnswered { id, .. }
+            | AgentEvent::PlanResolved { id, .. } => Some(id),
+            _ => None,
+        }
+    }
+}

@@ -199,6 +199,21 @@ impl SessionState {
         walk(&mut self.items, cancelled);
     }
 
+    /// 返回包含指定 id 的顶层行下标(含子 Agent 内部的条目),用于局部重新测量行高。
+    pub fn row_of(&self, id: &str) -> Option<usize> {
+        fn contains(item: &TimelineItem, id: &str) -> bool {
+            if item.id() == id {
+                return true;
+            }
+            match item {
+                TimelineItem::Subagent(s) => s.children.iter().any(|c| contains(c, id)),
+                TimelineItem::Permission(p) => p.tool.id == id,
+                _ => false,
+            }
+        }
+        self.items.iter().position(|i| contains(i, id))
+    }
+
     /// 递归按 id 查找条目(含子 Agent 内部)。
     pub fn find_mut(&mut self, id: &str) -> Option<&mut TimelineItem> {
         fn find<'a>(items: &'a mut [TimelineItem], id: &str) -> Option<&'a mut TimelineItem> {

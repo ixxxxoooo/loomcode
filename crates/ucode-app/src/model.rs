@@ -1,0 +1,227 @@
+//! 会话模型:把后端事件泵进 `SessionState`,并驱动时间线的虚拟列表。
+
+use gpui_kit::component::message_scroller::MessageScrollerState;
+use gpui_kit::*;
+use std::collections::HashSet;
+use ucode_core::*;
+
+/// 一个活动会话。界面通过它读取状态、发送命令。
+pub struct SessionModel {
+    pub state: SessionState,
+    pub handle: BackendHandle,
+    pub scroller: Entity<MessageScrollerState>,
+    /// 已展开的条目 id(工具卡、思考、子 Agent、计划等)
+    pub expanded: HashSet<String>,
+    /// 运行中排队的消息(回合结束后依次发送)
+    pub queued: Vec<String>,
+    /// 提问向导当前所在题号(按提问 id)
+    pub wizard_step: std::collections::HashMap<String, usize>,
+    /// 提问向导已选答案草稿(按提问 id → 每题的已选项)
+    pub wizard_draft: std::collections::HashMap<String, Vec<Vec<String>>>,
+    /// 折叠的用户长文(已展开的 id)
+    pub cwd: String,
+}
+
+impl SessionModel {
+    /// 创建会话并启动事件泵。
+    pub fn new(handle: BackendHandle, cwd: String, cx: &mut Context<Self>) -> Self {
+        let scroller = cx.new(|cx| MessageScrollerState::new(0, cx));
+        let rx = handle.events.clone();
+        cx.spawn(async move |this, cx| {
+            // 批量消费:一次唤醒尽量取空队列,只通知一次界面
+            while let Ok(first) = rx.recv().await {
+                let mut batch = vec![first];
+                while let Ok(more) = rx.try_recv() {
+                    batch.push(more);
+                    if batch.len() >= 64 {
+                        break;
+                    }
+                }
+                if this.update(cx, |m, cx| m.on_events(batch, cx)).is_err() {
+                    break;
+                }
+            }
+        })
+        .detach();
+        Self {
+            state: SessionState::default(),
+            handle,
+            scroller,
+            expanded: HashSet::new(),
+            queued: Vec::new(),
+            wizard_step: Default::default(),
+            wizard_draft: Default::default(),
+            cwd,
+        }
+    }
+
+    /// 处理一批事件:归约状态,并让虚拟列表同步行数与高度。
+    fn on_events(&mut self, events: Vec<AgentEvent>, cx: &mut Context<Self>) {
+        let mut dirty_rows: Vec<usize> = Vec::new();
+        let mut turn_ended = false;
+        for ev in events {
+            let target = ev.target_id().map(str::to_string);
+            if matches!(ev, AgentEvent::TurnEnded(_)) {
+                turn_ended = true;
+            }
+            self.state.apply(ev);
+            if let Some(id) = target {
+                if let Some(row) = self.state.row_of(&id) {
+                    dirty_rows.push(row);
+                }
+            }
+        }
+        let new_count = self.state.items.len();
+        let scroller = self.scroller.clone();
+        scroller.update(cx, |s, cx| {
+            let old = s.item_count();
+            if new_count > old {
+                s.append(new_count - old, cx);
+            } else if new_count < old {
+                s.reset(new_count, cx);
+            }
+            dirty_rows.sort_unstable();
+            dirty_rows.dedup();
+            for row in dirty_rows {
+                if row < old.min(new_count) {
+                    s.remeasure_items(row..row + 1, cx);
+                }
+            }
+            // 流式输出时最后一行也需要重新测量
+            if new_count > 0 && new_count <= old {
+                s.remeasure_items(new_count - 1..new_count, cx);
+            }
+        });
+        if turn_ended && !self.queued.is_empty() {
+            let next = self.queued.remove(0);
+            self.send_prompt(next, cx);
+        }
+        cx.notify();
+    }
+
+    /// 发送提示。运行中会作为「引导」消息追加。
+    pub fn send_prompt(&mut self, text: String, cx: &mut Context<Self>) {
+        let steer = self.state.phase == Phase::Running;
+        self.handle.send(AgentCommand::Prompt { text, images: vec![], files: vec![], steer });
+        cx.notify();
+    }
+
+    /// 运行中把消息排到队尾。
+    pub fn queue_prompt(&mut self, text: String, cx: &mut Context<Self>) {
+        self.queued.push(text);
+        cx.notify();
+    }
+
+    pub fn cancel(&mut self, cx: &mut Context<Self>) {
+        self.handle.send(AgentCommand::Cancel);
+        cx.notify();
+    }
+
+    pub fn set_mode(&mut self, mode: PermissionMode, cx: &mut Context<Self>) {
+        self.state.mode = mode;
+        self.handle.send(AgentCommand::SetMode(mode));
+        cx.notify();
+    }
+
+    pub fn set_model(&mut self, model: String, cx: &mut Context<Self>) {
+        self.state.model = model.clone();
+        self.handle.send(AgentCommand::SetModel(model));
+        cx.notify();
+    }
+
+    pub fn set_effort(&mut self, effort: Effort, cx: &mut Context<Self>) {
+        self.state.effort = effort;
+        self.handle.send(AgentCommand::SetEffort(effort));
+        cx.notify();
+    }
+
+    pub fn resolve_permission(&mut self, id: &str, option: &str, cx: &mut Context<Self>) {
+        self.handle.send(AgentCommand::ResolvePermission { id: id.into(), option: option.into() });
+        self.remeasure_id(id, cx);
+    }
+
+    pub fn answer_question(&mut self, id: &str, answers: Vec<Vec<String>>, cx: &mut Context<Self>) {
+        self.handle.send(AgentCommand::AnswerQuestion { id: id.into(), answers });
+        self.remeasure_id(id, cx);
+    }
+
+    pub fn resolve_plan(&mut self, id: &str, approve: bool, cx: &mut Context<Self>) {
+        self.handle.send(AgentCommand::ResolvePlan { id: id.into(), approve });
+        self.remeasure_id(id, cx);
+    }
+
+    /// 展开 / 折叠一个条目,并重新测量它所在的行。
+    pub fn toggle(&mut self, id: &str, cx: &mut Context<Self>) {
+        if !self.expanded.remove(id) {
+            self.expanded.insert(id.to_string());
+        }
+        self.remeasure_id(id, cx);
+    }
+
+    pub fn is_expanded(&self, id: &str) -> bool {
+        self.expanded.contains(id)
+    }
+
+    fn remeasure_id(&mut self, id: &str, cx: &mut Context<Self>) {
+        if let Some(row) = self.state.row_of(id) {
+            self.scroller.update(cx, |s, cx| {
+                s.remeasure_items(row..row + 1, cx);
+            });
+        }
+        cx.notify();
+    }
+
+    /// 整体重新测量(主题或字号变化后调用)。
+    pub fn remeasure_all(&mut self, cx: &mut Context<Self>) {
+        self.scroller.update(cx, |s, cx| s.remeasure(cx));
+    }
+}
+
+/// 会话向工作台发出的界面请求(打开面板、文件等)。
+#[derive(Debug, Clone)]
+pub enum UiRequest {
+    /// 打开右侧「改动」面板
+    OpenChanges,
+    /// 在右侧「文件」面板打开文件
+    OpenFile(String),
+    /// 打开 Canvas 画布
+    OpenCanvas(String),
+    /// 打开计划文档
+    OpenPlan,
+}
+
+impl EventEmitter<UiRequest> for SessionModel {}
+
+impl SessionModel {
+    /// 提问向导:选择(单选替换,多选切换)。
+    pub fn wizard_pick(&mut self, id: &str, q_idx: usize, n_questions: usize, label: &str, multi: bool, cx: &mut Context<Self>) {
+        let draft = self.wizard_draft.entry(id.to_string()).or_insert_with(|| vec![Vec::new(); n_questions]);
+        if draft.len() < n_questions {
+            draft.resize(n_questions, Vec::new());
+        }
+        let slot = &mut draft[q_idx];
+        if multi {
+            if let Some(pos) = slot.iter().position(|l| l == label) {
+                slot.remove(pos);
+            } else {
+                slot.push(label.to_string());
+            }
+        } else {
+            *slot = vec![label.to_string()];
+        }
+        self.remeasure_id(id, cx);
+    }
+
+    /// 提问向导:跳到指定题。
+    pub fn wizard_go(&mut self, id: &str, step: usize, cx: &mut Context<Self>) {
+        self.wizard_step.insert(id.to_string(), step);
+        self.remeasure_id(id, cx);
+    }
+
+    /// 提问向导:提交全部答案。
+    pub fn wizard_submit(&mut self, id: &str, n_questions: usize, cx: &mut Context<Self>) {
+        let mut answers = self.wizard_draft.get(id).cloned().unwrap_or_default();
+        answers.resize(n_questions, Vec::new());
+        self.answer_question(id, answers, cx);
+    }
+}
