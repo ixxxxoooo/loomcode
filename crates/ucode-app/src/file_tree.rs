@@ -1,6 +1,6 @@
 //! 「文件」面板:项目文件树 + 只读代码预览(带语法高亮)。
 
-use crate::right_panel::RightPanel;
+use crate::right_panel::{PanelEvent, RightPanel};
 use crate::ui::{MONO, empty_state, icon};
 use gpui_kit::assets::IconName;
 use gpui_kit::component::input::{Editor, EditorState};
@@ -141,7 +141,24 @@ impl FileTree {
         self.load_preview(full, window, cx);
     }
 
-    fn load_preview(&mut self, path: PathBuf, window: &mut Window, cx: &mut Context<RightPanel>) {
+    /// 在树里选中并展开到某个文件,但不加载预览(IDE 模式下文件在中栏编辑器里打开)。
+    pub fn reveal(&mut self, path: &Path) {
+        let mut cur = path.parent();
+        while let Some(dir) = cur {
+            if dir == self.root || !dir.starts_with(&self.root) {
+                break;
+            }
+            if self.expanded.insert(dir.to_path_buf()) {
+                self.children.insert(dir.to_path_buf(), read_dir_sorted(dir));
+            }
+            cur = dir.parent();
+        }
+        self.selected = Some(path.to_path_buf());
+        self.preview = None;
+        self.note = None;
+    }
+
+    pub fn load_preview(&mut self, path: PathBuf, window: &mut Window, cx: &mut Context<RightPanel>) {
         self.selected = Some(path.clone());
         self.preview = None;
         self.note = None;
@@ -185,7 +202,7 @@ impl FileTree {
         if rows.is_empty() {
             return empty_state(IconName::Folder, "目录为空", &self.root.display().to_string(), cx).into_any_element();
         }
-        let has_preview = self.selected.is_some();
+        let has_preview = self.preview.is_some() || self.note.is_some();
         let root_name = self.root.file_name().map(|n| n.to_string_lossy().to_string()).unwrap_or_default();
         let tree = v_flex().id("file-tree-scroll").w_full().overflow_y_scroll().py_1()
             .when(has_preview, |d| d.h(relative(0.38)).flex_none().border_b_1().border_color(t.border))
@@ -205,7 +222,9 @@ impl FileTree {
                             this.files.toggle_dir(&path);
                             cx.notify();
                         } else {
-                            this.files.load_preview(path.clone(), window, cx);
+                            // 由工作台决定是在右侧预览还是在 IDE 编辑器里打开
+                            let _ = window;
+                            cx.emit(PanelEvent::OpenFile(path.clone()));
                         }
                     }))
                     .child(if is_dir {

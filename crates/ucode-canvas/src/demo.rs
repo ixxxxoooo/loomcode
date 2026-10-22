@@ -55,7 +55,7 @@ pub fn demo_document(project_path: &str, now: i64) -> CanvasDocument {
         Block::Table {
             title: Some(s("模块健康度")),
             columns: labels(&["模块", "负责人", "覆盖率", "状态"]),
-            rows: [["AtlasCore", "ixxxxoooo", "92", "稳定"], ["Router", "mei", "88", "稳定"], ["Metrics", "ixxxxoooo", "74", "进行中"], ["Cache", "lin", "81", "评审中"], ["CLI", "mei", "69", "进行中"]]
+            rows: [["AtlasCore", "ken", "92", "稳定"], ["Router", "mei", "88", "稳定"], ["Metrics", "ken", "74", "进行中"], ["Cache", "lin", "81", "评审中"], ["CLI", "mei", "69", "进行中"]]
                 .iter()
                 .map(|r| r.iter().map(|c| s(c)).collect())
                 .collect(),

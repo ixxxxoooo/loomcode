@@ -5,11 +5,15 @@
 //! - 其余情况使用真实 `claude`(尚在接入中,缺省回退到演示模式并提示)。
 
 mod ansi;
+mod automation_page;
+mod browser_page;
+mod canvas_page;
 mod cards;
 mod composer;
 mod diff;
 mod model;
 mod file_tree;
+mod ide;
 mod palette;
 mod rich_text;
 mod settings;
@@ -46,6 +50,8 @@ fn main() {
             KeyBinding::new("cmd-alt-b", workbench::ToggleRight, None),
             KeyBinding::new("cmd-,", workbench::OpenSettings, None),
             KeyBinding::new("cmd-n", workbench::NewSession, None),
+            KeyBinding::new("cmd-s", workbench::SaveFile, None),
+            KeyBinding::new("cmd-shift-e", workbench::ToggleIde, None),
             KeyBinding::new("shift-tab", workbench::CycleMode, Some("Workbench")),
         ]);
         let mut options = TitleBar::window_options();

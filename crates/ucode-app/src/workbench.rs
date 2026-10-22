@@ -1,9 +1,13 @@
 //! 工作台根视图:标题栏、左侧项目栏、中间会话、右侧固定面板、状态栏。
 
+use crate::automation_page::AutomationPage;
+use crate::browser_page::BrowserPage;
+use crate::canvas_page::CanvasPage;
 use crate::composer::Composer;
+use crate::ide::{self, IdeDoc};
 use crate::model::{SessionModel, UiRequest};
 use crate::palette::{Group, Palette, PaletteAction, PaletteEvent, PaletteItem};
-use crate::right_panel::RightPanel;
+use crate::right_panel::{PanelEvent, RightPanel};
 use crate::settings::{self, MemoryDoc, SettingsTab};
 use crate::ui::{empty_state, icon};
 use crate::{sidebar, theme, timeline};
@@ -12,17 +16,19 @@ use gpui_kit::component::TitleBar;
 use gpui_kit::component::button::{Button, ButtonVariants};
 use gpui_kit::component::message_scroller::MessageScroller;
 use gpui_kit::component::status_bar::StatusBar;
-use gpui_kit::component::{ActiveTheme, Sizable, h_flex, v_flex};
+use gpui_kit::component::{ActiveTheme, Selectable, Sizable, h_flex, v_flex};
 use gpui_kit::prelude::FluentBuilder as _;
 use gpui_kit::*;
 use std::collections::HashMap;
 use std::path::PathBuf;
+use ucode_automation::{AutomationStore, now_ts};
+use ucode_canvas::{CanvasStore, demo_document};
 use ucode_config::{AppSettings, ClaudeConfig, ThemeChoice};
 use ucode_core::*;
 use ucode_demo::DemoBackend;
 use gpui_kit::component::input::{EditorState, InputState};
 
-actions!(ucode, [TogglePalette, ToggleLeft, ToggleRight, OpenSettings, CycleMode, NewSession, Escape]);
+actions!(ucode, [TogglePalette, ToggleLeft, ToggleRight, OpenSettings, CycleMode, NewSession, Escape, SaveFile, ToggleIde]);
 
 /// 主区域当前页面。
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -108,6 +114,15 @@ pub struct Workbench {
     pub claude_info: Option<String>,
     pub palette: Option<Entity<Palette>>,
     _palette_sub: Option<Subscription>,
+    /// IDE 模式:中栏是单文件编辑器 + 对话
+    pub ide: bool,
+    pub ide_doc: Option<IdeDoc>,
+    /// 编辑器打不开文件时的说明
+    pub ide_note: Option<String>,
+    pub canvas: Entity<CanvasPage>,
+    pub automation: Entity<AutomationPage>,
+    pub browser: Entity<BrowserPage>,
+    _subs: Vec<Subscription>,
     focus: FocusHandle,
     new_counter: u32,
 }
@@ -131,6 +146,24 @@ impl Workbench {
         let rule_input = settings::new_rule_input(window, cx);
         let focus = cx.focus_handle();
         let panel = cx.new(|_| RightPanel::new(demo_root.to_string_lossy().to_string()));
+        // 画布 / 自动化 / 浏览器三个页面常驻:自动化需要在后台持续调度
+        let home = std::env::var_os("HOME").map(PathBuf::from).unwrap_or_default();
+        let (canvas_dir, auto_dir) = if demo {
+            (demo_root.join("canvases"), demo_root.join("automations"))
+        } else {
+            (CanvasStore::default_dir(&home), AutomationStore::default_dir(&home))
+        };
+        if demo {
+            let project = projects.first().map(|p| p.path.clone()).unwrap_or_default();
+            if let Err(e) = CanvasStore::new(&canvas_dir).save(&demo_document(&project, now_ts())) {
+                eprintln!("写入演示画布失败:{e}");
+            }
+        }
+        let canvas = cx.new(|_| CanvasPage::new(CanvasStore::new(canvas_dir)));
+        let project_list: Vec<(String, String)> = projects.iter().map(|p| (p.name.clone(), p.path.clone())).collect();
+        let claude_path = settings.claude_path.clone();
+        let automation = cx.new(|cx| AutomationPage::new(AutomationStore::new(auto_dir), demo, claude_path, project_list, window, cx));
+        let browser = cx.new(|cx| BrowserPage::new(window, cx));
         let mut wb = Self {
             demo,
             demo_root,
@@ -152,9 +185,18 @@ impl Workbench {
             claude_info: None,
             palette: None,
             _palette_sub: None,
+            ide: false,
+            ide_doc: None,
+            ide_note: None,
+            canvas,
+            automation,
+            browser,
+            _subs: Vec::new(),
             focus,
             new_counter: 0,
         };
+        let panel_sub = cx.subscribe_in(&wb.panel, window, |this, _, ev: &PanelEvent, window, cx| this.on_panel_event(ev, window, cx));
+        wb._subs.push(panel_sub);
         let id = session.unwrap_or_else(|| "showcase-tour".into());
         if let Some(pi) = wb.projects.iter().position(|p| p.sessions.iter().any(|s| s.id == id)) {
             wb.open_session(pi, &id, window, cx);
@@ -190,8 +232,23 @@ impl Workbench {
                 wb.panel.update(cx, |p, cx| p.set_tab(tab, cx));
             }
         }
+        if std::env::var("UCODE_IDE").is_ok_and(|v| v == "1") {
+            wb.toggle_ide(window, cx);
+        }
         if let Ok(file) = std::env::var("UCODE_FILE") {
-            wb.panel.update(cx, |p, cx| p.request_open(file, cx));
+            wb.open_file(file, window, cx);
+        }
+        if let Ok(page) = std::env::var("UCODE_PAGE") {
+            match page.as_str() {
+                "canvas" => wb.page = Page::Canvas,
+                "automation" => wb.page = Page::Automation,
+                "browser" => wb.page = Page::Browser,
+                _ => {}
+            }
+        }
+        if let Ok(url) = std::env::var("UCODE_URL") {
+            wb.page = Page::Browser;
+            wb.browser.update(cx, |b, cx| b.open(&url, window, cx));
         }
         wb
     }
@@ -263,6 +320,7 @@ impl Workbench {
         cmd("设置:MCP 服务器", "", IconName::Plug, PaletteAction::OpenSettings(Some("mcp")));
         cmd("设置:记忆 CLAUDE.md", "", IconName::Brain, PaletteAction::OpenSettings(Some("memory")));
         cmd("切换权限模式", "⇧Tab", IconName::Shield, PaletteAction::CycleMode);
+        cmd("切换 IDE 模式", "⇧⌘E", IconName::Code, PaletteAction::ToggleIde);
         cmd("显示 / 隐藏左侧栏", "⌘B", IconName::PanelLeft, PaletteAction::ToggleLeft);
         cmd("显示 / 隐藏右侧面板", "⌥⌘B", IconName::PanelRight, PaletteAction::ToggleRight);
         cmd("主题:纸感浅色", "", IconName::Sun, PaletteAction::SetTheme(ThemeChoice::PaperLight));
@@ -296,6 +354,7 @@ impl Workbench {
             PaletteAction::NewSession => self.new_session(0, window, cx),
             PaletteAction::ToggleLeft => { self.left_open = !self.left_open; cx.notify(); }
             PaletteAction::ToggleRight => { self.right_open = !self.right_open; cx.notify(); }
+            PaletteAction::ToggleIde => self.toggle_ide(window, cx),
             PaletteAction::CycleMode => {
                 if let Some(m) = self.active_model().cloned() {
                     m.update(cx, |m, cx| { let next = m.state.mode.next(); m.set_mode(next, cx); });
@@ -310,12 +369,7 @@ impl Workbench {
             PaletteAction::OpenPage(p) => self.set_page(match p { "canvas" => Page::Canvas, "automation" => Page::Automation, _ => Page::Browser }, cx),
             PaletteAction::SetTheme(c) => self.update_settings(cx, |s| s.theme = c),
             PaletteAction::OpenSession(pi, id) => self.open_session(pi, &id, window, cx),
-            PaletteAction::OpenFile(path) => {
-                self.page = Page::Chat;
-                self.right_open = true;
-                self.panel.update(cx, |p, cx| p.request_open(path, cx));
-                cx.notify();
-            }
+            PaletteAction::OpenFile(path) => self.open_file(path, window, cx),
             PaletteAction::RunScenario(id) => self.open_scenario(&id, window, cx),
         }
     }
@@ -354,7 +408,7 @@ impl Workbench {
             }
             let subs = vec![
                 cx.observe(&model, |_, _, cx| cx.notify()),
-                cx.subscribe(&model, |this, _m, ev: &UiRequest, cx| this.on_ui_request(ev, cx)),
+                cx.subscribe_in(&model, window, |this, _m, ev: &UiRequest, window, cx| this.on_ui_request(ev, window, cx)),
             ];
             // 新会话套用偏好里的默认模型 / 模式 / 强度
             let (dm, dmode, deff) = (self.settings.default_model.clone(), self.settings.default_mode, self.settings.default_effort);
@@ -398,7 +452,7 @@ impl Workbench {
     }
 
     /// 当前项目路径。
-    fn active_project_path(&self) -> Option<String> {
+    pub fn active_project_path(&self) -> Option<String> {
         self.active.as_ref().and_then(|id| self.views.get(id)).and_then(|v| self.projects.get(v.project_ix)).map(|p| p.path.clone())
     }
 
@@ -525,22 +579,107 @@ impl Workbench {
         }
     }
 
-    fn on_ui_request(&mut self, ev: &UiRequest, cx: &mut Context<Self>) {
+    fn on_ui_request(&mut self, ev: &UiRequest, window: &mut Window, cx: &mut Context<Self>) {
         match ev {
             UiRequest::OpenChanges => {
                 self.right_open = true;
                 self.panel.update(cx, |p, cx| p.set_tab(RightTab::Changes, cx));
             }
-            UiRequest::OpenFile(path) => {
-                self.right_open = true;
-                self.panel.update(cx, |p, cx| p.request_open(path.clone(), cx));
+            UiRequest::OpenFile(path) => self.open_file(path.clone(), window, cx),
+            UiRequest::OpenCanvas(id) => {
+                self.page = Page::Canvas;
+                let id = id.clone();
+                self.canvas.update(cx, |c, cx| c.select(&id, cx));
             }
-            UiRequest::OpenCanvas(_) => self.page = Page::Canvas,
             UiRequest::OpenPlan => {
                 self.right_open = true;
                 self.panel.update(cx, |p, cx| p.set_tab(RightTab::Plan, cx));
             }
         }
+        cx.notify();
+    }
+
+    fn on_panel_event(&mut self, ev: &PanelEvent, window: &mut Window, cx: &mut Context<Self>) {
+        match ev {
+            PanelEvent::OpenFile(path) => {
+                if self.ide {
+                    self.open_in_ide(path.clone(), window, cx);
+                } else {
+                    let path = path.clone();
+                    self.panel.update(cx, |p, cx| p.files.load_preview(path, window, cx));
+                }
+            }
+        }
+    }
+
+    // ---------- IDE 模式 ----------
+
+    /// 切换 IDE 模式:开启时右侧面板自动切到「文件」。
+    pub fn toggle_ide(&mut self, _window: &mut Window, cx: &mut Context<Self>) {
+        self.ide = !self.ide;
+        if self.ide {
+            self.page = Page::Chat;
+            self.right_open = true;
+            self.panel.update(cx, |p, cx| p.set_tab(RightTab::Files, cx));
+        }
+        cx.notify();
+    }
+
+    /// 相对路径按当前项目补全。
+    fn resolve_path(&self, path: &str) -> PathBuf {
+        let p = PathBuf::from(path);
+        if p.is_absolute() { p } else { PathBuf::from(self.active_project_path().unwrap_or_default()).join(p) }
+    }
+
+    /// 统一的「打开文件」入口:IDE 模式开编辑器,否则在右侧面板预览。
+    pub fn open_file(&mut self, path: String, window: &mut Window, cx: &mut Context<Self>) {
+        self.page = Page::Chat;
+        self.right_open = true;
+        if self.ide {
+            let full = self.resolve_path(&path);
+            self.open_in_ide(full, window, cx);
+        } else {
+            self.panel.update(cx, |p, cx| p.request_open(path, cx));
+        }
+        cx.notify();
+    }
+
+    pub fn open_in_ide(&mut self, path: PathBuf, window: &mut Window, cx: &mut Context<Self>) {
+        self.panel.update(cx, |p, _| p.files.reveal(&path));
+        match ide::load(&path, window, cx) {
+            Ok(doc) => {
+                self.ide_doc = Some(doc);
+                self.ide_note = None;
+            }
+            Err(note) => {
+                self.ide_doc = None;
+                self.ide_note = Some(note);
+            }
+        }
+        cx.notify();
+    }
+
+    pub fn save_ide(&mut self, cx: &mut Context<Self>) {
+        let Some(doc) = self.ide_doc.as_mut() else { return };
+        let text = doc.editor.read(cx).value().to_string();
+        match std::fs::write(&doc.path, text) {
+            Ok(()) => {
+                doc.saved = true;
+                self.ide_note = None;
+            }
+            Err(e) => self.ide_note = Some(format!("保存失败:{e}")),
+        }
+        cx.notify();
+    }
+
+    pub fn reload_ide(&mut self, window: &mut Window, cx: &mut Context<Self>) {
+        if let Some(path) = self.ide_doc.as_ref().map(|d| d.path.clone()) {
+            self.open_in_ide(path, window, cx);
+        }
+    }
+
+    pub fn close_ide(&mut self, cx: &mut Context<Self>) {
+        self.ide_doc = None;
         cx.notify();
     }
 
@@ -552,6 +691,8 @@ impl Workbench {
                 .child(Button::new("tb-left").small().ghost().icon(if self.left_open { IconName::PanelLeftClose } else { IconName::PanelLeftOpen })
                     .on_click(cx.listener(|this, _, _, cx| { this.left_open = !this.left_open; cx.notify(); })))
                 .child(div().flex_1().flex().justify_center().text_size(px(13.)).text_color(t.muted_foreground).child(title))
+                .child(Button::new("tb-ide").small().ghost().icon(IconName::Code).selected(self.ide).tooltip("IDE 模式(⇧⌘E)")
+                    .on_click(cx.listener(|this, _, window, cx| this.toggle_ide(window, cx))))
                 .child(Button::new("tb-right").small().ghost().icon(if self.right_open { IconName::PanelRightClose } else { IconName::PanelRightOpen })
                     .on_click(cx.listener(|this, _, _, cx| { this.right_open = !this.right_open; cx.notify(); }))),
         )
@@ -605,9 +746,15 @@ impl Render for Workbench {
     fn render(&mut self, window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
         let t = cx.theme().clone();
         let center = match self.page {
+            Page::Chat if self.ide => h_flex().size_full()
+                .child(div().flex_1().min_w_0().h_full().child(ide::render(self, cx)))
+                .child(div().w(px(440.)).h_full().flex_none().border_l_1().border_color(t.border).child(self.chat_view(cx)))
+                .into_any_element(),
             Page::Chat => self.chat_view(cx),
             Page::Settings => settings::render(self, window, cx),
-            other => empty_state(IconName::Construction, &format!("{other:?} 页面"), "稍后实现", cx).into_any_element(),
+            Page::Canvas => self.canvas.clone().into_any_element(),
+            Page::Automation => self.automation.clone().into_any_element(),
+            Page::Browser => self.browser.clone().into_any_element(),
         };
         v_flex()
             .key_context("Workbench")
@@ -617,6 +764,8 @@ impl Render for Workbench {
             .on_action(cx.listener(|this, _: &TogglePalette, window, cx| this.toggle_palette(window, cx)))
             .on_action(cx.listener(|this, _: &OpenSettings, _, cx| this.set_page(Page::Settings, cx)))
             .on_action(cx.listener(|this, _: &NewSession, window, cx| this.new_session(0, window, cx)))
+            .on_action(cx.listener(|this, _: &SaveFile, _, cx| this.save_ide(cx)))
+            .on_action(cx.listener(|this, _: &ToggleIde, window, cx| this.toggle_ide(window, cx)))
             .on_action(cx.listener(|this, _: &CycleMode, _, cx| {
                 if let Some(m) = this.active_model().cloned() {
                     m.update(cx, |m, cx| { let next = m.state.mode.next(); m.set_mode(next, cx); });

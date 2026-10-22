@@ -12,6 +12,10 @@ gpui-kit.workspace = true
 ucode-core = { path = "../ucode-core" }
 ucode-demo = { path = "../ucode-demo" }
 ucode-config = { path = "../ucode-config" }
+ucode-canvas = { path = "../ucode-canvas" }
+ucode-automation = { path = "../ucode-automation" }
+ucode-browser = { path = "../ucode-browser" }
+ucode-claude = { path = "../ucode-claude" }
 serde_json.workspace = true
 async-channel = "2"
 similar = "2"

@@ -16,6 +16,7 @@ pub enum PaletteAction {
     ToggleLeft,
     ToggleRight,
     CycleMode,
+    ToggleIde,
     OpenSettings(Option<&'static str>),
     OpenPage(&'static str),
     SetTheme(ThemeChoice),

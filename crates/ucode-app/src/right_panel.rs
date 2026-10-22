@@ -123,6 +123,14 @@ pub fn collect_log(items: &[TimelineItem]) -> Vec<LogLine> {
     out
 }
 
+/// 右侧面板向工作台发出的事件。
+pub enum PanelEvent {
+    /// 用户在文件树里点了一个文件
+    OpenFile(std::path::PathBuf),
+}
+
+impl EventEmitter<PanelEvent> for RightPanel {}
+
 pub struct RightPanel {
     pub tab: RightTab,
     model: Option<Entity<SessionModel>>,
