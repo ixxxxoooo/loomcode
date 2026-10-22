@@ -1,7 +1,7 @@
 //! 后端 → 界面的事件,以及界面 → 后端的命令。
 
 use crate::modes::{Effort, ModelInfo, PermissionMode};
-use crate::timeline::{NoticeLevel, TimelineItem, TodoItem};
+use crate::timeline::{NoticeLevel, PermissionRequest, TimelineItem, TodoItem};
 use crate::tool::ToolPatch;
 
 /// 回合结束原因。
@@ -61,6 +61,9 @@ pub enum AgentEvent {
     SubagentStatus { id: String, status: crate::timeline::SubagentStatus },
     /// 待办全量替换
     Todos { id: String, items: Vec<TodoItem> },
+    /// 把已有的同 id 工具卡升级成权限请求(真实后端:工具调用先出现,权限请求随后到达);
+    /// 找不到同 id 工具卡时直接追加。
+    PromoteToPermission { parent: Option<String>, request: PermissionRequest },
     /// 权限请求被解决(后端确认)
     PermissionResolved { id: String, option: String },
     /// 提问被回答
@@ -102,6 +105,7 @@ impl AgentEvent {
             | AgentEvent::ThinkingDelta { parent, id, .. }
             | AgentEvent::ToolUpdate { parent, id, .. }
             | AgentEvent::ItemDone { parent, id } => Some(parent.as_deref().unwrap_or(id)),
+            AgentEvent::PromoteToPermission { parent, request } => Some(parent.as_deref().unwrap_or(&request.id)),
             AgentEvent::SubagentStatus { id, .. }
             | AgentEvent::Todos { id, .. }
             | AgentEvent::PermissionResolved { id, .. }

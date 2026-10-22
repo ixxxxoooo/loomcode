@@ -1,0 +1,402 @@
+//! 真实后端:一个 Actor 线程驱动 `claude` 子进程。
+//!
+//! 线程模型:
+//! - 读 stdout 的线程、读 stderr 的线程、转发界面命令的线程,都只做一件事:往同一条 `Msg` 通道投递;
+//! - Actor 线程独占 stdin 与 `Translator`,按顺序消费 `Msg`,因此没有任何共享可变状态与锁。
+
+use crate::options::{ClaudeOptions, find_claude};
+use crate::protocol;
+use crate::translate::{Translator, suggested_mode};
+use serde_json::Value;
+use std::collections::{HashMap, VecDeque};
+use std::io::{BufRead, BufReader, Write};
+use std::process::{Child, ChildStdin, Command, Stdio};
+use std::sync::mpsc;
+use ucode_core::*;
+
+/// 真实 Claude 后端。
+#[derive(Debug, Clone, Default)]
+pub struct ClaudeBackend {
+    /// 用户在设置里指定的 `claude` 路径
+    pub claude_path: Option<String>,
+    pub add_dirs: Vec<String>,
+    pub allowed_tools: Vec<String>,
+    pub mcp_config: Option<String>,
+}
+
+impl ClaudeBackend {
+    pub fn new(claude_path: Option<String>) -> Self {
+        Self { claude_path, ..Default::default() }
+    }
+}
+
+impl AgentBackend for ClaudeBackend {
+    fn name(&self) -> &'static str {
+        "claude"
+    }
+
+    fn start(&self, config: BackendConfig) -> Result<BackendHandle, BackendError> {
+        let path = find_claude(self.claude_path.as_deref()).ok_or(BackendError::ClaudeNotFound)?;
+        let mut opts = ClaudeOptions::from_config(&config);
+        opts.add_dirs = self.add_dirs.clone();
+        opts.allowed_tools = self.allowed_tools.clone();
+        opts.mcp_config = self.mcp_config.clone();
+
+        let mut child = Command::new(&path)
+            .args(opts.args())
+            .envs(opts.env())
+            // 在 Claude Code 会话里启动本程序时,避免继承其嵌套标记
+            .env_remove("CLAUDECODE")
+            .current_dir(if opts.cwd.is_empty() { "." } else { &opts.cwd })
+            .stdin(Stdio::piped())
+            .stdout(Stdio::piped())
+            .stderr(Stdio::piped())
+            .spawn()
+            .map_err(|e| BackendError::Spawn(format!("{}:{e}", path.display())))?;
+
+        let stdin = child.stdin.take().ok_or_else(|| BackendError::Spawn("无法获取标准输入".into()))?;
+        let stdout = child.stdout.take().ok_or_else(|| BackendError::Spawn("无法获取标准输出".into()))?;
+        let stderr = child.stderr.take().ok_or_else(|| BackendError::Spawn("无法获取标准错误".into()))?;
+
+        let (handle, cmd_rx, ev_tx) = channel_pair();
+        let (tx, rx) = mpsc::channel::<Msg>();
+
+        // stdout:按行读取,字节流容忍非法 UTF-8
+        let t = tx.clone();
+        spawn_named("ucode-claude-stdout", move || {
+            let mut reader = BufReader::new(stdout);
+            let mut buf = Vec::new();
+            loop {
+                buf.clear();
+                match reader.read_until(b'\n', &mut buf) {
+                    Ok(0) | Err(_) => break,
+                    Ok(_) => {
+                        let line = String::from_utf8_lossy(&buf).trim().to_string();
+                        if !line.is_empty() && t.send(Msg::Line(line)).is_err() {
+                            break;
+                        }
+                    }
+                }
+            }
+            let _ = t.send(Msg::Eof);
+        })?;
+
+        // stderr:只保留尾部,进程异常退出时用于诊断
+        let t = tx.clone();
+        spawn_named("ucode-claude-stderr", move || {
+            for line in BufReader::new(stderr).lines().map_while(Result::ok) {
+                if t.send(Msg::Stderr(line)).is_err() {
+                    break;
+                }
+            }
+        })?;
+
+        // 命令转发:界面侧通道关闭(会话被丢弃)等同于关闭后端
+        let t = tx;
+        spawn_named("ucode-claude-cmd", move || {
+            while let Ok(cmd) = cmd_rx.recv_blocking() {
+                if t.send(Msg::Cmd(cmd)).is_err() {
+                    return;
+                }
+            }
+            let _ = t.send(Msg::Cmd(AgentCommand::Shutdown));
+        })?;
+
+        let mut actor = Actor::new(child, stdin, opts, ev_tx);
+        spawn_named("ucode-claude-actor", move || actor.run(rx))?;
+        Ok(handle)
+    }
+}
+
+fn spawn_named(name: &str, f: impl FnOnce() + Send + 'static) -> Result<(), BackendError> {
+    std::thread::Builder::new()
+        .name(name.into())
+        .spawn(f)
+        .map(|_| ())
+        .map_err(|e| BackendError::Spawn(e.to_string()))
+}
+
+enum Msg {
+    Cmd(AgentCommand),
+    Line(String),
+    Stderr(String),
+    Eof,
+}
+
+/// 已发出、等待响应的控制请求。
+enum ReqKind {
+    Init,
+    SetModel(String),
+    SetMode(PermissionMode),
+    Other(&'static str),
+}
+
+struct Actor {
+    child: Child,
+    stdin: ChildStdin,
+    translator: Translator,
+    opts: ClaudeOptions,
+    ev_tx: async_channel::Sender<AgentEvent>,
+    reqs: HashMap<String, ReqKind>,
+    req_seq: u64,
+    turn_active: bool,
+    stderr_tail: VecDeque<String>,
+    /// 界面主动关闭时,进程退出不再当作异常
+    shutting_down: bool,
+}
+
+impl Actor {
+    fn new(child: Child, stdin: ChildStdin, opts: ClaudeOptions, ev_tx: async_channel::Sender<AgentEvent>) -> Self {
+        let mut translator = Translator::new(&opts.cwd);
+        translator.session_id = opts.effective_session_id();
+        Self {
+            child,
+            stdin,
+            translator,
+            opts,
+            ev_tx,
+            reqs: HashMap::new(),
+            req_seq: 0,
+            turn_active: false,
+            stderr_tail: VecDeque::new(),
+            shutting_down: false,
+        }
+    }
+
+    fn run(&mut self, rx: mpsc::Receiver<Msg>) {
+        self.request(ReqKind::Init, |id| protocol::initialize(id));
+        while let Ok(msg) = rx.recv() {
+            let keep_going = match msg {
+                Msg::Cmd(cmd) => self.on_command(cmd),
+                Msg::Line(line) => self.on_line(&line),
+                Msg::Stderr(line) => {
+                    if self.stderr_tail.len() >= 20 {
+                        self.stderr_tail.pop_front();
+                    }
+                    self.stderr_tail.push_back(line);
+                    true
+                }
+                Msg::Eof => {
+                    self.on_exit();
+                    false
+                }
+            };
+            if !keep_going {
+                break;
+            }
+        }
+        let _ = self.child.kill();
+        let _ = self.child.wait();
+    }
+
+    // ---------- 输出 ----------
+
+    /// 往界面发事件;界面已离开时返回 false。
+    fn emit(&self, event: AgentEvent) -> bool {
+        self.ev_tx.try_send(event).is_ok()
+    }
+
+    fn emit_all(&self, events: Vec<AgentEvent>) -> bool {
+        events.into_iter().all(|e| self.emit(e))
+    }
+
+    fn write(&mut self, v: &Value) {
+        let mut line = v.to_string();
+        line.push('\n');
+        // 进程已死时写入会失败,随后 Eof 会处理善后
+        let _ = self.stdin.write_all(line.as_bytes()).and_then(|_| self.stdin.flush());
+    }
+
+    fn request(&mut self, kind: ReqKind, build: impl FnOnce(&str) -> Value) {
+        self.req_seq += 1;
+        let id = if matches!(kind, ReqKind::Init) { "req_init".to_string() } else { format!("req_{}", self.req_seq) };
+        let v = build(&id);
+        self.reqs.insert(id, kind);
+        self.write(&v);
+    }
+
+    // ---------- 界面命令 ----------
+
+    fn on_command(&mut self, cmd: AgentCommand) -> bool {
+        match cmd {
+            AgentCommand::Prompt { text, images, steer, .. } => {
+                let steering = steer && self.turn_active;
+                if !self.turn_active {
+                    self.turn_active = true;
+                    self.translator.interrupted = false;
+                    if !self.emit(AgentEvent::TurnStarted) {
+                        return false;
+                    }
+                }
+                self.write(&protocol::user_message(&text, &images, steering));
+            }
+            AgentCommand::Cancel => {
+                if self.turn_active {
+                    self.translator.interrupted = true;
+                    self.request(ReqKind::Other("中断"), |id| protocol::interrupt(id));
+                }
+            }
+            AgentCommand::SetModel(m) => {
+                let target = m.clone();
+                self.request(ReqKind::SetModel(m), |id| protocol::set_model(id, &target));
+            }
+            AgentCommand::SetMode(mode) => {
+                self.request(ReqKind::SetMode(mode), |id| protocol::set_permission_mode(id, mode));
+            }
+            AgentCommand::SetEffort(e) => {
+                self.request(ReqKind::Other("切换思考强度"), |id| protocol::set_effort(id, e));
+            }
+            AgentCommand::ResolvePermission { id, option } => {
+                let Some(p) = self.translator.take_pending(&id) else { return true };
+                self.write(&protocol::permission_response(&p, &option));
+                let mut ok = self.emit(AgentEvent::PermissionResolved { id, option: option.clone() });
+                if option == "allow_always"
+                    && let Some(mode) = suggested_mode(&p)
+                {
+                    ok &= self.emit(AgentEvent::ModeChanged(mode));
+                }
+                return ok;
+            }
+            AgentCommand::AnswerQuestion { id, answers } => {
+                let Some(p) = self.translator.take_pending(&id) else { return true };
+                self.write(&protocol::question_response(&p, &answers));
+                return self.emit(AgentEvent::QuestionAnswered { id, answers });
+            }
+            AgentCommand::ResolvePlan { id, approve } => {
+                let Some(p) = self.translator.take_pending(&id) else { return true };
+                self.write(&protocol::plan_response(&p, approve));
+                let mut ok = self.emit(AgentEvent::PlanResolved { id, approved: approve });
+                if approve && let Some(mode) = suggested_mode(&p) {
+                    ok &= self.emit(AgentEvent::ModeChanged(mode));
+                }
+                return ok;
+            }
+            AgentCommand::RunScenario(_) => {}
+            AgentCommand::Shutdown => {
+                self.shutting_down = true;
+                // 先把挂起的请求都拒绝掉,让 claude 干净退出
+                for (_, p) in self.translator.drain_pending() {
+                    self.write(&protocol::reject_response(&p));
+                }
+                return false;
+            }
+        }
+        true
+    }
+
+    // ---------- claude 输出 ----------
+
+    fn on_line(&mut self, line: &str) -> bool {
+        let Ok(v) = serde_json::from_str::<Value>(line) else {
+            // 非 JSON 行(例如启动横幅)当作诊断信息保留
+            self.stderr_tail.push_back(line.chars().take(200).collect());
+            return true;
+        };
+        match v.get("type").and_then(Value::as_str).unwrap_or_default() {
+            "control_response" => return self.on_control_response(&v),
+            "control_request" => {
+                let (events, reply) = self.translator.control_request(&v);
+                if let Some(reply) = reply {
+                    self.write(&reply);
+                }
+                return self.emit_all(events);
+            }
+            "control_cancel_request" => {
+                let id = v.get("request_id").and_then(Value::as_str).unwrap_or_default();
+                let events = self.translator.cancel_request(id);
+                return self.emit_all(events);
+            }
+            _ => {}
+        }
+
+        let ty = v.get("type").and_then(Value::as_str).unwrap_or_default();
+        // claude 自行开启的回合(排队消息、后台任务通知)也要让界面进入运行态
+        if !self.turn_active && matches!(ty, "stream_event" | "assistant") {
+            self.turn_active = true;
+            if !self.emit(AgentEvent::TurnStarted) {
+                return false;
+            }
+        }
+        let events = self.translator.handle(&v);
+        if ty == "result" {
+            self.turn_active = false;
+        }
+        self.emit_all(events)
+    }
+
+    fn on_control_response(&mut self, v: &Value) -> bool {
+        let resp = &v["response"];
+        let id = resp.get("request_id").and_then(Value::as_str).unwrap_or_default();
+        let Some(kind) = self.reqs.remove(id) else { return true };
+        let ok = resp.get("subtype").and_then(Value::as_str) == Some("success");
+        let error = resp.get("error").and_then(Value::as_str).unwrap_or("未知错误").to_string();
+        let warn = |what: &str| AgentEvent::Notice { level: NoticeLevel::Warning, text: format!("{what}失败:{error}") };
+
+        match kind {
+            ReqKind::Init => {
+                let body = &resp["response"];
+                let models: Vec<ModelInfo> = body
+                    .get("models")
+                    .and_then(Value::as_array)
+                    .map(|a| {
+                        a.iter()
+                            .filter_map(|m| {
+                                let value = m.get("value")?.as_str()?;
+                                let name = m.get("displayName").and_then(Value::as_str).unwrap_or(value);
+                                let desc = m.get("description").and_then(Value::as_str).unwrap_or_default();
+                                Some(ModelInfo::new(value, name, desc))
+                            })
+                            .collect()
+                    })
+                    .filter(|m: &Vec<ModelInfo>| !m.is_empty())
+                    .unwrap_or_else(default_models);
+                let mode = self
+                    .opts
+                    .mode
+                    .or_else(|| body.get("current_permission_mode").and_then(Value::as_str).and_then(PermissionMode::from_cli))
+                    .unwrap_or_default();
+                let model = self.opts.model.clone().unwrap_or_else(|| "default".into());
+                let mut events = vec![AgentEvent::Ready { session_id: self.opts.effective_session_id(), models, model, mode }];
+                if !ok {
+                    events.push(warn("初始化"));
+                }
+                self.emit_all(events)
+            }
+            ReqKind::SetModel(m) => {
+                if ok { self.emit(AgentEvent::ModelChanged(m)) } else { self.emit(warn("切换模型")) }
+            }
+            ReqKind::SetMode(m) => {
+                if ok { self.emit(AgentEvent::ModeChanged(m)) } else { self.emit(warn("切换权限模式")) }
+            }
+            ReqKind::Other(what) => {
+                // 中断失败时撤销取消标记,避免下一个回合被误判为已取消
+                if !ok && what == "中断" {
+                    self.translator.interrupted = false;
+                }
+                if ok { true } else { self.emit(warn(what)) }
+            }
+        }
+    }
+
+    fn on_exit(&mut self) {
+        if self.shutting_down {
+            return;
+        }
+        let status = self.child.wait().ok();
+        let code = status.and_then(|s| s.code());
+        let mut text = match code {
+            Some(0) => "claude 进程已退出".to_string(),
+            Some(c) => format!("claude 进程异常退出(退出码 {c})"),
+            None => "claude 进程被信号终止".to_string(),
+        };
+        if !self.stderr_tail.is_empty() {
+            text.push_str(":\n");
+            text.push_str(&self.stderr_tail.iter().cloned().collect::<Vec<_>>().join("\n"));
+        }
+        if self.turn_active {
+            self.turn_active = false;
+            let _ = self.emit(AgentEvent::TurnEnded(StopReason::Error));
+        }
+        let _ = self.emit(AgentEvent::Notice { level: NoticeLevel::Error, text });
+    }
+}

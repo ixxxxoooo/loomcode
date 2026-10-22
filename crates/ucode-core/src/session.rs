@@ -144,6 +144,14 @@ impl SessionState {
                 Some(TimelineItem::Todos { items: old, .. }) => *old = items,
                 _ => self.items.push(TimelineItem::Todos { id, items }),
             },
+            AgentEvent::PromoteToPermission { parent, request } => {
+                let list = target_list(&mut self.items, &parent);
+                let pos = list.iter().rposition(|i| matches!(i, TimelineItem::Tool(t) if t.id == request.tool.id));
+                match pos {
+                    Some(p) => list[p] = TimelineItem::Permission(request),
+                    None => list.push(TimelineItem::Permission(request)),
+                }
+            }
             AgentEvent::PermissionResolved { id, option } => {
                 if let Some(TimelineItem::Permission(p)) = self.find_mut(&id) {
                     p.resolved = Some(option);
@@ -272,6 +280,19 @@ mod tests {
         });
         let TimelineItem::Subagent(card) = &s.items[0] else { panic!() };
         assert!(matches!(&card.children[0], TimelineItem::Tool(t) if t.status == ToolStatus::Completed));
+    }
+
+    #[test]
+    fn 工具卡升级为权限请求() {
+        let mut s = SessionState::default();
+        s.apply(AgentEvent::Append { parent: None, item: TimelineItem::Tool(ToolCall::new("t1", "Bash", "ls")) });
+        s.apply(AgentEvent::PromoteToPermission {
+            parent: None,
+            request: PermissionRequest { id: "t1".into(), tool: ToolCall::new("t1", "Bash", "ls"), options: vec![], resolved: None },
+        });
+        assert_eq!(s.items.len(), 1);
+        assert!(matches!(&s.items[0], TimelineItem::Permission(_)));
+        assert!(s.awaiting_user());
     }
 
     #[test]
