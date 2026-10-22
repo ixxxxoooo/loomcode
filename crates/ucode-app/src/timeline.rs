@@ -6,7 +6,6 @@ use crate::tool_card;
 use crate::ui::{icon, pill};
 use gpui_kit::assets::IconName;
 use gpui_kit::component::shimmer::ShimmerText;
-use gpui_kit::component::text::TextView;
 use gpui_kit::component::{ActiveTheme, h_flex, v_flex};
 use gpui_kit::prelude::FluentBuilder as _;
 use gpui_kit::*;
@@ -23,8 +22,8 @@ pub fn render_row(session: &Entity<SessionModel>, ix: usize, window: &mut Window
         .w_full()
         .flex()
         .justify_center()
-        .px_4()
-        .py_1()
+        .px_1()
+        .py(px(5.))
         .child(div().w_full().max_w(px(CONTENT_MAX_W)).child(render_item(session, &item, 0, window, cx)))
         .into_any_element()
 }
@@ -33,11 +32,7 @@ pub fn render_row(session: &Entity<SessionModel>, ix: usize, window: &mut Window
 pub fn render_item(session: &Entity<SessionModel>, item: &TimelineItem, depth: usize, window: &mut Window, cx: &mut App) -> AnyElement {
     match item {
         TimelineItem::User { id, text, images, files } => render_user(session, id, text, images, files, cx),
-        TimelineItem::Assistant { id, text, .. } => div()
-            .w_full()
-            .text_size(px(14.))
-            .child(TextView::markdown(SharedString::from(format!("md-{id}")), text.clone()).selectable(true))
-            .into_any_element(),
+        TimelineItem::Assistant { id, text, .. } => crate::rich_text::render_assistant(id, text, cx),
         TimelineItem::Thinking { id, text, streaming } => render_thinking(session, id, text, *streaming, cx),
         TimelineItem::Tool(tool) => tool_card::render_tool(session, tool, cx),
         TimelineItem::Todos { id, items } => cards::render_todos(id, items, cx),

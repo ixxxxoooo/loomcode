@@ -288,6 +288,7 @@ impl Workbench {
                     MessageScroller::new("timeline", scroller_state, move |ix, window, cx| timeline::render_row(&session, ix, window, cx))
                         .size_full()
                         .jump_button(true)
+                        .with_row_style(StyleRefinement::default().pb(px(0.)))
                         .with_jump_button_label("跳到最新"),
                 ),
             )

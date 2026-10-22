@@ -10,6 +10,7 @@ mod composer;
 mod diff;
 mod model;
 mod file_tree;
+mod rich_text;
 mod right_panel;
 mod sidebar;
 mod theme;
