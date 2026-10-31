@@ -61,6 +61,19 @@ fn 工作目录与颜色输出() {
 }
 
 #[test]
+fn 先输出后缩窄不丢内容() {
+    // 模拟「命令在默认 80 列下已经输出完,面板才量出实际宽度并缩窄」
+    let t = sh("for i in 0 1 2 3 4 5 6 7; do echo row$i-xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx; done; sleep 1");
+    wait_for(&t, |s| s.text().contains("row7-"));
+    t.resize(40, 60);
+    let s = t.snapshot();
+    let flat: String = s.text().chars().filter(|c| !c.is_whitespace()).collect();
+    for i in 0..8 {
+        assert!(flat.contains(&format!("row{i}-")), "丢了 row{i},画面:{:?}", s.text());
+    }
+}
+
+#[test]
 fn 更新回调会被触发() {
     use std::sync::atomic::{AtomicUsize, Ordering};
     let n = Arc::new(AtomicUsize::new(0));

@@ -47,9 +47,9 @@ impl EventListener for Listener {
     }
 }
 
-struct Size {
-    cols: usize,
-    rows: usize,
+pub(crate) struct Size {
+    pub cols: usize,
+    pub rows: usize,
 }
 
 impl Dimensions for Size {
@@ -62,6 +62,19 @@ impl Dimensions for Size {
     fn columns(&self) -> usize {
         self.cols
     }
+}
+
+/// 调整终端网格大小。
+///
+/// 列数和行数同时变化时分两步:先改列数(保持原行数),再改行数。alacritty 内部先处理行数、
+/// 再重排列数,一步到位的话,缩窄重排多出来的折行会把上面的内容顶进回看历史;
+/// 分两步则加高行数时会把历史里的行拉回画面。
+pub(crate) fn resize_term<T: EventListener>(term: &mut Term<T>, cols: usize, rows: usize) {
+    let old_rows = term.screen_lines();
+    if cols != term.columns() && rows != old_rows {
+        term.resize(Size { cols, rows: old_rows });
+    }
+    term.resize(Size { cols, rows });
 }
 
 struct Inner {
@@ -156,7 +169,7 @@ impl Terminal {
         if inner.term.columns() == cols as usize && inner.term.screen_lines() == rows as usize {
             return;
         }
-        inner.term.resize(Size { cols: cols as usize, rows: rows as usize });
+        resize_term(&mut inner.term, cols as usize, rows as usize);
         drop(inner);
         let _ = self.master.lock().unwrap().resize(PtySize { rows, cols, pixel_width: 0, pixel_height: 0 });
     }

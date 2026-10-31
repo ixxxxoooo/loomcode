@@ -198,6 +198,21 @@ mod tests {
         assert_eq!(s.text(), "中a");
     }
 
+    /// 先按 80 列输出,再缩窄并加高:重排后每一行内容都必须还在画面里(只会多折行,不能被顶进历史)。
+    #[test]
+    fn 缩窄重排不丢内容() {
+        let mut term = Term::new(Config::default(), &Size(80, 24), VoidListener);
+        let mut parser: Processor = Processor::default();
+        let rows: Vec<String> = (0..8).map(|i| format!("row{i}-{}", "x".repeat(50))).collect();
+        parser.advance(&mut term, format!("{}\r\n", rows.join("\r\n")).as_bytes());
+        crate::terminal::resize_term(&mut term, 40, 60);
+        let text = build(&term, String::new(), None).text();
+        let flat: String = text.chars().filter(|c| !c.is_whitespace()).collect();
+        for r in &rows {
+            assert!(flat.contains(r.as_str()), "丢了 {r},画面:{text:?}");
+        }
+    }
+
     #[test]
     fn 清屏与光标定位() {
         let s = feed(10, 3, "xxx\x1b[2J\x1b[2;3Hhi");
