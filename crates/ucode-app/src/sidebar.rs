@@ -86,6 +86,12 @@ fn nav_row(
         .when_some(shortcut, |d, k| d.child(div().text_size(px(11.)).text_color(t.muted_foreground).child(k)))
 }
 
+/// 一个项目折叠时要显示的状态:等待你处理 > 运行中 > 未读 > 无(已归档的会话不算)。
+pub fn summary_badge(sessions: &[SessionMeta]) -> SessionBadge {
+    let live = || sessions.iter().filter(|s| !s.archived).map(|s| s.badge);
+    [SessionBadge::Waiting, SessionBadge::Running, SessionBadge::Unread].into_iter().find(|b| live().any(|x| x == *b)).unwrap_or(SessionBadge::Idle)
+}
+
 /// 渲染整个左侧栏。
 pub fn render(wb: &Workbench, cx: &mut Context<Workbench>) -> impl IntoElement {
     let t = cx.theme().clone();
@@ -130,9 +136,11 @@ pub fn render(wb: &Workbench, cx: &mut Context<Workbench>) -> impl IntoElement {
                     let workspace = wb.ui_state.workspace_by_dir(&p.path).cloned();
                     let worktree = wb.is_worktree_project(&p.path);
                     let menu = project_menu::build(cx.entity().downgrade(), p.path.clone(), p.name.clone(), pinned, workspace.is_some(), worktree);
+                    let more_menu = project_menu::build(cx.entity().downgrade(), p.path.clone(), p.name.clone(), pinned, workspace.is_some(), worktree);
+                    let group = SharedString::from(format!("proj-group-{pi}"));
                     v_flex()
                         .child(
-                            h_flex().id(SharedString::from(format!("proj-{pi}"))).h(px(28.)).px_1().gap_1p5().items_center().rounded(px(6.)).cursor_pointer()
+                            h_flex().id(SharedString::from(format!("proj-{pi}"))).group(group.clone()).h(px(28.)).px_1().gap_1p5().items_center().rounded(px(6.)).cursor_pointer()
                                 .hover(|d| d.bg(t.sidebar_accent))
                                 .on_click(cx.listener(move |this, _, _, cx| this.toggle_project(pi, cx)))
                                 .child(icon(if expanded { IconName::ChevronDown } else { IconName::ChevronRight }, 12., t.muted_foreground))
@@ -140,10 +148,17 @@ pub fn render(wb: &Workbench, cx: &mut Context<Workbench>) -> impl IntoElement {
                                 .child(div().flex_1().truncate().text_size(px(13.)).font_weight(FontWeight::MEDIUM).child(p.name.clone()))
                                 .when(pinned, |d| d.child(icon(IconName::Pin, 11., t.muted_foreground)))
                                 .when_some(workspace.as_ref(), |d, w| d.child(div().text_size(px(11.)).text_color(t.muted_foreground).child(format!("{} 个文件夹", w.folders.len()))))
-                                .when_some(p.branch.clone(), |d, b| {
-                                    d.child(h_flex().gap_0p5().items_center().text_size(px(11.)).text_color(t.muted_foreground)
-                                        .child(icon(IconName::GitBranch, 11., t.muted_foreground)).child(b))
-                                })
+                                // 折叠时把项目里最需要关注的会话状态带到这一行:等待你 > 运行中 > 未读
+                                .when(!expanded, |d| d.children(status_dot(summary_badge(&p.sessions), cx)))
+                                // 悬停时才出现的操作:在这个项目里新建会话、更多菜单(同右键菜单)
+                                .child(
+                                    h_flex().gap_0p5().items_center().invisible().group_hover(group.clone(), |d| d.visible())
+                                        .on_mouse_down(MouseButton::Left, |_, _, cx| cx.stop_propagation())
+                                        .child(Button::new(SharedString::from(format!("proj-new-{pi}"))).xsmall().ghost().icon(IconName::Plus).tooltip("在此项目新建会话")
+                                            .on_click(cx.listener(move |this, _, window, cx| this.new_session(pi, window, cx))))
+                                        .child(Button::new(SharedString::from(format!("proj-more-{pi}"))).xsmall().ghost().icon(IconName::Ellipsis).tooltip("更多")
+                                            .dropdown_menu(more_menu)),
+                                )
                                 .context_menu(menu),
                         )
                         .when(expanded, |d| d.children(sessions.iter().map(|s| session_row(wb, pi, s, cx).into_any_element())))
@@ -162,4 +177,21 @@ pub fn render(wb: &Workbench, cx: &mut Context<Workbench>) -> impl IntoElement {
                 .child(Button::new("nav-browser").small().ghost().icon(IconName::Globe)
                     .on_click(cx.listener(|this, _, _, cx| this.set_page(Page::Browser, cx)))),
         )
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn meta(badge: SessionBadge, archived: bool) -> SessionMeta {
+        SessionMeta { id: "x".into(), title: "t".into(), updated: String::new(), pinned: false, archived, badge }
+    }
+
+    #[::core::prelude::v1::test]
+    fn 折叠状态按优先级汇总() {
+        assert_eq!(summary_badge(&[]), SessionBadge::Idle);
+        assert_eq!(summary_badge(&[meta(SessionBadge::Unread, false), meta(SessionBadge::Running, false)]), SessionBadge::Running);
+        assert_eq!(summary_badge(&[meta(SessionBadge::Running, false), meta(SessionBadge::Waiting, false)]), SessionBadge::Waiting);
+        assert_eq!(summary_badge(&[meta(SessionBadge::Waiting, true)]), SessionBadge::Idle);
+    }
 }
