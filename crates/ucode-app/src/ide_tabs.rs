@@ -20,6 +20,8 @@ pub struct TabModel {
     preview: Option<PathBuf>,
     /// 激活历史,最近的在末尾
     history: Vec<PathBuf>,
+    /// 固定的标签(总是排在最左边,「关闭其他 / 右侧」不会关它们)
+    pinned: Vec<PathBuf>,
 }
 
 /// 打开文件的结果:告诉视图要不要建新文档、哪个预览被顶掉了。
@@ -76,6 +78,7 @@ impl TabModel {
     pub fn close(&mut self, path: &Path) -> Option<PathBuf> {
         let ix = self.order.iter().position(|p| p == path)?;
         self.order.remove(ix);
+        self.pinned.retain(|p| p != path);
         self.history.retain(|p| p != path);
         if self.preview.as_deref() == Some(path) {
             self.preview = None;
@@ -94,13 +97,13 @@ impl TabModel {
 
     /// 除 `keep` 之外的标签(用于「关闭其他」)。
     pub fn others(&self, keep: &Path) -> Vec<PathBuf> {
-        self.order.iter().filter(|p| *p != keep).cloned().collect()
+        self.order.iter().filter(|p| *p != keep && !self.is_pinned(p)).cloned().collect()
     }
 
     /// `path` 右侧的标签(用于「关闭右侧」)。
     pub fn right_of(&self, path: &Path) -> Vec<PathBuf> {
         match self.order.iter().position(|p| p == path) {
-            Some(ix) => self.order[ix + 1..].to_vec(),
+            Some(ix) => self.order[ix + 1..].iter().filter(|p| !self.is_pinned(p)).cloned().collect(),
             None => Vec::new(),
         }
     }
@@ -112,6 +115,37 @@ impl TabModel {
         let next = self.order[(cur + step).rem_euclid(n) as usize].clone();
         self.activate(&next);
         Some(next)
+    }
+
+    /// 切换「固定」:固定的标签移到最左侧固定区的末尾,取消固定则移到固定区之后。
+    pub fn toggle_pin(&mut self, path: &Path) {
+        let Some(ix) = self.order.iter().position(|p| p == path) else { return };
+        let item = self.order.remove(ix);
+        if let Some(pix) = self.pinned.iter().position(|p| p == path) {
+            self.pinned.remove(pix);
+        } else {
+            self.pinned.push(item.clone());
+            self.preview = self.preview.take().filter(|p| p != path);
+        }
+        self.order.insert(self.pinned.len() - usize::from(self.is_pinned(path)), item);
+    }
+
+    /// 是否为固定标签。
+    pub fn is_pinned(&self, path: &Path) -> bool {
+        self.pinned.iter().any(|p| p == path)
+    }
+
+    /// 把 `path` 拖到 `target` 的位置(向右拖落在目标之后,向左拖落在目标之前);固定与非固定不互相越界。
+    pub fn move_to(&mut self, path: &Path, target: &Path) {
+        if path == target || self.is_pinned(path) != self.is_pinned(target) {
+            return;
+        }
+        let (Some(from), Some(to)) = (self.order.iter().position(|p| p == path), self.order.iter().position(|p| p == target)) else { return };
+        let item = self.order.remove(from);
+        self.order.insert(to, item);
+        if self.is_pinned(path) {
+            self.pinned = self.order.iter().filter(|p| self.pinned.contains(p)).cloned().collect();
+        }
     }
 
     /// 所有标签。
@@ -190,6 +224,24 @@ mod tests {
         }
         assert_eq!(m.others(&p("b")), [p("a"), p("c")]);
         assert_eq!(m.right_of(&p("a")), [p("b"), p("c")]);
+    }
+
+    #[test]
+    fn 固定与拖动() {
+        let mut m = TabModel::default();
+        for n in ["a", "b", "c", "d"] {
+            m.open(&p(n), false);
+        }
+        m.toggle_pin(&p("c"));
+        assert_eq!(m.tabs(), [p("c"), p("a"), p("b"), p("d")]);
+        assert_eq!(m.others(&p("a")), [p("b"), p("d")]);
+        m.move_to(&p("d"), &p("a"));
+        assert_eq!(m.tabs(), [p("c"), p("d"), p("a"), p("b")]);
+        // 固定与非固定之间不能互拖
+        m.move_to(&p("b"), &p("c"));
+        assert_eq!(m.tabs()[0], p("c"));
+        m.toggle_pin(&p("c"));
+        assert!(!m.is_pinned(&p("c")));
     }
 
     #[test]

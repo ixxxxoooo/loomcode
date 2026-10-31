@@ -28,6 +28,7 @@ mod ide_watch;
 mod ide_chat_header;
 mod ide_gutter;
 mod ide_chrome;
+mod ide_close;
 mod ide_tabs;
 mod ide_window;
 mod palette;

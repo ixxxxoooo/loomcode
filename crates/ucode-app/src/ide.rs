@@ -4,13 +4,11 @@
 //! @author ixxxxoooo
 
 use crate::file_tree::language_for;
-use crate::ide_chrome::{breadcrumbs, tab_bar, welcome};
+use crate::ide_chrome::{TabItem, breadcrumbs, tab_bar, welcome};
 use crate::ide_tabs::TabModel;
 use crate::ui::empty_state;
 use gpui_kit::assets::IconName;
 use gpui_kit::component::input::{Editor, EditorState, InputEvent};
-use gpui_kit::component::WindowExt as _;
-use gpui_kit::component::button::ButtonVariant;
 use gpui_kit::component::{ActiveTheme, v_flex};
 use gpui_kit::*;
 use std::collections::HashMap;
@@ -45,12 +43,14 @@ pub struct IdeView {
     pub(crate) tabs: TabModel,
     /// 打不开文件或保存失败时的说明
     pub(crate) note: Option<String>,
+    /// 以图片方式打开的标签(没有文本文档)
+    pub(crate) images: std::collections::HashSet<PathBuf>,
 }
 
 impl IdeView {
     /// 创建空的编辑器视图。
     pub fn new() -> Self {
-        Self { root: String::new(), docs: HashMap::new(), tabs: TabModel::default(), note: None }
+        Self { root: String::new(), docs: HashMap::new(), tabs: TabModel::default(), note: None, images: Default::default() }
     }
 
     /// 设置项目根目录(会话切换时由宿主调用)。
@@ -65,7 +65,9 @@ impl IdeView {
     /// 已打开的文件只激活;读取失败时在编辑区给出说明。
     pub fn open(&mut self, path: PathBuf, preview: bool, window: &mut Window, cx: &mut Context<Self>) {
         self.note = None;
-        if !self.docs.contains_key(&path) {
+        if is_image(&path) {
+            self.images.insert(path.clone());
+        } else if !self.docs.contains_key(&path) {
             match load(&path, window, cx) {
                 Ok(doc) => {
                     self.docs.insert(path.clone(), doc);
@@ -80,6 +82,7 @@ impl IdeView {
         let out = self.tabs.open(&path, preview);
         if let Some(old) = out.replaced {
             self.docs.remove(&old);
+            self.images.remove(&old);
         }
         self.focus_active(window, cx);
         self.refresh_marks(&path, cx);
@@ -99,8 +102,29 @@ impl IdeView {
         cx.notify();
     }
 
+    /// 切换标签的固定状态。
+    pub fn toggle_pin_tab(&mut self, path: &Path, cx: &mut Context<Self>) {
+        self.tabs.toggle_pin(path);
+        cx.notify();
+    }
+
+    /// 拖动排序:把 `path` 放到 `target` 的位置。
+    pub fn move_tab(&mut self, path: &Path, target: &Path, cx: &mut Context<Self>) {
+        self.tabs.move_to(path, target);
+        cx.notify();
+    }
+
+    /// 标签栏的数据;`active` 为当前标签。
+    fn tab_items(&self, active: &Path) -> Vec<TabItem> {
+        self.tabs
+            .tabs()
+            .iter()
+            .map(|p| TabItem { path: p.clone(), dirty: self.docs.get(p).is_some_and(|d| !d.saved), preview: self.tabs.is_preview(p), active: p == active, pinned: self.tabs.is_pinned(p) })
+            .collect()
+    }
+
     /// 让当前标签的编辑器获得焦点。
-    fn focus_active(&self, window: &mut Window, cx: &mut Context<Self>) {
+    pub(crate) fn focus_active(&self, window: &mut Window, cx: &mut Context<Self>) {
         if let Some(doc) = self.tabs.active().and_then(|p| self.docs.get(p)) {
             doc.editor.update(cx, |e, cx| e.focus(window, cx));
         }
@@ -123,8 +147,15 @@ impl IdeView {
 
     /// 保存当前文件到磁盘。
     pub fn save(&mut self, cx: &mut Context<Self>) {
-        let Some(path) = self.tabs.active().map(Path::to_path_buf) else { return };
-        let Some(doc) = self.docs.get_mut(&path) else { return };
+        if let Some(path) = self.tabs.active().map(Path::to_path_buf) {
+            self.save_path(&path, cx);
+        }
+    }
+
+    /// 保存指定标签;返回是否成功(没有该文档也算失败)。
+    pub fn save_path(&mut self, path: &Path, cx: &mut Context<Self>) -> bool {
+        let path = path.to_path_buf();
+        let Some(doc) = self.docs.get_mut(&path) else { return false };
         let text = doc.editor.read(cx).value().to_string();
         match std::fs::write(&path, text) {
             Ok(()) => {
@@ -134,10 +165,15 @@ impl IdeView {
                 self.note = None;
                 self.tabs.pin(&path);
             }
-            Err(e) => self.note = Some(format!("保存失败:{e}")),
+            Err(e) => {
+                self.note = Some(format!("保存失败:{e}"));
+                cx.notify();
+                return false;
+            }
         }
         self.refresh_marks(&path, cx);
         cx.notify();
+        true
     }
 
     /// 从磁盘重新载入当前文件(丢弃未保存的修改)。
@@ -152,74 +188,6 @@ impl IdeView {
             Err(note) => self.note = Some(note),
         }
         cx.notify();
-    }
-
-    /// 立即关闭一个标签并丢弃其文档。
-    fn drop_tab(&mut self, path: &Path) {
-        self.docs.remove(path);
-        self.tabs.close(path);
-    }
-
-    /// 请求关闭一批标签:有未保存修改时先弹确认,否则直接关闭。
-    ///
-    /// 参数:`paths` 要关闭的标签。
-    pub fn request_close(&mut self, paths: Vec<PathBuf>, window: &mut Window, cx: &mut Context<Self>) {
-        let dirty: Vec<String> = paths
-            .iter()
-            .filter(|p| self.docs.get(*p).is_some_and(|d| !d.saved))
-            .map(|p| p.file_name().map(|n| n.to_string_lossy().to_string()).unwrap_or_default())
-            .collect();
-        if dirty.is_empty() {
-            self.close_now(&paths, window, cx);
-            return;
-        }
-        let (view, list) = (cx.entity().downgrade(), dirty.join("、"));
-        window.open_alert_dialog(cx, move |alert, _, _| {
-            let (view, paths) = (view.clone(), paths.clone());
-            alert
-                .confirm()
-                .title("放弃未保存的修改?")
-                .description(format!("「{list}」有未保存的修改,关闭后将丢失。可取消后先按 ⌘S 保存。"))
-                .ok_text("放弃并关闭")
-                .ok_variant(ButtonVariant::Danger)
-                .on_ok(move |_, window, cx| {
-                    let _ = view.update(cx, |this, cx| this.close_now(&paths, window, cx));
-                    true
-                })
-        });
-    }
-
-    /// 关闭一批标签并让编辑器聚焦到新的当前标签。
-    fn close_now(&mut self, paths: &[PathBuf], window: &mut Window, cx: &mut Context<Self>) {
-        for p in paths {
-            self.drop_tab(p);
-        }
-        self.focus_active(window, cx);
-        cx.notify();
-    }
-
-    /// 关闭一个标签(有未保存修改会先确认)。
-    pub fn close_tab(&mut self, path: &Path, window: &mut Window, cx: &mut Context<Self>) {
-        self.request_close(vec![path.to_path_buf()], window, cx);
-    }
-
-    /// 关闭除 `keep` 之外的所有标签。
-    pub fn close_others(&mut self, keep: &Path, window: &mut Window, cx: &mut Context<Self>) {
-        let list = self.tabs.others(keep);
-        self.request_close(list, window, cx);
-    }
-
-    /// 关闭 `path` 右侧的所有标签。
-    pub fn close_right(&mut self, path: &Path, window: &mut Window, cx: &mut Context<Self>) {
-        let list = self.tabs.right_of(path);
-        self.request_close(list, window, cx);
-    }
-
-    /// 关闭当前标签。
-    pub fn close_active(&mut self, window: &mut Window, cx: &mut Context<Self>) {
-        if let Some(p) = self.tabs.active().map(Path::to_path_buf) {
-            self.close_tab(&p, window, cx);
-        }
     }
 
     /// 把光标移到指定行列(1 起始),并让编辑器获得焦点。
@@ -248,6 +216,11 @@ impl IdeView {
         self.focus_active(window, cx);
         cx.notify();
     }
+}
+
+/// 按扩展名判断是否图片(用图片查看而不是文本编辑)。
+pub fn is_image(path: &Path) -> bool {
+    path.extension().and_then(|e| e.to_str()).is_some_and(|e| matches!(e.to_lowercase().as_str(), "png" | "jpg" | "jpeg" | "gif" | "webp" | "svg" | "ico" | "bmp"))
 }
 
 /// 读取文本文件并建立编辑器;二进制或过大的文件返回说明。
@@ -287,6 +260,11 @@ impl Render for IdeView {
             .on_action(cx.listener(|this, _: &NextTab, window, cx| this.cycle(1, window, cx)))
             .on_action(cx.listener(|this, _: &PrevTab, window, cx| this.cycle(-1, window, cx)));
         let active = self.tabs.active().map(Path::to_path_buf);
+        if let Some(img_path) = active.clone().filter(|p| self.images.contains(p)) {
+            return root.child(tab_bar(self.tab_items(&img_path), cx)).child(breadcrumbs(&img_path, &self.root, true, None, cx)).child(
+                div().flex_1().min_h_0().flex().items_center().justify_center().p_4().child(img(img_path).max_w_full().max_h_full()),
+            ).into_any_element();
+        }
         let Some(path) = active.filter(|p| self.docs.contains_key(p)) else {
             if let Some(note) = self.note.clone() {
                 return root.child(empty_state(IconName::Code, "无法打开", &note, cx)).into_any_element();
@@ -295,13 +273,7 @@ impl Render for IdeView {
         };
         let doc = &self.docs[&path];
         let editor = doc.editor.clone();
-        let items: Vec<_> = self
-            .tabs
-            .tabs()
-            .iter()
-            .map(|p| (p.clone(), self.docs.get(p).is_some_and(|d| !d.saved), self.tabs.is_preview(p), *p == path))
-            .collect();
-        root.child(tab_bar(items, cx))
+        root.child(tab_bar(self.tab_items(&path), cx))
             .child(breadcrumbs(&path, &self.root, doc.saved, self.note.clone().or_else(|| doc.stale.then(|| "磁盘上的文件已被修改,点右侧刷新按钮载入(会丢弃你的修改)".to_string())), cx))
             .child(div().flex_1().min_h_0().child(Editor::new(&editor).bordered(false).appearance(false).size_full()))
             .into_any_element()

@@ -15,9 +15,36 @@ use std::path::{Path, PathBuf};
 /// 标签栏高度。
 const TAB_H: f32 = 35.;
 
-/// 标签栏:每项 `(路径, 是否未保存, 是否预览, 是否当前)`。
-/// 预览标签用斜体;未保存显示圆点,悬停或当前标签显示关闭按钮;中键关闭、双击固定。
-pub fn tab_bar(items: Vec<(PathBuf, bool, bool, bool)>, cx: &mut Context<IdeView>) -> impl IntoElement {
+/// 标签栏上的一项。
+pub struct TabItem {
+    pub path: PathBuf,
+    /// 有未保存的修改
+    pub dirty: bool,
+    /// 预览标签(斜体)
+    pub preview: bool,
+    /// 当前标签
+    pub active: bool,
+    /// 已固定
+    pub pinned: bool,
+}
+
+/// 拖动标签时跟随鼠标的小浮标,同时携带被拖的路径。
+#[derive(Clone)]
+pub struct DraggedTab {
+    pub path: PathBuf,
+}
+
+impl Render for DraggedTab {
+    fn render(&mut self, _: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
+        let t = cx.theme();
+        let name = self.path.file_name().map(|n| n.to_string_lossy().to_string()).unwrap_or_default();
+        div().px_3().py_1().rounded(px(6.)).border_1().border_color(t.border).bg(t.background).text_size(px(12.5)).shadow_md().child(name)
+    }
+}
+
+/// 标签栏:预览标签用斜体;未保存显示圆点,悬停或当前标签显示关闭按钮;固定标签显示图钉;
+/// 中键关闭、双击固定预览,可拖动排序(固定与非固定之间不互拖)。
+pub fn tab_bar(items: Vec<TabItem>, cx: &mut Context<IdeView>) -> impl IntoElement {
     let t = cx.theme().clone();
     h_flex()
         .id("ide-tabs")
@@ -28,11 +55,13 @@ pub fn tab_bar(items: Vec<(PathBuf, bool, bool, bool)>, cx: &mut Context<IdeView
         .bg(t.sidebar)
         .border_b_1()
         .border_color(t.border)
-        .children(items.into_iter().enumerate().map(|(i, (path, dirty, preview, active))| {
+        .children(items.into_iter().enumerate().map(|(i, TabItem { path, dirty, preview, active, pinned })| {
             let name = path.file_name().map(|n| n.to_string_lossy().to_string()).unwrap_or_default();
             let group = SharedString::from(format!("tab-{i}"));
             let (p_click, p_close, p_mid) = (path.clone(), path.clone(), path.clone());
-            let menu = tab_menu(cx.entity().downgrade(), path.clone());
+            let menu = tab_menu(cx.entity().downgrade(), path.clone(), pinned);
+            let (p_drag, p_drop) = (path.clone(), path.clone());
+            let accent = t.accent;
             h_flex()
                 .id(SharedString::from(format!("ide-tab-{i}")))
                 .group(group.clone())
@@ -56,8 +85,14 @@ pub fn tab_bar(items: Vec<(PathBuf, bool, bool, bool)>, cx: &mut Context<IdeView
                     }
                 }))
                 .on_mouse_down(MouseButton::Middle, cx.listener(move |this, _, window, cx| this.close_tab(&p_mid, window, cx)))
+                .on_drag(DraggedTab { path: p_drag }, |d, _, _, cx| cx.new(|_| d.clone()))
+                .drag_over::<DraggedTab>(move |s, _, _, _| s.bg(accent))
+                .on_drop(cx.listener(move |this, d: &DraggedTab, _, cx| this.move_tab(&d.path, &p_drop, cx)))
                 .context_menu(menu)
-                .child(icon(IconName::FileText, 13., t.muted_foreground))
+                .child({
+                    let (ic, col) = crate::file_icons::file_icon(&name, cx);
+                    if pinned { icon(IconName::Pin, 13., t.muted_foreground) } else { icon(ic, 13., col) }
+                })
                 .child(div().min_w_0().truncate().when(preview, |d| d.italic()).child(name))
                 .child(
                     div()
@@ -86,7 +121,7 @@ pub fn tab_bar(items: Vec<(PathBuf, bool, bool, bool)>, cx: &mut Context<IdeView
 }
 
 /// 标签右键菜单:关闭 / 关闭其他 / 关闭右侧 / 复制路径。
-fn tab_menu(view: WeakEntity<IdeView>, path: PathBuf) -> impl Fn(PopupMenu, &mut Window, &mut Context<PopupMenu>) -> PopupMenu + 'static {
+fn tab_menu(view: WeakEntity<IdeView>, path: PathBuf, pinned: bool) -> impl Fn(PopupMenu, &mut Window, &mut Context<PopupMenu>) -> PopupMenu + 'static {
     move |menu, _, _| {
         let item = |label: &'static str, icon: IconName| PopupMenuItem::new(label).icon(icon);
         let (v, p) = (view.clone(), path.clone());
@@ -101,16 +136,32 @@ fn tab_menu(view: WeakEntity<IdeView>, path: PathBuf) -> impl Fn(PopupMenu, &mut
         let right = item("关闭右侧", IconName::X).on_click(move |_, window, cx| {
             let _ = v.update(cx, |this, cx| this.close_right(&p, window, cx));
         });
+        let (v, p) = (view.clone(), path.clone());
+        let pin = item(if pinned { "取消固定" } else { "固定标签" }, IconName::Pin).on_click(move |_, _, cx| {
+            let _ = v.update(cx, |this, cx| this.toggle_pin_tab(&p, cx));
+        });
         let p = path.clone();
         let copy = item("复制路径", IconName::Copy).on_click(move |_, _, cx| cx.write_to_clipboard(ClipboardItem::new_string(p.display().to_string())));
-        menu.item(close).item(others).item(right).separator().item(copy)
+        menu.item(pin).separator().item(close).item(others).item(right).separator().item(copy)
     }
 }
 
 /// 面包屑:项目内的相对路径,最后一段为文件名;保存失败等提示显示在右侧。
 pub fn breadcrumbs(path: &Path, root: &str, saved: bool, note: Option<String>, cx: &mut Context<IdeView>) -> impl IntoElement {
     let t = cx.theme().clone();
-    let rel = path.strip_prefix(root).unwrap_or(path);
+    let home = std::env::var_os("HOME").map(PathBuf::from);
+    let tilde;
+    let rel = match path.strip_prefix(root) {
+        Ok(r) => r,
+        // 不在项目内:用 ~ 缩写家目录,不显示一长串绝对路径
+        Err(_) => match home.as_deref().and_then(|h| path.strip_prefix(h).ok()) {
+            Some(r) => {
+                tilde = Path::new("~").join(r);
+                tilde.as_path()
+            }
+            None => path,
+        },
+    };
     let segs: Vec<String> = rel.components().map(|c| c.as_os_str().to_string_lossy().to_string()).collect();
     let last = segs.len().saturating_sub(1);
     h_flex()
