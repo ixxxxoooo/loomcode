@@ -45,6 +45,31 @@ impl Workbench {
         cx.notify();
     }
 
+    /// 回收空闲会话:已打开的会话超过上限时,结束最久未用的空闲会话的 claude 进程。
+    ///
+    /// 运行中、等待用户、有未发送草稿、还没有内容的会话不会被回收;演示模式不回收。
+    /// 被回收的会话下次点开时会重新回放历史,发送消息时再 `--resume`。
+    pub fn evict_idle_views(&mut self, cx: &mut Context<Self>) {
+        if self.demo {
+            return;
+        }
+        let busy = |id: &str| {
+            self.views.get(id).is_none_or(|v| {
+                let st = &v.model.read(cx).state;
+                st.phase == ucode_core::Phase::Running || st.awaiting_user() || st.items.is_empty() || v.composer.read(cx).has_draft(cx)
+            })
+        };
+        let victims = crate::view_cache::pick_evictions(&self.view_order, self.active.as_deref(), busy, crate::view_cache::MAX_OPEN_VIEWS);
+        for id in victims {
+            if let Some(v) = self.views.remove(&id) {
+                v.model.update(cx, |m, _| m.handle.send(AgentCommand::Shutdown));
+            }
+            // 已写进历史的新会话,之后要走 --resume 而不是 --session-id
+            self.new_sessions.remove(&id);
+            self.view_order.retain(|x| x != &id);
+        }
+    }
+
     /// 切换「显示已归档会话」。
     pub fn toggle_show_archived(&mut self, cx: &mut Context<Self>) {
         self.show_archived = !self.show_archived;
@@ -114,6 +139,7 @@ impl Workbench {
         }
         self.unread.remove(id);
         self.new_sessions.remove(id);
+        self.view_order.retain(|x| x != id);
         if !self.demo {
             if let Err(e) = ucode_claude::history::delete_session(cwd, id) {
                 eprintln!("删除会话文件失败:{e}");

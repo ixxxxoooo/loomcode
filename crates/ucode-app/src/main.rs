@@ -27,6 +27,7 @@ mod theme;
 mod timeline;
 mod tool_card;
 mod ui;
+mod view_cache;
 mod workbench;
 
 use gpui_kit::component::TitleBar;

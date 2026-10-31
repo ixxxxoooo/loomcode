@@ -97,6 +97,11 @@ impl Composer {
         Self { session, input, open: None, suggestions: Vec::new(), sel: 0, attachments: Vec::new(), attach_counter: 0, demo, _sub: sub }
     }
 
+    /// 输入框里有没有未发送的内容(文字或附件);淘汰会话视图前要保护草稿。
+    pub fn has_draft(&self, cx: &App) -> bool {
+        !self.input.read(cx).value().trim().is_empty() || !self.attachments.is_empty()
+    }
+
     /// 聚焦输入框。
     pub fn focus(&self, window: &mut Window, cx: &mut Context<Self>) {
         self.input.update(cx, |i, cx| i.focus(window, cx));

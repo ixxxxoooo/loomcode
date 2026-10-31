@@ -114,6 +114,8 @@ pub struct Workbench {
     pub show_archived: bool,
     /// 后台跑完、用户还没看过的会话
     pub unread: HashSet<String>,
+    /// 已打开会话的使用顺序(队首最久未用),用于淘汰空闲会话
+    pub view_order: Vec<String>,
     pub claude_cfg: ClaudeConfig,
     pub settings_tab: SettingsTab,
     pub memory: Option<MemoryDoc>,
@@ -202,6 +204,7 @@ impl Workbench {
             ui_state_path,
             show_archived: false,
             unread: HashSet::new(),
+            view_order: Vec::new(),
             claude_cfg,
             settings_tab: SettingsTab::General,
             memory: None,
@@ -302,6 +305,7 @@ impl Workbench {
                     SessionBadge::Idle
                 }
             }
+            None if self.unread.contains(id) => SessionBadge::Unread,
             None => stored,
         }
     }
@@ -496,6 +500,8 @@ impl Workbench {
         }
         self.unread.remove(id);
         self.active = Some(id.to_string());
+        crate::view_cache::touch(&mut self.view_order, id);
+        self.evict_idle_views(cx);
         self.sync_panel(cx);
         // 调试用:打开会话后在终端里运行一条命令(只触发一次)
         if let Ok(cmd) = std::env::var("UCODE_TERM_CMD") {
