@@ -9,7 +9,7 @@ use crate::model::{SessionModel, UiRequest};
 use crate::palette::{Group, Palette, PaletteAction, PaletteEvent, PaletteItem};
 use crate::right_panel::{PanelEvent, RightPanel};
 use crate::settings::{self, MemoryDoc, SettingsTab};
-use crate::ui::{dev_badge, empty_state, icon};
+use crate::ui::{dev_badge, no_drag, empty_state, icon};
 use crate::{sidebar, theme, timeline};
 use gpui_kit::assets::IconName;
 use gpui_kit::component::TitleBar;
@@ -884,17 +884,17 @@ impl Workbench {
         let title = self.active_model().map(|m| m.read(cx).state.title.clone()).unwrap_or_else(|| "UCode".into());
         TitleBar::new().child(
             h_flex().w_full().items_center().gap_1()
-                .child(Button::new("tb-left").small().ghost().icon(IconName::PanelLeft).selected(self.left_open).tooltip("侧栏(⌘B)")
-                    .on_click(cx.listener(|this, _, _, cx| { this.left_open = !this.left_open; cx.notify(); })))
-                .child(Button::new("tb-search").small().ghost().icon(IconName::Search).tooltip("搜索(⌘K)")
-                    .on_click(cx.listener(|this, _, window, cx| this.toggle_palette(window, cx))))
+                .child(no_drag(Button::new("tb-left").small().ghost().icon(IconName::PanelLeft).selected(self.left_open).tooltip("侧栏(⌘B)")
+                    .on_click(cx.listener(|this, _, _, cx| { this.left_open = !this.left_open; cx.notify(); }))))
+                .child(no_drag(Button::new("tb-search").small().ghost().icon(IconName::Search).tooltip("搜索(⌘K)")
+                    .on_click(cx.listener(|this, _, window, cx| this.toggle_palette(window, cx)))))
                 .when_some(dev_badge(cx), |d, b| d.child(b))
                 .child(div().flex_1().flex().justify_center().text_size(px(13.)).text_color(t.muted_foreground).child(title))
-                .child(Button::new("tb-right").small().ghost().icon(IconName::PanelRight).selected(self.right_open).tooltip("右侧面板(⌥⌘B)")
-                    .on_click(cx.listener(|this, _, _, cx| { this.right_open = !this.right_open; cx.notify(); })))
-                .child(Button::new("tb-ide").small().outline().label("IDE").w(px(96.))
+                .child(no_drag(Button::new("tb-right").small().ghost().icon(IconName::PanelRight).selected(self.right_open).tooltip("右侧面板(⌥⌘B)")
+                    .on_click(cx.listener(|this, _, _, cx| { this.right_open = !this.right_open; cx.notify(); }))))
+                .child(no_drag(Button::new("tb-ide").small().outline().label("IDE").w(px(96.))
                     .icon(if self.settings.fused_ide { IconName::Code } else { IconName::ExternalLink }).tooltip("切换到 IDE(⇧⌘E)")
-                    .on_click(cx.listener(|this, _, window, cx| this.toggle_ide(window, cx)))),
+                    .on_click(cx.listener(|this, _, window, cx| this.toggle_ide(window, cx))))),
         )
     }
 
@@ -913,8 +913,8 @@ impl Workbench {
         let t = cx.theme().clone();
         TitleBar::new().child(
             h_flex().w_full().items_center().gap_1()
-                .child(Button::new("st-back").small().ghost().icon(IconName::ArrowLeft).label("返回")
-                    .on_click(cx.listener(|this, _, _, cx| this.set_page(Page::Chat, cx))))
+                .child(no_drag(Button::new("st-back").small().ghost().icon(IconName::ArrowLeft).label("返回")
+                    .on_click(cx.listener(|this, _, _, cx| this.set_page(Page::Chat, cx)))))
                 .child(div().flex_1().flex().justify_center().text_size(px(13.)).text_color(t.muted_foreground).child("设置"))
                 .when_some(dev_badge(cx), |d, b| d.child(b)),
         )

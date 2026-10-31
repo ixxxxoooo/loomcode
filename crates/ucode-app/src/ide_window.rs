@@ -6,7 +6,7 @@
 
 use crate::ide::IdeView;
 use crate::right_panel::{PanelEvent, RightPanel};
-use crate::ui::{dev_badge, icon};
+use crate::ui::{dev_badge, icon, no_drag};
 use crate::workbench::{Page, RightTab, SaveFile, ToggleIde, ToggleLeft, ToggleRight, Workbench, chat_panel};
 use gpui_kit::assets::IconName;
 use gpui_kit::component::TitleBar;
@@ -115,24 +115,24 @@ impl IdeWindow {
         let t = cx.theme().clone();
         TitleBar::new().child(
             h_flex().w_full().items_center().gap_1()
-                .child(Button::new("iw-left").small().ghost().icon(IconName::PanelLeft).selected(self.left_open).tooltip("侧栏(⌘B)")
-                    .on_click(cx.listener(|this, _, _, cx| { this.left_open = !this.left_open; cx.notify(); })))
+                .child(no_drag(Button::new("iw-left").small().ghost().icon(IconName::PanelLeft).selected(self.left_open).tooltip("侧栏(⌘B)")
+                    .on_click(cx.listener(|this, _, _, cx| { this.left_open = !this.left_open; cx.notify(); }))))
                 .when_some(dev_badge(cx), |d, b| d.child(b))
-                .child(div().flex_1().flex().justify_center().child(
+                .child(div().flex_1().flex().justify_center().child(no_drag(
                     h_flex().w(px(420.)).max_w_full().h(px(26.)).px_3().gap_2().items_center().justify_center().rounded(px(7.))
                         .border_1().border_color(t.border).bg(t.muted).text_size(px(12.)).text_color(t.muted_foreground)
                         .child(icon(IconName::Search, 13., t.muted_foreground))
                         .child(project),
-                ))
-                .child(Button::new("iw-chat").small().ghost().icon(IconName::PanelRight).selected(self.chat_open).tooltip("对话栏(⌥⌘B)")
-                    .on_click(cx.listener(|this, _, _, cx| { this.chat_open = !this.chat_open; cx.notify(); })))
-                .child(Button::new("iw-settings").small().ghost().icon(IconName::Settings).tooltip("设置")
+                )))
+                .child(no_drag(Button::new("iw-chat").small().ghost().icon(IconName::PanelRight).selected(self.chat_open).tooltip("对话栏(⌥⌘B)")
+                    .on_click(cx.listener(|this, _, _, cx| { this.chat_open = !this.chat_open; cx.notify(); }))))
+                .child(no_drag(Button::new("iw-settings").small().ghost().icon(IconName::Settings).tooltip("设置")
                     .on_click(cx.listener(|this, _, _, cx| {
                         this.wb.update(cx, |wb, cx| wb.set_page(Page::Settings, cx));
                         this.back_to_agent(cx);
-                    })))
-                .child(Button::new("iw-agent").small().primary().label("Agents Window").icon(if fused { IconName::MessageSquare } else { IconName::ExternalLink }).tooltip("切换到 Agents Window(⇧⌘E)")
-                    .on_click(cx.listener(|this, _, _, cx| this.back_to_agent(cx)))),
+                    }))))
+                .child(no_drag(Button::new("iw-agent").small().primary().label("Agents Window").icon(if fused { IconName::MessageSquare } else { IconName::ExternalLink }).tooltip("切换到 Agents Window(⇧⌘E)")
+                    .on_click(cx.listener(|this, _, _, cx| this.back_to_agent(cx))))),
         )
     }
 

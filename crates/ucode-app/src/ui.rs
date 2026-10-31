@@ -90,3 +90,9 @@ pub fn dev_badge(cx: &App) -> Option<Div> {
     let t = cx.theme();
     Some(pill("DEV", t.background, t.warning))
 }
+
+/// 标题栏里的可点击控件包装:吞掉鼠标按下,避免在按钮上双击触发窗口最大化或拖动窗口。
+/// 只有标题栏的空白处才响应双击。
+pub fn no_drag(child: impl IntoElement) -> Div {
+    div().on_mouse_down(MouseButton::Left, |_, _, cx| cx.stop_propagation()).child(child)
+}
