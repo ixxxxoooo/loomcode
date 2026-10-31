@@ -9,7 +9,7 @@ use crate::ide_tabs::TabModel;
 use crate::ui::empty_state;
 use gpui_kit::assets::IconName;
 use gpui_kit::component::input::{Editor, EditorState, InputEvent};
-use gpui_kit::component::{ActiveTheme, v_flex};
+use gpui_kit::component::{ActiveTheme, h_flex, v_flex};
 use gpui_kit::*;
 use std::collections::HashMap;
 use std::path::{Path, PathBuf};
@@ -32,7 +32,12 @@ pub struct IdeDoc {
     pub stale: bool,
     /// Git 行标记装饰集合(首次刷新时创建)
     pub(crate) marks: Option<gpui_kit::component::input::RangeDecorationCollection>,
-    _sub: Subscription,
+    /// 缩略图用的行形状
+    pub shape: std::rc::Rc<Vec<(u16, u16)>>,
+    /// 括号配对高亮:上次的配对位置与装饰集合
+    pub(crate) bracket_pair: Option<(usize, usize)>,
+    pub(crate) bracket_marks: Option<gpui_kit::component::input::RangeDecorationCollection>,
+    _subs: Vec<Subscription>,
 }
 
 /// 编辑器视图:持有所有标签的文档,不依赖工作台,可被任意窗口嵌入。
@@ -45,12 +50,14 @@ pub struct IdeView {
     pub(crate) note: Option<String>,
     /// 以图片方式打开的标签(没有文本文档)
     pub(crate) images: std::collections::HashSet<PathBuf>,
+    /// 缩略图上次绘制的区域(鼠标位置换算用)
+    pub(crate) minimap_bounds: std::rc::Rc<std::cell::Cell<Bounds<Pixels>>>,
 }
 
 impl IdeView {
     /// 创建空的编辑器视图。
     pub fn new() -> Self {
-        Self { root: String::new(), docs: HashMap::new(), tabs: TabModel::default(), note: None, images: Default::default() }
+        Self { root: String::new(), docs: HashMap::new(), tabs: TabModel::default(), note: None, images: Default::default(), minimap_bounds: Default::default() }
     }
 
     /// 设置项目根目录(会话切换时由宿主调用)。
@@ -232,6 +239,7 @@ fn load(path: &Path, window: &mut Window, cx: &mut Context<IdeView>) -> Result<I
     let bytes = std::fs::read(path).map_err(|e| format!("无法读取 {}:{e}", path.display()))?;
     let text = String::from_utf8(bytes).map_err(|_| "二进制文件,不在编辑器中打开".to_string())?;
     let crlf = text.contains("\r\n");
+    let shape = std::rc::Rc::new(crate::ide_minimap::shape_of(&text));
     let editor = cx.new(|cx| EditorState::new(window, cx).language(language_for(path)).searchable(true).default_value(text));
     // 编辑后标记未保存并固定预览标签;光标移动时刷新状态条
     let key = path.to_path_buf();
@@ -240,13 +248,22 @@ fn load(path: &Path, window: &mut Window, cx: &mut Context<IdeView>) -> Result<I
             this.tabs.pin(&key);
             if let Some(doc) = this.docs.get_mut(&key) {
                 doc.saved = false;
+                doc.shape = std::rc::Rc::new(crate::ide_minimap::shape_of(&doc.editor.read(cx).value()));
             }
+        }
+        cx.notify();
+    });
+    // 光标移动 / 滚动时编辑器只会 notify(没有事件):刷新括号配对高亮与缩略图视口
+    let key2 = path.to_path_buf();
+    let sub2 = cx.observe(&editor, move |this: &mut IdeView, ed, cx| {
+        if let Some(doc) = this.docs.get_mut(&key2) {
+            crate::ide_brackets::refresh(&ed, &mut doc.bracket_marks, &mut doc.bracket_pair, cx);
         }
         cx.notify();
     });
     let marks = None;
     let mtime = meta.modified().ok();
-    Ok(IdeDoc { editor, saved: true, crlf, mtime, stale: false, marks, _sub: sub })
+    Ok(IdeDoc { editor, saved: true, crlf, mtime, stale: false, marks, shape, bracket_pair: None, bracket_marks: None, _subs: vec![sub, sub2] })
 }
 
 impl Render for IdeView {
@@ -275,7 +292,11 @@ impl Render for IdeView {
         let editor = doc.editor.clone();
         root.child(tab_bar(self.tab_items(&path), cx))
             .child(breadcrumbs(&path, &self.root, doc.saved, self.note.clone().or_else(|| doc.stale.then(|| "磁盘上的文件已被修改,点右侧刷新按钮载入(会丢弃你的修改)".to_string())), cx))
-            .child(div().flex_1().min_h_0().child(Editor::new(&editor).bordered(false).appearance(false).size_full()))
+            .child(
+                h_flex().flex_1().min_h_0().w_full()
+                    .child(div().flex_1().min_w_0().h_full().child(Editor::new(&editor).bordered(false).appearance(false).size_full()))
+                    .child(crate::ide_minimap::minimap(&editor, doc.shape.clone(), self.minimap_bounds.clone(), cx)),
+            )
             .into_any_element()
     }
 }

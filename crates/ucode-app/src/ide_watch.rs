@@ -66,6 +66,7 @@ impl IdeView {
                     let Ok(text) = std::fs::read_to_string(&path) else { continue };
                     doc.mtime = disk;
                     doc.crlf = text.contains("\r\n");
+                    doc.shape = std::rc::Rc::new(crate::ide_minimap::shape_of(&text));
                     let editor = doc.editor.clone();
                     let focused = editor.read(cx).focus_handle(cx).is_focused(window);
                     let pos = editor.read(cx).cursor_position();
