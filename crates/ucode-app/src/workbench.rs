@@ -23,7 +23,7 @@ use std::collections::{HashMap, HashSet};
 use std::path::PathBuf;
 use ucode_automation::{AutomationStore, now_ts};
 use ucode_canvas::{CanvasStore, demo_document};
-use ucode_config::{AppSettings, ClaudeConfig, ThemeChoice};
+use ucode_config::{AppSettings, ClaudeConfig, ThemeChoice, UiState};
 use ucode_core::*;
 use ucode_claude::{ClaudeBackend, LazyBackend};
 use ucode_demo::DemoBackend;
@@ -107,6 +107,13 @@ pub struct Workbench {
     pub page: Page,
     pub settings: AppSettings,
     pub settings_path: PathBuf,
+    /// 侧栏的用户选择(置顶 / 归档 / 改名),落盘在 `state.json`
+    pub ui_state: UiState,
+    pub ui_state_path: PathBuf,
+    /// 侧栏是否显示已归档会话
+    pub show_archived: bool,
+    /// 后台跑完、用户还没看过的会话
+    pub unread: HashSet<String>,
     pub claude_cfg: ClaudeConfig,
     pub settings_tab: SettingsTab,
     pub memory: Option<MemoryDoc>,
@@ -148,6 +155,8 @@ impl Workbench {
         };
         let settings_path = if demo { demo_root.join("settings.json") } else { AppSettings::default_path().unwrap_or_else(|| demo_root.join("settings.json")) };
         let settings = AppSettings::load(&settings_path);
+        let ui_state_path = settings_path.with_file_name("state.json");
+        let ui_state = UiState::load(&ui_state_path);
         let claude_cfg = if demo {
             ucode_config::claude::parse_settings(ucode_demo::workspace::DEMO_CLAUDE_SETTINGS)
         } else {
@@ -189,6 +198,10 @@ impl Workbench {
             page: Page::Chat,
             settings,
             settings_path,
+            ui_state,
+            ui_state_path,
+            show_archived: false,
+            unread: HashSet::new(),
             claude_cfg,
             settings_tab: SettingsTab::General,
             memory: None,
@@ -209,6 +222,7 @@ impl Workbench {
             new_sessions: HashSet::new(),
             pending_open: None,
         };
+        wb.apply_ui_state();
         let panel_sub = cx.subscribe_in(&wb.panel, window, |this, _, ev: &PanelEvent, window, cx| this.on_panel_event(ev, window, cx));
         wb._subs.push(panel_sub);
         if demo {
@@ -282,6 +296,8 @@ impl Workbench {
                     SessionBadge::Waiting
                 } else if st.phase == Phase::Running {
                     SessionBadge::Running
+                } else if self.unread.contains(id) {
+                    SessionBadge::Unread
                 } else {
                     SessionBadge::Idle
                 }
@@ -399,7 +415,7 @@ impl Workbench {
         if let Some(pi) = self.projects.iter().position(|p| p.sessions.iter().any(|s| s.id == id)) {
             self.open_session(pi, id, window, cx);
         } else if let Some(sc) = ucode_demo::scenarios::find(id) {
-            self.projects[0].sessions.insert(0, SessionMeta { id: id.into(), title: sc.title.into(), updated: "刚刚".into(), pinned: false, badge: SessionBadge::Idle });
+            self.projects[0].sessions.insert(0, SessionMeta { id: id.into(), title: sc.title.into(), updated: "刚刚".into(), pinned: false, archived: false, badge: SessionBadge::Idle });
             self.projects[0].expanded = true;
             self.open_session(0, id, window, cx);
         }
@@ -478,6 +494,7 @@ impl Workbench {
             }
             self.views.insert(id.to_string(), SessionView { model, composer, project_ix, _subs: subs });
         }
+        self.unread.remove(id);
         self.active = Some(id.to_string());
         self.sync_panel(cx);
         // 调试用:打开会话后在终端里运行一条命令(只触发一次)
@@ -644,7 +661,7 @@ impl Workbench {
         }
         if let Some(p) = self.projects.get_mut(project_ix) {
             p.expanded = true;
-            p.sessions.insert(0, SessionMeta { id: id.clone(), title: "新会话".into(), updated: "刚刚".into(), pinned: false, badge: SessionBadge::Idle });
+            p.sessions.insert(0, SessionMeta { id: id.clone(), title: "新会话".into(), updated: "刚刚".into(), pinned: false, archived: false, badge: SessionBadge::Idle });
         }
         self.open_session(project_ix, &id, window, cx);
         if let Some(v) = self.views.get(&id) {
@@ -681,6 +698,7 @@ impl Workbench {
             }
         }
         self.projects = projects;
+        self.apply_ui_state();
         for (id, v) in self.views.iter_mut() {
             if let Some(ix) = owner.get(id).and_then(|path| self.projects.iter().position(|p| &p.path == path)) {
                 v.project_ix = ix;
@@ -706,7 +724,7 @@ impl Workbench {
             }
             let title = v.model.read(cx).state.title.clone();
             let title = if title.is_empty() { "新会话".to_string() } else { title };
-            p.sessions.insert(0, SessionMeta { id: id.clone(), title, updated: "刚刚".into(), pinned: false, badge: SessionBadge::Idle });
+            p.sessions.insert(0, SessionMeta { id: id.clone(), title, updated: "刚刚".into(), pinned: false, archived: false, badge: SessionBadge::Idle });
         }
     }
 
@@ -720,6 +738,7 @@ impl Workbench {
                     p.sessions = sessions;
                     p.branch = branch;
                 }
+                this.apply_ui_state();
                 this.merge_live_sessions(cx);
                 cx.notify();
             });
@@ -771,10 +790,12 @@ impl Workbench {
             UiRequest::SessionSettled => {
                 if !self.demo {
                     // 刷新发出事件的会话所属项目,而不是当前激活会话的项目
-                    let path = source
-                        .and_then(|sid| self.views.values().find(|v| v.model.entity_id() == sid))
-                        .and_then(|v| self.projects.get(v.project_ix))
-                        .map(|p| p.path.clone());
+                    let owner = source.and_then(|sid| self.views.iter().find(|(_, v)| v.model.entity_id() == sid));
+                    // 不是当前会话跑完的 → 标记未读
+                    if let Some((id, _)) = owner.filter(|(id, _)| self.active.as_ref() != Some(*id)) {
+                        self.unread.insert(id.clone());
+                    }
+                    let path = owner.and_then(|(_, v)| self.projects.get(v.project_ix)).map(|p| p.path.clone());
                     if let Some(path) = path {
                         self.refresh_project(path, cx);
                     }

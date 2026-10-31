@@ -35,7 +35,7 @@ pub fn time_ago(t: SystemTime) -> String {
 }
 
 fn to_meta(s: &history::SessionMeta) -> SessionMeta {
-    SessionMeta { id: s.id.clone(), title: s.title.clone(), updated: time_ago(s.modified), pinned: false, badge: SessionBadge::Idle }
+    SessionMeta { id: s.id.clone(), title: s.title.clone(), updated: time_ago(s.modified), pinned: false, archived: false, badge: SessionBadge::Idle }
 }
 
 /// 读取全部项目:先是有历史会话的(最近活动在前),再补上「最近项目」里还没有会话的目录。

@@ -102,7 +102,7 @@ pub fn seed(root: &Path) -> io::Result<Vec<PathBuf>> {
 }
 
 fn s(id: &str, title: &str, updated: &str, pinned: bool, badge: SessionBadge) -> SessionMeta {
-    SessionMeta { id: id.into(), title: title.into(), updated: updated.into(), pinned, badge }
+    SessionMeta { id: id.into(), title: title.into(), updated: updated.into(), pinned, archived: false, badge }
 }
 
 /// 侧栏的演示数据:路径指向 `seed` 生成的目录。

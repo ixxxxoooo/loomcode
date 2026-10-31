@@ -18,6 +18,7 @@ mod ide_window;
 mod palette;
 mod real;
 mod rich_text;
+mod session_actions;
 mod settings;
 mod right_panel;
 mod sidebar;

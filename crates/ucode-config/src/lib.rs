@@ -4,6 +4,8 @@
 
 pub mod claude;
 pub mod settings;
+pub mod ui_state;
 
 pub use claude::{ClaudeConfig, HookEntry, McpServer, PermissionRules};
 pub use settings::{AppSettings, ThemeChoice};
+pub use ui_state::UiState;

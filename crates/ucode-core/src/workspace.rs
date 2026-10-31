@@ -23,6 +23,9 @@ pub struct SessionMeta {
     /// 最近活动的时间描述(演示用字符串,真实模式由时间戳格式化)
     pub updated: String,
     pub pinned: bool,
+    /// 已归档(侧栏默认隐藏)
+    #[serde(default)]
+    pub archived: bool,
     pub badge: SessionBadge,
 }
 
