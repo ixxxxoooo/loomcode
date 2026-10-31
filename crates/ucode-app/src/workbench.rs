@@ -452,6 +452,7 @@ impl Workbench {
                     model: (s.default_model != "default").then(|| s.default_model.clone()),
                     mode: (s.default_mode != PermissionMode::Default).then_some(s.default_mode),
                     effort: (s.default_effort != Effort::Medium).then_some(s.default_effort),
+                    ..Default::default()
                 };
                 (Box::new(LazyBackend::new(ClaudeBackend::new(s.claude_path.clone()))), config)
             };

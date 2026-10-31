@@ -17,6 +17,8 @@ pub struct ClaudeOptions {
     pub effort: Option<Effort>,
     /// 额外授权访问的目录(`--add-dir`)
     pub add_dirs: Vec<String>,
+    /// 追加到系统提示末尾的内容(`--append-system-prompt`)
+    pub append_system_prompt: Option<String>,
     /// 预先允许的工具规则(`--allowedTools`)
     pub allowed_tools: Vec<String>,
     /// MCP 配置(JSON 文件路径或字符串,`--mcp-config`)
@@ -34,6 +36,8 @@ impl ClaudeOptions {
             model: config.model.clone(),
             mode: config.mode,
             effort: config.effort,
+            add_dirs: config.add_dirs.clone(),
+            append_system_prompt: config.append_system_prompt.clone().filter(|p| !p.trim().is_empty()),
             ..Default::default()
         }
     }
@@ -78,6 +82,9 @@ impl ClaudeOptions {
         }
         for dir in &self.add_dirs {
             push("--add-dir", dir);
+        }
+        if let Some(prompt) = &self.append_system_prompt {
+            push("--append-system-prompt", prompt);
         }
         if !self.allowed_tools.is_empty() {
             push("--allowedTools", &self.allowed_tools.join(","));
@@ -184,6 +191,26 @@ mod tests {
         // default 别名不传 --model
         let d = ClaudeOptions { model: Some("default".into()), ..Default::default() };
         assert!(!d.args().contains(&"--model".to_string()));
+    }
+
+    #[test]
+    fn 多根工作区带_add_dir_与系统提示() {
+        let cfg = BackendConfig {
+            cwd: "/ws".into(),
+            add_dirs: vec!["/a".into(), "/b".into()],
+            append_system_prompt: Some("工作区说明".into()),
+            ..Default::default()
+        };
+        let a = ClaudeOptions::from_config(&cfg).args();
+        assert!(a.windows(2).any(|w| w == ["--add-dir", "/a"]));
+        assert!(a.windows(2).any(|w| w == ["--add-dir", "/b"]));
+        assert!(a.windows(2).any(|w| w == ["--append-system-prompt", "工作区说明"]));
+        // 空白提示不传
+        let blank = BackendConfig { append_system_prompt: Some("  ".into()), ..Default::default() };
+        assert!(!ClaudeOptions::from_config(&blank).args().contains(&"--append-system-prompt".to_string()));
+        // 默认不带这两个参数
+        let plain = ClaudeOptions::from_config(&BackendConfig::default()).args();
+        assert!(!plain.contains(&"--add-dir".to_string()));
     }
 
     #[test]

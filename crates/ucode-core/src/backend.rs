@@ -29,6 +29,10 @@ pub struct BackendConfig {
     pub model: Option<String>,
     pub mode: Option<crate::modes::PermissionMode>,
     pub effort: Option<crate::modes::Effort>,
+    /// 额外授权访问的目录(多根工作区的其余文件夹,对应 `--add-dir`)
+    pub add_dirs: Vec<String>,
+    /// 追加到系统提示末尾的内容(`--append-system-prompt`)
+    pub append_system_prompt: Option<String>,
 }
 
 /// 后端工厂:真实 Claude 与演示后端各自实现。
