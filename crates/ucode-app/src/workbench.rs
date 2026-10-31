@@ -9,7 +9,7 @@ use crate::model::{SessionModel, UiRequest};
 use crate::palette::{Group, Palette, PaletteAction, PaletteEvent, PaletteItem};
 use crate::right_panel::{PanelEvent, RightPanel};
 use crate::settings::{self, MemoryDoc, SettingsTab};
-use crate::ui::{dev_badge, no_drag, empty_state, icon};
+use crate::ui::{no_drag, empty_state, icon};
 use crate::{sidebar, theme, timeline};
 use gpui_kit::assets::IconName;
 use gpui_kit::component::TitleBar;
@@ -975,7 +975,6 @@ impl Workbench {
                     .on_click(cx.listener(|this, _, _, cx| { this.left_open = !this.left_open; cx.notify(); }))))
                 .child(no_drag(Button::new("tb-search").small().ghost().icon(IconName::Search).tooltip("搜索(⌘K)")
                     .on_click(cx.listener(|this, _, window, cx| this.toggle_palette(window, cx)))))
-                .when_some(dev_badge(cx), |d, b| d.child(b))
                 .child(div().flex_1().flex().justify_center().text_size(px(13.)).text_color(t.muted_foreground).child(title))
                 .child(no_drag(Button::new("tb-right").small().ghost().icon(IconName::PanelRight).selected(self.right_open).tooltip("右侧面板(⌥⌘B)")
                     .on_click(cx.listener(|this, _, _, cx| { this.right_open = !this.right_open; cx.notify(); }))))
@@ -1001,8 +1000,7 @@ impl Workbench {
             h_flex().w_full().items_center().gap_1()
                 .child(no_drag(Button::new("st-back").small().ghost().icon(IconName::ArrowLeft).label("返回")
                     .on_click(cx.listener(|this, _, _, cx| this.set_page(Page::Chat, cx)))))
-                .child(div().flex_1().flex().justify_center().text_size(px(13.)).text_color(t.muted_foreground).child("设置"))
-                .when_some(dev_badge(cx), |d, b| d.child(b)),
+                .child(div().flex_1().flex().justify_center().text_size(px(13.)).text_color(t.muted_foreground).child("设置")),
         )
     }
 
@@ -1014,7 +1012,7 @@ pub fn chat_panel(parts: Option<(Entity<SessionModel>, Entity<Composer>)>, branc
     let footer = h_flex().h(px(26.)).px_4().items_center().text_size(px(12.)).text_color(t.muted_foreground)
         .child(h_flex().gap_1().items_center().when_some(branch, |d, b| d.child(icon(IconName::GitBranch, 12., t.muted_foreground)).child(b)))
         .child(div().flex_1())
-        .child(if demo { "演示模式" } else { "Claude Code" })
+        .child(if demo { "" } else { "Claude Code" })
         .into_any_element();
     chat_panel_with_footer(parts, footer, cx)
 }

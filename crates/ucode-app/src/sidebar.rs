@@ -161,6 +161,7 @@ pub fn render(wb: &Workbench, cx: &mut Context<Workbench>) -> impl IntoElement {
             h_flex().h(px(40.)).px_2().gap_1().items_center().border_t_1().border_color(t.sidebar_border)
                 .child(Button::new("nav-settings").small().ghost().icon(IconName::Settings).tooltip("设置")
                     .on_click(cx.listener(|this, _, _, cx| this.set_page(Page::Settings, cx))))
+                .when_some(crate::ui::env_badges(wb.demo, cx), |d, b| d.child(b))
                 .child(div().flex_1())
                 .child(Button::new("nav-canvas").small().ghost().icon(IconName::LayoutDashboard)
                     .on_click(cx.listener(|this, _, _, cx| this.set_page(Page::Canvas, cx))))

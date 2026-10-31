@@ -8,7 +8,7 @@ use crate::ide_chat_header;
 use crate::ide_status;
 use crate::ide::{CloseTab, FindInProject, GoToLine, IdeView, NextTab, PrevTab, QuickOpen};
 use crate::right_panel::{PanelEvent, RightPanel};
-use crate::ui::{dev_badge, icon, no_drag};
+use crate::ui::{icon, no_drag};
 use crate::workbench::{Page, RightTab, SaveFile, ToggleIde, ToggleLeft, ToggleRight, Workbench, chat_panel};
 use gpui_kit::assets::IconName;
 use gpui_kit::component::TitleBar;
@@ -150,7 +150,6 @@ impl IdeWindow {
             h_flex().w_full().items_center().gap_1().pr_2()
                 .child(no_drag(Button::new("iw-left").small().ghost().icon(IconName::PanelLeft).selected(self.left_open).tooltip("侧栏(⌘B)")
                     .on_click(cx.listener(|this, _, _, cx| { this.left_open = !this.left_open; cx.notify(); }))))
-                .when_some(dev_badge(cx), |d, b| d.child(b))
                 .child(div().flex_1().flex().justify_center().child(no_drag(
                     h_flex().id("iw-quick").cursor_pointer().on_click(cx.listener(|this, _, window, cx| this.toggle_quick(window, cx)))
                         .w(px(420.)).max_w_full().h(px(26.)).px_3().gap_2().items_center().justify_center().rounded(px(7.))
@@ -213,7 +212,7 @@ impl Render for IdeWindow {
                     ),
             )
             .when_some(self.quick.clone(), |d, p| d.child(p))
-            .child(ide_status::status_bar(project_name, branch, self.ide.read(cx).cursor_info(cx), mode, cx))
+            .child(ide_status::status_bar(project_name, branch, self.ide.read(cx).cursor_info(cx), mode, demo, cx))
     }
 }
 

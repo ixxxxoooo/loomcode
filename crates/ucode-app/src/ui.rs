@@ -2,6 +2,7 @@
 
 use gpui_kit::assets::IconName;
 use gpui_kit::component::{ActiveTheme, Icon, h_flex, v_flex};
+use gpui_kit::prelude::FluentBuilder as _;
 use gpui_kit::*;
 use ucode_core::SessionBadge;
 
@@ -88,7 +89,20 @@ pub fn dev_badge(cx: &App) -> Option<Div> {
         return None;
     }
     let t = cx.theme();
-    Some(pill("DEV", t.background, t.warning))
+    Some(pill("开发版", t.background, t.warning))
+}
+
+/// 环境标识行:开发版、演示模式(都是中文小标签),放在左下角设置按钮的右侧。
+/// 两者都不是时返回 `None`,调用方就不占位置。
+///
+/// 参数:`demo` 是否演示模式。
+pub fn env_badges(demo: bool, cx: &App) -> Option<Div> {
+    let dev = dev_badge(cx);
+    if dev.is_none() && !demo {
+        return None;
+    }
+    let t = cx.theme();
+    Some(h_flex().gap_1().items_center().children(dev).when(demo, |d| d.child(pill("演示模式", t.muted_foreground, t.muted))))
 }
 
 /// 标题栏里的可点击控件包装:吞掉鼠标按下,避免在按钮上双击触发窗口最大化或拖动窗口。

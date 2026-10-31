@@ -34,7 +34,7 @@ pub fn footer(wb: &Workbench, cx: &mut Context<Workbench>) -> AnyElement {
     h_flex().h(px(26.)).px_4().items_center().text_size(px(12.)).text_color(t.muted_foreground)
         .child(left)
         .child(div().flex_1())
-        .child(if wb.demo { "演示模式" } else { "Claude Code" })
+        .child(if wb.demo { "" } else { "Claude Code" })
         .into_any_element()
 }
 
