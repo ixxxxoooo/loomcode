@@ -13,6 +13,9 @@ mod cards;
 mod composer;
 mod diff;
 mod model;
+mod file_icons;
+mod file_ops;
+mod file_lang;
 mod file_tree;
 mod git_status;
 mod git_actions;
@@ -42,6 +45,7 @@ mod tool_card;
 mod ui;
 mod view_cache;
 mod workspace_actions;
+mod worktree_actions;
 mod workspace_form;
 mod workbench;
 

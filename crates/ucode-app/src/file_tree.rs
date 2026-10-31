@@ -1,10 +1,13 @@
 //! 「文件」面板:项目文件树 + 只读代码预览(带语法高亮)。
 
+use crate::file_icons::file_icon;
+use crate::file_ops::row_menu;
 use crate::git_status::{GitMark, GitStatus};
 use crate::right_panel::{PanelEvent, RightPanel};
 use crate::ui::{MONO, empty_state, icon};
 use gpui_kit::assets::IconName;
 use gpui_kit::component::input::{Editor, EditorState};
+use gpui_kit::component::menu::ContextMenuExt as _;
 use gpui_kit::component::{ActiveTheme, h_flex, v_flex};
 use gpui_kit::prelude::FluentBuilder as _;
 use gpui_kit::*;
@@ -13,14 +16,6 @@ use std::path::{Path, PathBuf};
 
 /// 超过这个大小的文件不预览。
 const MAX_PREVIEW_BYTES: u64 = 512 * 1024;
-
-/// 目录里的一项。
-#[derive(Debug, Clone)]
-pub struct Node {
-    pub name: String,
-    pub path: PathBuf,
-    pub is_dir: bool,
-}
 
 /// 文件树状态。
 pub struct FileTree {
@@ -35,54 +30,36 @@ pub struct FileTree {
     git: GitStatus,
 }
 
-/// 不在树里显示的目录与文件。
-fn hidden(name: &str) -> bool {
-    matches!(name, ".git" | ".DS_Store" | "target" | "node_modules" | ".build" | "DerivedData")
-}
-
-/// 读取一个目录:文件夹在前,按名称排序。
-pub fn read_dir_sorted(dir: &Path) -> Vec<Node> {
-    let mut nodes: Vec<Node> = std::fs::read_dir(dir)
-        .map(|rd| {
-            rd.filter_map(|e| e.ok())
-                .filter_map(|e| {
-                    let name = e.file_name().to_string_lossy().to_string();
-                    if hidden(&name) {
-                        return None;
-                    }
-                    let is_dir = e.file_type().map(|t| t.is_dir()).unwrap_or(false);
-                    Some(Node { name, path: e.path(), is_dir })
-                })
-                .collect()
-        })
-        .unwrap_or_default();
-    nodes.sort_by(|a, b| b.is_dir.cmp(&a.is_dir).then_with(|| a.name.to_lowercase().cmp(&b.name.to_lowercase())));
-    nodes
-}
-
-/// 按扩展名推断语法高亮语言。
-pub fn language_for(path: &Path) -> &'static str {
-    match path.extension().and_then(|e| e.to_str()).unwrap_or("") {
-        "rs" => "rust",
-        "py" => "python",
-        "js" | "mjs" | "cjs" | "jsx" => "javascript",
-        "ts" => "typescript",
-        "tsx" => "tsx",
-        "sh" | "zsh" | "bash" => "bash",
-        "md" | "markdown" => "markdown",
-        "toml" => "toml",
-        "yml" | "yaml" => "yaml",
-        "json" | "jsonc" => "json",
-        "css" => "css",
-        "html" | "htm" => "html",
-        "go" => "go",
-        "diff" | "patch" => "diff",
-        "swift" => "swift",
-        _ => "text",
-    }
-}
+pub use crate::file_lang::{Node, language_for, read_dir_sorted};
 
 impl FileTree {
+    /// 新建条目时的默认父目录:选中的目录,或选中文件所在目录,否则项目根。
+    pub fn target_dir(&self) -> PathBuf {
+        match &self.selected {
+            Some(p) if p.is_dir() => p.clone(),
+            Some(p) => p.parent().map(Path::to_path_buf).unwrap_or_else(|| self.root.clone()),
+            None => self.root.clone(),
+        }
+    }
+
+    /// 全部折叠。
+    pub fn collapse_all(&mut self) {
+        self.expanded.clear();
+        self.reload();
+    }
+
+    /// 展开到某个路径的所有上级目录(不选中)。
+    pub fn expand_to(&mut self, path: &Path) {
+        let mut cur = path.parent();
+        while let Some(dir) = cur {
+            if dir == self.root || !dir.starts_with(&self.root) {
+                break;
+            }
+            self.expanded.insert(dir.to_path_buf());
+            cur = dir.parent();
+        }
+    }
+
     pub fn new(root: String) -> Self {
         let mut t = Self {
             root: PathBuf::from(root),
@@ -225,7 +202,7 @@ impl FileTree {
                     None => t.foreground,
                 };
                 h_flex().id(SharedString::from(format!("ft-{ix}"))).w_full().h(px(24.)).pr_2().gap_1p5().items_center().cursor_pointer()
-                    .pl(px(8. + depth as f32 * 14.))
+                    .pl(px(6. + depth as f32 * 14.))
                     .text_size(px(12.5))
                     .when(selected, |d| d.bg(t.list_active))
                     .hover(|d| d.bg(t.list_hover))
@@ -239,11 +216,16 @@ impl FileTree {
                             cx.emit(PanelEvent::OpenFile(path.clone()));
                         }
                     }))
+                    .relative()
+                    .children((0..depth).map(|i| div().absolute().top_0().bottom_0().left(px(14. + i as f32 * 14.)).w(px(1.)).bg(t.border.opacity(0.7))))
+                    .child(div().w(px(12.)).flex_none().when(is_dir, |d| d.child(icon(if open { IconName::ChevronDown } else { IconName::ChevronRight }, 12., t.muted_foreground))))
                     .child(if is_dir {
-                        icon(if open { IconName::FolderOpen } else { IconName::Folder }, 13., t.muted_foreground)
+                        icon(if open { IconName::FolderOpen } else { IconName::Folder }, 14., t.muted_foreground)
                     } else {
-                        icon(IconName::FileText, 13., t.muted_foreground)
+                        let (ic, col) = file_icon(&node.name, cx);
+                        icon(ic, 14., col)
                     })
+                    .context_menu(row_menu(cx.entity().downgrade(), node.path.clone(), is_dir))
                     .child(div().flex_1().min_w_0().truncate().text_color(color).child(node.name))
                     .when_some(mark.filter(|_| !is_dir), |d, m| {
                         d.child(div().text_size(px(11.)).font_family(MONO).text_color(color).child(match m {
@@ -256,14 +238,27 @@ impl FileTree {
             }));
         v_flex().size_full()
             .child(
-                h_flex().h(px(30.)).px_3().gap_2().items_center().text_size(px(11.)).text_color(t.muted_foreground)
-                    .child(icon(IconName::Folder, 12., t.muted_foreground))
-                    .child(div().flex_1().min_w_0().truncate().child(root_name))
-                    .child(
-                        div().id("ft-refresh").p_1().rounded(px(4.)).cursor_pointer().hover(|d| d.bg(t.list_hover))
-                            .on_click(cx.listener(|this, _, _, cx| { this.files.reload(); cx.notify(); }))
-                            .child(icon(IconName::RefreshCw, 12., t.muted_foreground)),
-                    ),
+                h_flex().h(px(30.)).px_3().gap_1().items_center().text_size(px(11.)).text_color(t.muted_foreground)
+                    .child(div().flex_1().min_w_0().truncate().font_weight(FontWeight::SEMIBOLD).child(root_name.to_uppercase()))
+                    .children([
+                        ("ft-new-file", IconName::FilePlus, 0u8),
+                        ("ft-new-dir", IconName::FolderPlus, 1),
+                        ("ft-collapse", IconName::ChevronsDownUp, 2),
+                        ("ft-refresh", IconName::RefreshCw, 3),
+                    ].map(|(id, ic, kind)| {
+                        div().id(id).p_1().rounded(px(4.)).cursor_pointer().hover(|d| d.bg(t.list_hover))
+                            .on_click(cx.listener(move |this, _, window, cx| {
+                                let dir = this.files.target_dir();
+                                match kind {
+                                    0 => this.new_entry_dialog(dir, false, window, cx),
+                                    1 => this.new_entry_dialog(dir, true, window, cx),
+                                    2 => this.files.collapse_all(),
+                                    _ => this.files.reload(),
+                                }
+                                cx.notify();
+                            }))
+                            .child(icon(ic, 13., t.muted_foreground))
+                    })),
             )
             .child(tree)
             .when(has_preview, |d| {

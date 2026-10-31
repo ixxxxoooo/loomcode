@@ -38,7 +38,7 @@ pub fn footer(wb: &Workbench, cx: &mut Context<Workbench>) -> AnyElement {
         .into_any_element()
 }
 
-/// 构造分支菜单:切换分支、新建分支。
+/// 构造分支菜单:切换分支、新建分支、已有 worktree、新建 worktree。
 ///
 /// 参数:`wb` 工作台弱引用;`dir` 仓库目录;`snap` 当前的分支快照。
 fn build_menu(wb: WeakEntity<Workbench>, dir: String, snap: GitSnapshot) -> impl Fn(PopupMenu, &mut Window, &mut Context<PopupMenu>) -> PopupMenu + 'static {
@@ -55,8 +55,24 @@ fn build_menu(wb: WeakEntity<Workbench>, dir: String, snap: GitSnapshot) -> impl
             menu = menu.item(item);
         }
         let (w, d) = (wb.clone(), dir.clone());
-        menu.separator().item(PopupMenuItem::new("新建分支…").icon(IconName::Plus).on_click(move |_, window, cx| {
+        menu = menu.separator().item(PopupMenuItem::new("新建分支…").icon(IconName::Plus).on_click(move |_, window, cx| {
             let _ = w.update(cx, |this, cx| this.create_branch_dialog(&d, window, cx));
+        }));
+        // 已有的 worktree(不含主工作区):点一下作为项目打开
+        let others: Vec<_> = snap.worktrees.iter().filter(|w| !w.is_main).collect();
+        if !others.is_empty() {
+            menu = menu.separator().item(PopupMenuItem::label("Worktree"));
+            for wt in others {
+                let (w, p) = (wb.clone(), wt.path.clone());
+                let label = wt.branch.clone().unwrap_or_else(|| ucode_core::project_name_from_path(&wt.path));
+                menu = menu.item(PopupMenuItem::new(label).icon(IconName::GitFork).on_click(move |_, window, cx| {
+                    let _ = w.update(cx, |this, cx| this.register_project(p.clone(), window, cx));
+                }));
+            }
+        }
+        let (w, d) = (wb.clone(), dir.clone());
+        menu.separator().item(PopupMenuItem::new("新建 Worktree…").icon(IconName::GitFork).on_click(move |_, window, cx| {
+            let _ = w.update(cx, |this, cx| this.new_worktree_dialog(&d, window, cx));
         }))
     }
 }

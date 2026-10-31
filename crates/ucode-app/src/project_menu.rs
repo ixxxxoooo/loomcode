@@ -10,8 +10,8 @@ use gpui_kit::*;
 /// 构造项目右键菜单的构建函数。
 ///
 /// 参数:`wb` 工作台弱引用;`path` 项目目录;`name` 当前显示名;`pinned` 是否已置顶;
-/// `is_workspace` 为真时多一项「编辑工作区…」。
-pub fn build(wb: WeakEntity<Workbench>, path: String, name: String, pinned: bool, is_workspace: bool) -> impl Fn(PopupMenu, &mut Window, &mut Context<PopupMenu>) -> PopupMenu + 'static {
+/// `is_workspace` 为真时多一项「编辑工作区…」;`is_worktree` 为真时多一项「移除 Worktree…」。
+pub fn build(wb: WeakEntity<Workbench>, path: String, name: String, pinned: bool, is_workspace: bool, is_worktree: bool) -> impl Fn(PopupMenu, &mut Window, &mut Context<PopupMenu>) -> PopupMenu + 'static {
     move |menu, _, _| {
         let item = |label: &'static str, icon: IconName| PopupMenuItem::new(label).icon(icon);
         let (w, p) = (wb.clone(), path.clone());
@@ -38,7 +38,12 @@ pub fn build(wb: WeakEntity<Workbench>, path: String, name: String, pinned: bool
         let edit = item("编辑工作区…", IconName::Folders).on_click(move |_, window, cx| {
             let _ = w.update(cx, |this, cx| this.edit_workspace_dialog(&p, window, cx));
         });
+        let (w, p) = (wb.clone(), path.clone());
+        let drop_wt = item("移除 Worktree…", IconName::GitFork).on_click(move |_, window, cx| {
+            let _ = w.update(cx, |this, cx| this.remove_worktree_dialog(&p, window, cx));
+        });
         let menu = if is_workspace { menu.item(edit) } else { menu };
+        let menu = if is_worktree { menu.item(drop_wt) } else { menu };
         menu.item(pin).item(rename).separator().item(read).item(archive).separator().item(remove)
     }
 }
