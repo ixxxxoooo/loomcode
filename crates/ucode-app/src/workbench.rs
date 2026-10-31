@@ -447,7 +447,7 @@ impl Workbench {
             }
             let subs = vec![
                 cx.observe(&model, |_, _, cx| cx.notify()),
-                cx.subscribe(&model, |this, _m, ev: &UiRequest, cx| this.on_ui_request(ev, cx)),
+                cx.subscribe(&model, |this, m, ev: &UiRequest, cx| this.on_ui_request(Some(m.entity_id()), ev, cx)),
             ];
             // 新会话套用偏好里的默认模型 / 模式 / 强度
             let (dm, dmode, deff) = (self.settings.default_model.clone(), self.settings.default_mode, self.settings.default_effort);
@@ -756,7 +756,8 @@ impl Workbench {
         self.new_session(ix, window, cx);
     }
 
-    fn on_ui_request(&mut self, ev: &UiRequest, cx: &mut Context<Self>) {
+    /// 处理会话模型发来的界面请求;`source` 是发出请求的会话模型实体。
+    fn on_ui_request(&mut self, source: Option<EntityId>, ev: &UiRequest, cx: &mut Context<Self>) {
         match ev {
             UiRequest::OpenChanges => {
                 self.right_open = true;
@@ -769,7 +770,12 @@ impl Workbench {
             }
             UiRequest::SessionSettled => {
                 if !self.demo {
-                    if let Some(path) = self.active_project_path() {
+                    // 刷新发出事件的会话所属项目,而不是当前激活会话的项目
+                    let path = source
+                        .and_then(|sid| self.views.values().find(|v| v.model.entity_id() == sid))
+                        .and_then(|v| self.projects.get(v.project_ix))
+                        .map(|p| p.path.clone());
+                    if let Some(path) = path {
                         self.refresh_project(path, cx);
                     }
                 }
