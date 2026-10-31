@@ -165,7 +165,7 @@ impl IdeWindow {
                         this.wb.update(cx, |wb, cx| wb.set_page(Page::Settings, cx));
                         this.back_to_agent(cx);
                     }))))
-                .child(no_drag(crate::ui::mode_switch("iw-agent", "Agents Window", if fused { IconName::MessageSquare } else { IconName::ExternalLink }).tooltip("切换到 Agents Window(⇧⌘E)")
+                .child(no_drag(crate::ui::mode_switch("iw-agent", "Agents Window", if fused { IconName::MessageSquare } else { IconName::ExternalLink }, true).tooltip("切换到 Agents Window(⇧⌘E)")
                     .on_click(cx.listener(|this, _, _, cx| this.back_to_agent(cx))))),
         )
     }

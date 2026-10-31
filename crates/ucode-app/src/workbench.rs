@@ -965,7 +965,7 @@ impl Workbench {
                 .child(div().flex_1().flex().justify_center().text_size(px(13.)).text_color(t.muted_foreground).child(title))
                 .child(no_drag(Button::new("tb-right").small().ghost().icon(IconName::PanelRight).selected(self.right_open).tooltip("右侧面板(⌥⌘B)")
                     .on_click(cx.listener(|this, _, _, cx| { this.right_open = !this.right_open; cx.notify(); }))))
-                .child(no_drag(crate::ui::mode_switch("tb-ide", "IDE", if self.settings.fused_ide { IconName::Code } else { IconName::ExternalLink }).tooltip("切换到 IDE(⇧⌘E)")
+                .child(no_drag(crate::ui::mode_switch("tb-ide", "IDE", if self.settings.fused_ide { IconName::Code } else { IconName::ExternalLink }, false).tooltip("切换到 IDE(⇧⌘E)")
                     .on_click(cx.listener(|this, _, window, cx| this.toggle_ide(window, cx))))),
         )
     }
