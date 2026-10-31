@@ -23,6 +23,7 @@ mod ide;
 mod ide_activity;
 mod ide_minimap;
 mod ide_quick;
+mod ide_reference;
 mod ide_search;
 mod ide_status;
 mod ide_watch;

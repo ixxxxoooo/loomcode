@@ -190,6 +190,7 @@ impl Render for IdeWindow {
             .on_action(cx.listener(|this, _: &QuickOpen, window, cx| this.toggle_quick(window, cx)))
             .on_action(cx.listener(|this, _: &GoToLine, window, cx| this.goto_line_dialog(window, cx)))
             .on_action(cx.listener(|this, _: &FindInProject, window, cx| this.show_search(window, cx)))
+            .on_action(cx.listener(|this, _: &crate::ide_reference::QuoteSelection, window, cx| this.quote_selection(window, cx)))
             .on_action(cx.listener(|this, _: &ToggleIde, _, cx| this.back_to_agent(cx)))
             .on_action(cx.listener(|this, _: &ToggleLeft, _, cx| { this.left_open = !this.left_open; cx.notify(); }))
             .on_action(cx.listener(|this, _: &ToggleRight, _, cx| { this.chat_open = !this.chat_open; cx.notify(); }))
@@ -226,6 +227,7 @@ fn bind_ide_keys(cx: &mut App) {
             KeyBinding::new("cmd-k", QuickOpen, Some("IdeWindow")),
             KeyBinding::new("ctrl-g", GoToLine, Some("IdeWindow")),
             KeyBinding::new("cmd-shift-f", FindInProject, Some("IdeWindow")),
+            KeyBinding::new("cmd-l", crate::ide_reference::QuoteSelection, Some("IdeWindow")),
             KeyBinding::new("cmd-alt-right", NextTab, Some("IdeView")),
             KeyBinding::new("cmd-alt-left", PrevTab, Some("IdeView")),
         ]);

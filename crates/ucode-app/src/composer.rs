@@ -102,6 +102,14 @@ impl Composer {
         !self.input.read(cx).value().trim().is_empty() || !self.attachments.is_empty()
     }
 
+    /// 把一个文件引用(如 `src/a.rs#5-10`)以 `@` 提及的形式追加到输入框末尾并聚焦。
+    pub fn insert_reference(&mut self, reference: &str, window: &mut Window, cx: &mut Context<Self>) {
+        let cur = self.input.read(cx).value().to_string();
+        let sep = if cur.is_empty() || cur.ends_with(' ') || cur.ends_with('\n') { "" } else { " " };
+        self.set_text(&format!("{cur}{sep}@{reference} "), window, cx);
+        self.focus(window, cx);
+    }
+
     /// 聚焦输入框。
     pub fn focus(&self, window: &mut Window, cx: &mut Context<Self>) {
         self.input.update(cx, |i, cx| i.focus(window, cx));
