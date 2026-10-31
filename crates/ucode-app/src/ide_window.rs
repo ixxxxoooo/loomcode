@@ -75,8 +75,26 @@ impl IdeWindow {
         true
     }
 
-    /// 回到 Agent 窗口。
+    /// 在编辑器里打开文件(融合模式下由工作台转发)。
+    pub fn open_file(&mut self, path: std::path::PathBuf, window: &mut Window, cx: &mut Context<Self>) {
+        self.panel.update(cx, |p, _| p.files.reveal(&path));
+        self.ide.update(cx, |v, cx| v.open(path, window, cx));
+    }
+
+    /// 保存当前文件。
+    pub fn save(&mut self, cx: &mut Context<Self>) {
+        self.ide.update(cx, |v, cx| v.save(cx));
+    }
+
+    /// 回到 Agent:融合模式下整窗原地换回对话布局,否则聚焦独立的 Agent 窗口。
     fn back_to_agent(&mut self, cx: &mut Context<Self>) {
+        if self.wb.read(cx).settings.fused_ide {
+            self.wb.update(cx, |wb, cx| {
+                wb.ide = false;
+                cx.notify();
+            });
+            return;
+        }
         if let Some(handle) = self.wb.read(cx).agent_window {
             let _ = handle.update(cx, |_, window, _| window.activate_window());
         }
@@ -87,9 +105,9 @@ impl Render for IdeWindow {
     fn render(&mut self, _window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
         self.sync_state(cx);
         let t = cx.theme().clone();
-        let (parts, title, status) = {
+        let (parts, title, status, fused) = {
             let wb = self.wb.read(cx);
-            (wb.chat_parts(), wb.active_model().map(|m| m.read(cx).state.title.clone()).unwrap_or_else(|| "UCode".into()), wb.status_bar(cx))
+            (wb.chat_parts(), wb.active_model().map(|m| m.read(cx).state.title.clone()).unwrap_or_else(|| "UCode".into()), wb.status_bar(cx), wb.settings.fused_ide)
         };
         v_flex()
             .key_context("IdeWindow")
@@ -105,12 +123,12 @@ impl Render for IdeWindow {
                     .child(Button::new("iw-left").small().ghost().icon(if self.left_open { IconName::PanelLeftClose } else { IconName::PanelLeftOpen })
                         .on_click(cx.listener(|this, _, _, cx| { this.left_open = !this.left_open; cx.notify(); })))
                     .child(div().flex_1().flex().justify_center().text_size(px(13.)).text_color(t.muted_foreground).child(format!("IDE · {title}")))
-                    .child(Button::new("iw-settings").small().ghost().icon(IconName::Settings).tooltip("设置(在 Agent 窗口打开)")
+                    .child(Button::new("iw-settings").small().ghost().icon(IconName::Settings).tooltip("设置")
                         .on_click(cx.listener(|this, _, _, cx| {
                             this.wb.update(cx, |wb, cx| wb.set_page(Page::Settings, cx));
                             this.back_to_agent(cx);
                         })))
-                    .child(Button::new("iw-agent").small().primary().label("Agents Window").icon(IconName::ExternalLink).tooltip("回到 Agent 窗口(⇧⌘E)")
+                    .child(Button::new("iw-agent").small().primary().label("Agents Window").icon(if fused { IconName::MessageSquare } else { IconName::ExternalLink }).tooltip("回到 Agent 窗口(⇧⌘E)")
                         .on_click(cx.listener(|this, _, _, cx| this.back_to_agent(cx)))),
             ))
             .child(

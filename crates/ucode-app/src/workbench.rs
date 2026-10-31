@@ -4,7 +4,6 @@ use crate::automation_page::AutomationPage;
 use crate::browser_page::BrowserPage;
 use crate::canvas_page::CanvasPage;
 use crate::composer::Composer;
-use crate::ide::IdeView;
 use crate::ide_window::IdeWindow;
 use crate::model::{SessionModel, UiRequest};
 use crate::palette::{Group, Palette, PaletteAction, PaletteEvent, PaletteItem};
@@ -115,10 +114,10 @@ pub struct Workbench {
     pub claude_info: Option<String>,
     pub palette: Option<Entity<Palette>>,
     _palette_sub: Option<Subscription>,
-    /// 融合模式下当前是否显示 IDE 视图(原地切换)
+    /// 融合模式下当前是否整窗显示 IDE(原地切换)
     pub ide: bool,
-    /// 编辑器视图(融合模式嵌入本窗口;独立窗口有自己的一份)
-    pub ide_view: Entity<IdeView>,
+    /// 融合模式的 IDE 外壳:与独立 IDE 窗口是同一个视图,整窗替换 Agent 布局
+    pub ide_shell: Option<Entity<IdeWindow>>,
     /// Agent 窗口句柄(IDE 窗口据此切回)
     pub agent_window: Option<AnyWindowHandle>,
     /// 独立 IDE 窗口句柄
@@ -198,7 +197,7 @@ impl Workbench {
             palette: None,
             _palette_sub: None,
             ide: false,
-            ide_view: cx.new(|_| IdeView::new()),
+            ide_shell: None,
             agent_window: Some(window.window_handle()),
             ide_window: None,
             canvas,
@@ -782,12 +781,8 @@ impl Workbench {
     fn on_panel_event(&mut self, ev: &PanelEvent, window: &mut Window, cx: &mut Context<Self>) {
         match ev {
             PanelEvent::OpenFile(path) => {
-                if self.ide {
-                    self.open_in_ide(path.clone(), window, cx);
-                } else {
-                    let path = path.clone();
-                    self.panel.update(cx, |p, cx| p.files.load_preview(path, window, cx));
-                }
+                let path = path.clone();
+                self.panel.update(cx, |p, cx| p.files.load_preview(path, window, cx));
             }
         }
     }
@@ -804,10 +799,14 @@ impl Workbench {
         self.ide = !self.ide;
         if self.ide {
             self.page = Page::Chat;
-            self.right_open = true;
-            self.panel.update(cx, |p, cx| p.set_tab(RightTab::Files, cx));
-            let root = self.active_project_path().unwrap_or_default();
-            self.ide_view.update(cx, |v, cx| v.set_root(root, cx));
+            if self.ide_shell.is_none() {
+                let wb = cx.entity();
+                let root = self.active_project_path().unwrap_or_default();
+                let demo = self.demo;
+                self.ide_shell = Some(cx.new(|cx| IdeWindow::new(wb, demo, root, window, cx)));
+            }
+        } else {
+            window.focus(&self.focus, cx);
         }
         cx.notify();
     }
@@ -859,24 +858,20 @@ impl Workbench {
     pub fn open_file(&mut self, path: String, window: &mut Window, cx: &mut Context<Self>) {
         self.page = Page::Chat;
         self.right_open = true;
-        if self.ide {
+        if let Some(shell) = self.ide_shell.clone().filter(|_| self.ide) {
             let full = self.resolve_path(&path);
-            self.open_in_ide(full, window, cx);
+            shell.update(cx, |w, cx| w.open_file(full, window, cx));
         } else {
             self.panel.update(cx, |p, cx| p.request_open(path, cx));
         }
         cx.notify();
     }
 
-    pub fn open_in_ide(&mut self, path: PathBuf, window: &mut Window, cx: &mut Context<Self>) {
-        self.panel.update(cx, |p, _| p.files.reveal(&path));
-        self.ide_view.update(cx, |v, cx| v.open(path, window, cx));
-        cx.notify();
-    }
-
-    /// 保存融合视图里的当前文件。
+    /// 保存融合 IDE 里的当前文件。
     pub fn save_ide(&mut self, cx: &mut Context<Self>) {
-        self.ide_view.update(cx, |v, cx| v.save(cx));
+        if let Some(shell) = self.ide_shell.clone().filter(|_| self.ide) {
+            shell.update(cx, |w, cx| w.save(cx));
+        }
     }
 
     /// 当前会话的时间线模型与输入框(供对话栏渲染)。
@@ -969,11 +964,10 @@ impl Render for Workbench {
         let t = cx.theme().clone();
         // 设置是整窗页面:隐藏侧栏、右侧面板与状态栏
         let full_settings = self.page == Page::Settings;
+        // 融合模式的 IDE:整窗替换 Agent 布局(标题栏、侧栏、状态栏都是 IDE 的)
+        let ide_shell = self.ide_shell.clone().filter(|_| self.ide && !full_settings);
+        let show_ide = ide_shell.is_some();
         let center = match self.page {
-            Page::Chat if self.ide => h_flex().size_full()
-                .child(div().flex_1().min_w_0().h_full().child(self.ide_view.clone()))
-                .child(div().w(px(440.)).h_full().flex_none().border_l_1().border_color(t.border).child(self.chat_view(cx)))
-                .into_any_element(),
             Page::Chat => self.chat_view(cx),
             Page::Settings => settings::render(self, window, cx),
             Page::Canvas => self.canvas.clone().into_any_element(),
@@ -1001,14 +995,15 @@ impl Render for Workbench {
             .size_full()
             .bg(t.background)
             .text_color(t.foreground)
-            .child(if full_settings { self.settings_title_bar(cx).into_any_element() } else { self.title_bar(cx).into_any_element() })
-            .child(
-                h_flex().flex_1().min_h_0().w_full()
-                    .when(self.left_open && !full_settings, |d| d.child(sidebar::render(self, cx)))
-                    .child(div().flex_1().min_w_0().h_full().child(center))
-                    .when(self.right_open && self.page == Page::Chat, |d| d.child(div().w(px(self.right_w)).h_full().flex_none().border_l_1().border_color(t.border).child(self.panel.clone()))),
-            )
-            .when(self.ide && self.page == Page::Chat, |d| d.child(self.status_bar(cx)))
+            .when_some(ide_shell, |d, shell| d.child(div().flex_1().min_h_0().w_full().child(shell)))
+            .when(!show_ide, |d| d
+                .child(if full_settings { self.settings_title_bar(cx).into_any_element() } else { self.title_bar(cx).into_any_element() })
+                .child(
+                    h_flex().flex_1().min_h_0().w_full()
+                        .when(self.left_open && !full_settings, |d| d.child(sidebar::render(self, cx)))
+                        .child(div().flex_1().min_w_0().h_full().child(center))
+                        .when(self.right_open && self.page == Page::Chat, |d| d.child(div().w(px(self.right_w)).h_full().flex_none().border_l_1().border_color(t.border).child(self.panel.clone()))),
+                ))
             .when_some(self.palette.clone(), |d, p| d.child(p))
     }
 }
