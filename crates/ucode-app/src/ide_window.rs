@@ -4,6 +4,7 @@
 //!
 //! @author ixxxxoooo
 
+use crate::ide_chat_header;
 use crate::ide::{CloseTab, IdeView, NextTab, PrevTab};
 use crate::right_panel::{PanelEvent, RightPanel};
 use crate::ui::{dev_badge, icon, no_drag};
@@ -204,7 +205,7 @@ impl Render for IdeWindow {
                                     .child(div().size_full().border_r_1().border_color(t.border).child(self.panel.clone())))
                                 .child(resizable_panel().size_range(px(320.)..Pixels::MAX).child(div().size_full().child(self.ide.clone())))
                                 .child(resizable_panel().size(px(420.)).size_range(px(320.)..px(900.)).flex_none().visible(self.chat_open)
-                                    .child(div().size_full().border_l_1().border_color(t.border).child(chat_panel(parts, branch, demo, cx)))),
+                                    .child(v_flex().size_full().border_l_1().border_color(t.border).children(ide_chat_header::chat_header(&self.wb, cx)).child(div().flex_1().min_h_0().child(chat_panel(parts, branch, demo, cx))))),
                         ),
                     ),
             )
