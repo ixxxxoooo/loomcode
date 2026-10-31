@@ -772,7 +772,7 @@ impl Workbench {
         .detach();
     }
 
-    fn register_project(&mut self, path: String, window: &mut Window, cx: &mut Context<Self>) {
+    pub fn register_project(&mut self, path: String, window: &mut Window, cx: &mut Context<Self>) {
         // 之前被移除的项目重新添加时恢复显示
         if self.ui_state.hidden_projects.contains(&path) {
             self.ui_state.unhide_project(&path);

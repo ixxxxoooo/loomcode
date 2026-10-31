@@ -20,6 +20,7 @@ mod ide_window;
 mod palette;
 mod palette_search;
 mod project_actions;
+mod project_add;
 mod project_menu;
 mod real;
 mod rich_text;
