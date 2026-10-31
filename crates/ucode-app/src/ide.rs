@@ -16,7 +16,7 @@ use gpui_kit::*;
 use std::collections::HashMap;
 use std::path::{Path, PathBuf};
 
-actions!(ide, [CloseTab, NextTab, PrevTab]);
+actions!(ide, [CloseTab, NextTab, PrevTab, QuickOpen, GoToLine, FindInProject]);
 
 /// 超过这个大小的文件不在编辑器里打开。
 const MAX_EDIT_BYTES: u64 = 1024 * 1024;
@@ -198,6 +198,18 @@ impl IdeView {
         if let Some(p) = self.tabs.active().map(Path::to_path_buf) {
             self.close_tab(&p, window, cx);
         }
+    }
+
+    /// 把光标移到指定行列(1 起始),并让编辑器获得焦点。
+    pub fn goto(&mut self, line: u32, col: u32, window: &mut Window, cx: &mut Context<Self>) {
+        let Some(doc) = self.tabs.active().and_then(|p| self.docs.get(p)) else { return };
+        let pos = gpui_kit::component::input::Position::new(line.saturating_sub(1), col.saturating_sub(1));
+        doc.editor.update(cx, |e, cx| e.set_cursor_position(pos, window, cx));
+    }
+
+    /// 当前是否有打开的文件。
+    pub fn has_active(&self) -> bool {
+        self.tabs.active().is_some()
     }
 
     /// 状态栏要显示的光标与文件信息:(行, 列, 语言, 是否 CRLF);没有打开文件时为 `None`。
