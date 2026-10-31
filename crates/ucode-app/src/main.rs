@@ -19,6 +19,7 @@ mod palette;
 mod real;
 mod rich_text;
 mod session_actions;
+mod session_menu;
 mod settings;
 mod right_panel;
 mod sidebar;

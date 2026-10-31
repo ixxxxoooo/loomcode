@@ -1,9 +1,11 @@
 //! 左侧项目栏:项目 → 会话树,置顶、状态点、搜索入口、设置入口。
 
+use crate::session_menu;
 use crate::ui::{icon, status_dot};
 use crate::workbench::{Page, Workbench};
 use gpui_kit::assets::IconName;
 use gpui_kit::component::button::{Button, ButtonVariants};
+use gpui_kit::component::menu::ContextMenuExt as _;
 use gpui_kit::component::{ActiveTheme, Selectable, Sizable, h_flex, v_flex};
 use gpui_kit::prelude::FluentBuilder as _;
 use gpui_kit::*;
@@ -21,6 +23,8 @@ fn session_row(wb: &Workbench, project_ix: usize, meta: &SessionMeta, cx: &mut C
     let (pinned, archived) = (meta.pinned, meta.archived);
     // 按钮点击不应触发整行的「打开会话」
     let stop = |_: &MouseDownEvent, _: &mut Window, cx: &mut App| cx.stop_propagation();
+    let cwd = wb.projects.get(project_ix).map(|p| p.path.clone()).unwrap_or_default();
+    let menu = session_menu::build(cx.entity().downgrade(), meta, cwd);
     h_flex()
         .id(SharedString::from(format!("sess-{}", meta.id)))
         .group(group.clone())
@@ -56,6 +60,7 @@ fn session_row(wb: &Workbench, project_ix: usize, meta: &SessionMeta, cx: &mut C
                             .on_click(cx.listener(move |this, _, _, cx| this.set_session_archived(&arch_id, !archived, cx)))),
                 ),
         )
+        .context_menu(menu)
 }
 
 /// 侧栏顶部的一行入口(图标 + 文字 + 可选快捷键)。

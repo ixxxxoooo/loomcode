@@ -136,7 +136,7 @@ pub struct Workbench {
     focus: FocusHandle,
     new_counter: u32,
     /// 本次运行里新建、还没写进历史的会话 id(启动时用预分配 id,而不是恢复)
-    new_sessions: HashSet<String>,
+    pub new_sessions: HashSet<String>,
     /// 历史加载完成后要打开的会话(调试用 `UCODE_SESSION`)
     pending_open: Option<String>,
 }

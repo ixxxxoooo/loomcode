@@ -112,6 +112,27 @@ pub fn list_sessions_in(dir: &Path) -> Vec<SessionMeta> {
     metas
 }
 
+/// 删除某个会话的历史文件(`<dir>/<id>.jsonl`)。
+///
+/// 参数:`dir` 项目对应的 projects 子目录;`id` 会话 id,只允许字母、数字、`-`、`_`,
+/// 防止借 `..` 或路径分隔符删到目录之外。
+/// 返回:文件不存在视为成功(新会话还没写入历史);id 不合法返回 `InvalidInput`。
+pub fn delete_session_in(dir: &Path, id: &str) -> std::io::Result<()> {
+    let valid = !id.is_empty() && id.chars().all(|c| c.is_ascii_alphanumeric() || c == '-' || c == '_');
+    if !valid {
+        return Err(std::io::Error::new(std::io::ErrorKind::InvalidInput, "会话 id 不合法"));
+    }
+    match std::fs::remove_file(dir.join(format!("{id}.jsonl"))) {
+        Err(e) if e.kind() != std::io::ErrorKind::NotFound => Err(e),
+        _ => Ok(()),
+    }
+}
+
+/// 删除某个工作目录下的会话历史文件。
+pub fn delete_session(cwd: &str, id: &str) -> std::io::Result<()> {
+    delete_session_in(&projects_dir().join(encode_project_dir(cwd)), id)
+}
+
 /// 列出所有项目,最近有活动的在前。没有任何有效会话的目录会被忽略。
 pub fn list_projects(projects: &Path) -> Vec<ProjectMeta> {
     list_projects_with_sessions(projects).into_iter().map(|(p, _)| p).collect()
@@ -173,6 +194,21 @@ mod tests {
         let _ = std::fs::remove_dir_all(&dir);
         std::fs::create_dir_all(&dir).unwrap();
         dir
+    }
+
+    #[test]
+    fn 删除会话只动自己的文件() {
+        let dir = temp_dir("del");
+        std::fs::write(dir.join("a.jsonl"), "x").unwrap();
+        std::fs::write(dir.join("b.jsonl"), "x").unwrap();
+        delete_session_in(&dir, "a").unwrap();
+        assert!(!dir.join("a.jsonl").exists() && dir.join("b.jsonl").exists());
+        // 不存在视为成功;不合法 id 被拒绝
+        delete_session_in(&dir, "a").unwrap();
+        assert!(delete_session_in(&dir, "../b").is_err());
+        assert!(delete_session_in(&dir, "").is_err());
+        assert!(dir.join("b.jsonl").exists());
+        let _ = std::fs::remove_dir_all(dir);
     }
 
     const SAMPLE: &str = r#"{"type":"queue-operation","operation":"enqueue"}
