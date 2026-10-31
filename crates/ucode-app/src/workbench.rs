@@ -16,7 +16,7 @@ use gpui_kit::component::TitleBar;
 use gpui_kit::component::button::{Button, ButtonVariants};
 use gpui_kit::component::message_scroller::MessageScroller;
 use crate::layout_rules::{CENTER_MIN, LEFT_MAX, LEFT_MIN, RIGHT_MAX, RIGHT_MIN};
-use gpui_kit::component::{ActiveTheme, Selectable, Sizable, h_flex, h_resizable, resizable_panel, v_flex};
+use gpui_kit::component::{ActiveTheme, Sizable, h_flex, h_resizable, resizable_panel, v_flex};
 use gpui_kit::prelude::FluentBuilder as _;
 use gpui_kit::*;
 use std::collections::{HashMap, HashSet};
@@ -971,12 +971,12 @@ impl Workbench {
         let title = self.active_model().map(|m| m.read(cx).state.title.clone()).unwrap_or_else(|| "UCode".into());
         TitleBar::new().child(
             h_flex().w_full().items_center().gap_1().pr_2()
-                .child(no_drag(Button::new("tb-left").small().ghost().icon(IconName::PanelLeft).selected(self.left_open).tooltip("侧栏(⌘B)")
+                .child(no_drag(Button::new("tb-left").small().ghost().icon(IconName::PanelLeft).tooltip("侧栏(⌘B)")
                     .on_click(cx.listener(|this, _, _, cx| { this.left_open = !this.left_open; cx.notify(); }))))
                 .child(no_drag(Button::new("tb-search").small().ghost().icon(IconName::Search).tooltip("搜索(⌘K)")
                     .on_click(cx.listener(|this, _, window, cx| this.toggle_palette(window, cx)))))
                 .child(div().flex_1().flex().justify_center().text_size(px(13.)).text_color(t.muted_foreground).child(title))
-                .child(no_drag(Button::new("tb-right").small().ghost().icon(IconName::PanelRight).selected(self.right_open).tooltip("右侧面板(⌥⌘B)")
+                .child(no_drag(Button::new("tb-right").small().ghost().icon(IconName::PanelRight).tooltip("右侧面板(⌥⌘B)")
                     .on_click(cx.listener(|this, _, _, cx| { this.right_open = !this.right_open; cx.notify(); }))))
                 .child(no_drag(crate::ui::mode_switch("tb-ide", "IDE", if self.settings.fused_ide { IconName::Code } else { IconName::ExternalLink }, false).tooltip("切换到 IDE(⇧⌘E)")
                     .on_click(cx.listener(|this, _, window, cx| this.toggle_ide(window, cx))))),

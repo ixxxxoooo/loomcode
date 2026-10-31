@@ -13,7 +13,7 @@ use crate::workbench::{Page, RightTab, SaveFile, ToggleIde, ToggleLeft, ToggleRi
 use gpui_kit::assets::IconName;
 use gpui_kit::component::TitleBar;
 use gpui_kit::component::button::{Button, ButtonVariants};
-use gpui_kit::component::{ActiveTheme, Selectable, Sizable, h_flex, h_resizable, resizable_panel, v_flex};
+use gpui_kit::component::{ActiveTheme, Sizable, h_flex, h_resizable, resizable_panel, v_flex};
 use gpui_kit::prelude::FluentBuilder as _;
 use gpui_kit::*;
 
@@ -148,7 +148,7 @@ impl IdeWindow {
         let t = cx.theme().clone();
         TitleBar::new().child(
             h_flex().w_full().items_center().gap_1().pr_2()
-                .child(no_drag(Button::new("iw-left").small().ghost().icon(IconName::PanelLeft).selected(self.left_open).tooltip("侧栏(⌘B)")
+                .child(no_drag(Button::new("iw-left").small().ghost().icon(IconName::PanelLeft).tooltip("侧栏(⌘B)")
                     .on_click(cx.listener(|this, _, _, cx| { this.left_open = !this.left_open; cx.notify(); }))))
                 .child(div().flex_1().flex().justify_center().child(no_drag(
                     h_flex().id("iw-quick").cursor_pointer().on_click(cx.listener(|this, _, window, cx| this.toggle_quick(window, cx)))
@@ -157,7 +157,7 @@ impl IdeWindow {
                         .child(icon(IconName::Search, 13., t.muted_foreground))
                         .child(project),
                 )))
-                .child(no_drag(Button::new("iw-chat").small().ghost().icon(IconName::PanelRight).selected(self.chat_open).tooltip("对话栏(⌥⌘B)")
+                .child(no_drag(Button::new("iw-chat").small().ghost().icon(IconName::PanelRight).tooltip("对话栏(⌥⌘B)")
                     .on_click(cx.listener(|this, _, _, cx| { this.chat_open = !this.chat_open; cx.notify(); }))))
                 .child(no_drag(Button::new("iw-settings").small().ghost().icon(IconName::Settings).tooltip("设置")
                     .on_click(cx.listener(|this, _, _, cx| {
