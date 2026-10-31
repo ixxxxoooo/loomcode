@@ -110,6 +110,11 @@ impl IdeWindow {
     /// 保存当前文件。
     pub fn save(&mut self, cx: &mut Context<Self>) {
         self.ide.update(cx, |v, cx| v.save(cx));
+        // 保存后刷新文件树的 Git 标记
+        self.panel.update(cx, |p, cx| {
+            p.files.reload();
+            cx.notify();
+        });
     }
 
     /// 回到 Agent:融合模式下整窗原地换回对话布局,否则聚焦独立的 Agent 窗口。

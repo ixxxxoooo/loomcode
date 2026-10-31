@@ -1,5 +1,6 @@
 //! 「文件」面板:项目文件树 + 只读代码预览(带语法高亮)。
 
+use crate::git_status::{GitMark, GitStatus};
 use crate::right_panel::{PanelEvent, RightPanel};
 use crate::ui::{MONO, empty_state, icon};
 use gpui_kit::assets::IconName;
@@ -30,6 +31,8 @@ pub struct FileTree {
     preview: Option<Entity<EditorState>>,
     /// 预览不可用时的说明(二进制、过大、读取失败)
     note: Option<String>,
+    /// 文件与目录的 Git 改动标记
+    git: GitStatus,
 }
 
 /// 不在树里显示的目录与文件。
@@ -88,6 +91,7 @@ impl FileTree {
             selected: None,
             preview: None,
             note: None,
+            git: GitStatus::default(),
         };
         t.reload();
         t
@@ -109,6 +113,7 @@ impl FileTree {
 
     /// 重新读取根目录与所有已展开目录。
     pub fn reload(&mut self) {
+        self.git = GitStatus::read(&self.root);
         self.children.clear();
         self.children.insert(self.root.clone(), read_dir_sorted(&self.root));
         for dir in self.expanded.clone() {
@@ -212,6 +217,13 @@ impl FileTree {
                 let open = node.is_dir && self.expanded.contains(&node.path);
                 let path = node.path.clone();
                 let is_dir = node.is_dir;
+                let mark = self.git.get(&node.path);
+                let color = match mark {
+                    Some(GitMark::Modified) => t.warning,
+                    Some(GitMark::Added) => t.success,
+                    Some(GitMark::Deleted) => t.danger,
+                    None => t.foreground,
+                };
                 h_flex().id(SharedString::from(format!("ft-{ix}"))).w_full().h(px(24.)).pr_2().gap_1p5().items_center().cursor_pointer()
                     .pl(px(8. + depth as f32 * 14.))
                     .text_size(px(12.5))
@@ -232,7 +244,15 @@ impl FileTree {
                     } else {
                         icon(IconName::FileText, 13., t.muted_foreground)
                     })
-                    .child(div().flex_1().min_w_0().truncate().child(node.name))
+                    .child(div().flex_1().min_w_0().truncate().text_color(color).child(node.name))
+                    .when_some(mark.filter(|_| !is_dir), |d, m| {
+                        d.child(div().text_size(px(11.)).font_family(MONO).text_color(color).child(match m {
+                            GitMark::Modified => "M",
+                            GitMark::Added => "U",
+                            GitMark::Deleted => "D",
+                        }))
+                    })
+                    .when(mark.is_some() && is_dir, |d| d.child(div().size(px(6.)).rounded_full().bg(color)))
             }));
         v_flex().size_full()
             .child(

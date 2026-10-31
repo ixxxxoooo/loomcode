@@ -13,6 +13,7 @@ mod composer;
 mod diff;
 mod model;
 mod file_tree;
+mod git_status;
 mod ide;
 mod ide_chrome;
 mod ide_tabs;
