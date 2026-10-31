@@ -27,6 +27,8 @@ pub struct AppSettings {
     pub expand_thinking: bool,
     /// 右侧面板默认打开
     pub right_open: bool,
+    /// 融合模式:开启后 Agent 与 IDE 在同一窗口原地切换;关闭时 IDE 是独立窗口
+    pub fused_ide: bool,
     /// 手动指定 `claude` 可执行文件路径;空则自动查找
     pub claude_path: Option<String>,
     /// 最近使用的项目目录
@@ -42,6 +44,7 @@ impl Default for AppSettings {
             default_effort: Effort::Medium,
             expand_thinking: false,
             right_open: true,
+            fused_ide: false,
             claude_path: None,
             recent_projects: Vec::new(),
         }

@@ -81,3 +81,12 @@ pub fn empty_state(icon_name: IconName, title: &str, hint: &str, cx: &App) -> Di
 pub fn flex_row() -> Div {
     h_flex()
 }
+
+/// 开发版标识:由 `scripts/dev.sh` 以 `UCODE_DEV=1` 启动时显示,正式版返回 `None`。
+pub fn dev_badge(cx: &App) -> Option<Div> {
+    if !std::env::var("UCODE_DEV").is_ok_and(|v| v == "1") {
+        return None;
+    }
+    let t = cx.theme();
+    Some(pill("DEV", t.background, t.warning))
+}

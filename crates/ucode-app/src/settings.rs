@@ -164,6 +164,7 @@ pub fn render(wb: &mut Workbench, window: &mut Window, cx: &mut Context<Workbenc
 fn general(wb: &Workbench, cx: &mut Context<Workbench>) -> AnyElement {
     let theme = wb.settings.theme;
     let right_open = wb.settings.right_open;
+    let fused = wb.settings.fused_ide;
     v_flex().w_full()
         .child(page_title("通用"))
         .child(section_title("外观", cx))
@@ -171,6 +172,8 @@ fn general(wb: &Workbench, cx: &mut Context<Workbench>) -> AnyElement {
             |this, v, cx| this.update_settings(cx, |s| s.theme = v)), cx))
         .child(row("右侧面板默认打开", "启动时是否显示改动 / 文件 / 终端面板", Switch::new("sw-right").checked(right_open)
             .on_click(cx.listener(move |this, checked: &bool, _, cx| { let v = *checked; this.update_settings(cx, |s| s.right_open = v) })), cx))
+        .child(row("融合模式", "关闭时 IDE 是独立窗口(⇧⌘E 打开或回到 Agent);开启后在同一窗口原地切换", Switch::new("sw-fused").checked(fused)
+            .on_click(cx.listener(move |this, checked: &bool, _, cx| { let v = *checked; this.update_settings(cx, |s| s.fused_ide = v); this.on_fused_changed(cx) })), cx))
         .child(section_title("语言", cx))
         .child(row("界面语言", "目前仅提供简体中文", pill("简体中文", cx.theme().foreground, cx.theme().muted), cx))
         .into_any_element()

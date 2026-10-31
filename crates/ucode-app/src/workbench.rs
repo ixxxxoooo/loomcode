@@ -4,12 +4,13 @@ use crate::automation_page::AutomationPage;
 use crate::browser_page::BrowserPage;
 use crate::canvas_page::CanvasPage;
 use crate::composer::Composer;
-use crate::ide::{self, IdeDoc};
+use crate::ide::IdeView;
+use crate::ide_window::IdeWindow;
 use crate::model::{SessionModel, UiRequest};
 use crate::palette::{Group, Palette, PaletteAction, PaletteEvent, PaletteItem};
 use crate::right_panel::{PanelEvent, RightPanel};
 use crate::settings::{self, MemoryDoc, SettingsTab};
-use crate::ui::{empty_state, icon};
+use crate::ui::{dev_badge, empty_state, icon};
 use crate::{sidebar, theme, timeline};
 use gpui_kit::assets::IconName;
 use gpui_kit::component::TitleBar;
@@ -114,11 +115,14 @@ pub struct Workbench {
     pub claude_info: Option<String>,
     pub palette: Option<Entity<Palette>>,
     _palette_sub: Option<Subscription>,
-    /// IDE 模式:中栏是单文件编辑器 + 对话
+    /// 融合模式下当前是否显示 IDE 视图(原地切换)
     pub ide: bool,
-    pub ide_doc: Option<IdeDoc>,
-    /// 编辑器打不开文件时的说明
-    pub ide_note: Option<String>,
+    /// 编辑器视图(融合模式嵌入本窗口;独立窗口有自己的一份)
+    pub ide_view: Entity<IdeView>,
+    /// Agent 窗口句柄(IDE 窗口据此切回)
+    pub agent_window: Option<AnyWindowHandle>,
+    /// 独立 IDE 窗口句柄
+    pub ide_window: Option<AnyWindowHandle>,
     pub canvas: Entity<CanvasPage>,
     pub automation: Entity<AutomationPage>,
     pub browser: Entity<BrowserPage>,
@@ -194,8 +198,9 @@ impl Workbench {
             palette: None,
             _palette_sub: None,
             ide: false,
-            ide_doc: None,
-            ide_note: None,
+            ide_view: cx.new(|_| IdeView::new()),
+            agent_window: Some(window.window_handle()),
+            ide_window: None,
             canvas,
             automation,
             browser,
@@ -248,7 +253,8 @@ impl Workbench {
             }
         }
         if std::env::var("UCODE_IDE").is_ok_and(|v| v == "1") {
-            wb.toggle_ide(window, cx);
+            // 独立窗口要新开窗口,推迟到构造完成后
+            cx.defer_in(window, |this, window, cx| this.toggle_ide(window, cx));
         }
         if let Ok(file) = std::env::var("UCODE_FILE") {
             wb.open_file(file, window, cx);
@@ -786,15 +792,59 @@ impl Workbench {
         }
     }
 
-    // ---------- IDE 模式 ----------
+    // ---------- IDE ----------
 
-    /// 切换 IDE 模式:开启时右侧面板自动切到「文件」。
-    pub fn toggle_ide(&mut self, _window: &mut Window, cx: &mut Context<Self>) {
+    /// 切换到 IDE。融合模式:本窗口原地切换(右侧面板自动切到「文件」);
+    /// 非融合模式:打开或聚焦独立的 IDE 窗口。
+    pub fn toggle_ide(&mut self, window: &mut Window, cx: &mut Context<Self>) {
+        if !self.settings.fused_ide {
+            self.open_ide_window(window, cx);
+            return;
+        }
         self.ide = !self.ide;
         if self.ide {
             self.page = Page::Chat;
             self.right_open = true;
             self.panel.update(cx, |p, cx| p.set_tab(RightTab::Files, cx));
+            let root = self.active_project_path().unwrap_or_default();
+            self.ide_view.update(cx, |v, cx| v.set_root(root, cx));
+        }
+        cx.notify();
+    }
+
+    /// 打开独立 IDE 窗口;已存在则直接聚焦。
+    fn open_ide_window(&mut self, window: &mut Window, cx: &mut Context<Self>) {
+        self.agent_window = Some(window.window_handle());
+        if let Some(handle) = self.ide_window
+            && handle.update(cx, |_, w, _| w.activate_window()).is_ok()
+        {
+            return;
+        }
+        let wb = cx.entity();
+        let demo = self.demo;
+        let root = self.active_project_path().unwrap_or_default();
+        // 新窗口首帧会回读本工作台,必须等当前更新结束后再创建
+        cx.defer(move |cx| {
+            let mut options = TitleBar::window_options();
+            options.window_bounds = Some(WindowBounds::Windowed(Bounds::centered(None, size(px(1280.), px(820.)), cx)));
+            options.window_min_size = Some(size(px(900.), px(560.)));
+            let owner = wb.clone();
+            match open_window(options, cx, move |window, cx| cx.new(|cx| IdeWindow::new(wb, demo, root, window, cx))) {
+                Ok((handle, _)) => owner.update(cx, |this, _| this.ide_window = Some(handle)),
+                Err(e) => eprintln!("打开 IDE 窗口失败:{e}"),
+            }
+        });
+    }
+
+    /// 融合模式开关变化:开启时收起已打开的独立 IDE 窗口。
+    pub fn on_fused_changed(&mut self, cx: &mut Context<Self>) {
+        if self.settings.fused_ide
+            && let Some(handle) = self.ide_window.take()
+        {
+            let _ = handle.update(cx, |_, w, _| w.remove_window());
+        }
+        if !self.settings.fused_ide {
+            self.ide = false;
         }
         cx.notify();
     }
@@ -805,7 +855,7 @@ impl Workbench {
         if p.is_absolute() { p } else { PathBuf::from(self.active_project_path().unwrap_or_default()).join(p) }
     }
 
-    /// 统一的「打开文件」入口:IDE 模式开编辑器,否则在右侧面板预览。
+    /// 统一的「打开文件」入口:融合 IDE 视图开编辑器,否则在右侧面板预览。
     pub fn open_file(&mut self, path: String, window: &mut Window, cx: &mut Context<Self>) {
         self.page = Page::Chat;
         self.right_open = true;
@@ -820,41 +870,18 @@ impl Workbench {
 
     pub fn open_in_ide(&mut self, path: PathBuf, window: &mut Window, cx: &mut Context<Self>) {
         self.panel.update(cx, |p, _| p.files.reveal(&path));
-        match ide::load(&path, window, cx) {
-            Ok(doc) => {
-                self.ide_doc = Some(doc);
-                self.ide_note = None;
-            }
-            Err(note) => {
-                self.ide_doc = None;
-                self.ide_note = Some(note);
-            }
-        }
+        self.ide_view.update(cx, |v, cx| v.open(path, window, cx));
         cx.notify();
     }
 
+    /// 保存融合视图里的当前文件。
     pub fn save_ide(&mut self, cx: &mut Context<Self>) {
-        let Some(doc) = self.ide_doc.as_mut() else { return };
-        let text = doc.editor.read(cx).value().to_string();
-        match std::fs::write(&doc.path, text) {
-            Ok(()) => {
-                doc.saved = true;
-                self.ide_note = None;
-            }
-            Err(e) => self.ide_note = Some(format!("保存失败:{e}")),
-        }
-        cx.notify();
+        self.ide_view.update(cx, |v, cx| v.save(cx));
     }
 
-    pub fn reload_ide(&mut self, window: &mut Window, cx: &mut Context<Self>) {
-        if let Some(path) = self.ide_doc.as_ref().map(|d| d.path.clone()) {
-            self.open_in_ide(path, window, cx);
-        }
-    }
-
-    pub fn close_ide(&mut self, cx: &mut Context<Self>) {
-        self.ide_doc = None;
-        cx.notify();
+    /// 当前会话的时间线模型与输入框(供对话栏渲染)。
+    pub fn chat_parts(&self) -> Option<(Entity<SessionModel>, Entity<Composer>)> {
+        self.active.as_ref().and_then(|id| self.views.get(id)).map(|v| (v.model.clone(), v.composer.clone()))
     }
 
     fn title_bar(&self, cx: &mut Context<Self>) -> impl IntoElement {
@@ -864,8 +891,9 @@ impl Workbench {
             h_flex().w_full().items_center().gap_1()
                 .child(Button::new("tb-left").small().ghost().icon(if self.left_open { IconName::PanelLeftClose } else { IconName::PanelLeftOpen })
                     .on_click(cx.listener(|this, _, _, cx| { this.left_open = !this.left_open; cx.notify(); })))
+                .when_some(dev_badge(cx), |d, b| d.child(b))
                 .child(div().flex_1().flex().justify_center().text_size(px(13.)).text_color(t.muted_foreground).child(title))
-                .child(Button::new("tb-ide").small().ghost().icon(IconName::Code).selected(self.ide).tooltip("IDE 模式(⇧⌘E)")
+                .child(Button::new("tb-ide").small().ghost().icon(IconName::Code).selected(self.ide).tooltip("IDE(⇧⌘E)")
                     .on_click(cx.listener(|this, _, window, cx| this.toggle_ide(window, cx))))
                 .child(Button::new("tb-right").small().ghost().icon(if self.right_open { IconName::PanelRightClose } else { IconName::PanelRightOpen })
                     .on_click(cx.listener(|this, _, _, cx| { this.right_open = !this.right_open; cx.notify(); }))),
@@ -873,25 +901,7 @@ impl Workbench {
     }
 
     fn chat_view(&self, cx: &mut Context<Self>) -> AnyElement {
-        let t = cx.theme().clone();
-        let Some(view) = self.active.as_ref().and_then(|id| self.views.get(id)) else {
-            return empty_state(IconName::MessageSquare, "选择或新建一个会话", "左侧选择会话,或点击「新会话」", cx).into_any_element();
-        };
-        let model = view.model.clone();
-        let scroller_state = model.read(cx).scroller.clone();
-        let session = model.clone();
-        v_flex().size_full().bg(t.background)
-            .child(
-                div().flex_1().min_h_0().w_full().child(
-                    MessageScroller::new("timeline", scroller_state, move |ix, window, cx| timeline::render_row(&session, ix, window, cx))
-                        .size_full()
-                        .jump_button(true)
-                        .with_row_style(StyleRefinement::default().pb(px(0.)))
-                        .with_jump_button_label("跳到最新"),
-                ),
-            )
-            .child(view.composer.clone())
-            .into_any_element()
+        chat_panel(self.chat_parts(), cx)
     }
 
     fn status_bar(&self, cx: &mut Context<Self>) -> impl IntoElement {
@@ -916,12 +926,33 @@ impl Workbench {
     }
 }
 
+/// 渲染对话区(时间线 + 输入框),Agent 窗口、融合模式与 IDE 窗口共用。
+pub fn chat_panel(parts: Option<(Entity<SessionModel>, Entity<Composer>)>, cx: &App) -> AnyElement {
+    let t = cx.theme().clone();
+    let Some((model, composer)) = parts else {
+        return empty_state(IconName::MessageSquare, "选择或新建一个会话", "左侧选择会话,或点击「新会话」", cx).into_any_element();
+    };
+    let scroller_state = model.read(cx).scroller.clone();
+    v_flex().size_full().bg(t.background)
+        .child(
+            div().flex_1().min_h_0().w_full().child(
+                MessageScroller::new("timeline", scroller_state, move |ix, window, cx| timeline::render_row(&model, ix, window, cx))
+                    .size_full()
+                    .jump_button(true)
+                    .with_row_style(StyleRefinement::default().pb(px(0.)))
+                    .with_jump_button_label("跳到最新"),
+            ),
+        )
+        .child(composer)
+        .into_any_element()
+}
+
 impl Render for Workbench {
     fn render(&mut self, window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
         let t = cx.theme().clone();
         let center = match self.page {
             Page::Chat if self.ide => h_flex().size_full()
-                .child(div().flex_1().min_w_0().h_full().child(ide::render(self, cx)))
+                .child(div().flex_1().min_w_0().h_full().child(self.ide_view.clone()))
                 .child(div().w(px(440.)).h_full().flex_none().border_l_1().border_color(t.border).child(self.chat_view(cx)))
                 .into_any_element(),
             Page::Chat => self.chat_view(cx),

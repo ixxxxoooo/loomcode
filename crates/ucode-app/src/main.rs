@@ -14,6 +14,7 @@ mod diff;
 mod model;
 mod file_tree;
 mod ide;
+mod ide_window;
 mod palette;
 mod real;
 mod rich_text;
