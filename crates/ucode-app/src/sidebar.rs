@@ -8,7 +8,6 @@ use crate::ui::{icon, status_dot};
 use crate::workbench::{Page, Workbench};
 use gpui_kit::assets::IconName;
 use gpui_kit::component::button::{Button, ButtonVariants};
-use gpui_kit::component::input::Input;
 use gpui_kit::component::menu::{ContextMenuExt as _, DropdownMenu as _};
 use gpui_kit::component::{ActiveTheme, Selectable, Sizable, h_flex, v_flex};
 use gpui_kit::prelude::FluentBuilder as _;
@@ -91,14 +90,12 @@ fn nav_row(
 pub fn render(wb: &Workbench, cx: &mut Context<Workbench>) -> impl IntoElement {
     let t = cx.theme().clone();
     let projects = wb.projects.clone();
-    let query = wb.sidebar_filter.read(cx).value().to_string();
-    let filtering = !query.trim().is_empty();
-    // 先算出每个项目要显示的会话;过滤时没有命中的项目整个隐藏
+    // 先算出每个项目要显示的会话(已归档的按开关取舍);搜索统一走 ⌘K 命令面板,侧栏不再放过滤框
     let shown: Vec<(usize, Vec<SessionMeta>)> = projects
         .iter()
         .enumerate()
         .filter(|(_, p)| !wb.ui_state.hidden_projects.contains(&p.path))
-        .filter_map(|(pi, p)| visible_sessions(&query, p, wb.show_archived, wb.active.as_deref()).map(|v| (pi, v.into_iter().cloned().collect())))
+        .filter_map(|(pi, p)| visible_sessions("", p, wb.show_archived, wb.active.as_deref()).map(|v| (pi, v.into_iter().cloned().collect())))
         .collect();
     v_flex()
         .size_full()
@@ -113,7 +110,6 @@ pub fn render(wb: &Workbench, cx: &mut Context<Workbench>) -> impl IntoElement {
                 .child(nav_row("nav-auto-row", IconName::Timer, "自动化", None, wb.page == Page::Automation, cx,
                     |this, _, cx| this.set_page(Page::Automation, cx))),
         )
-        .child(div().px_2().pb_1().child(Input::new(&wb.sidebar_filter)))
         .child(
             h_flex().px_3().pt_2().pb_1().gap_1().items_center()
                 .child(div().flex_1().text_size(px(12.)).text_color(t.muted_foreground).child("工作区"))
@@ -122,18 +118,14 @@ pub fn render(wb: &Workbench, cx: &mut Context<Workbench>) -> impl IntoElement {
                 .child(Button::new("show-archived").small().ghost().icon(IconName::Archive)
                     .tooltip(if wb.show_archived { "隐藏已归档会话" } else { "显示已归档会话" })
                     .selected(wb.show_archived)
-                    .on_click(cx.listener(|this, _, _, cx| this.toggle_show_archived(cx))))
-                .child(Button::new("search").small().ghost().icon(IconName::Search).tooltip("搜索(⌘K)")
-                    .on_click(cx.listener(|this, _, window, cx| this.toggle_palette(window, cx)))),
+                    .on_click(cx.listener(|this, _, _, cx| this.toggle_show_archived(cx)))),
         )
         .child(
             v_flex().id("projects").flex_1().min_h_0().overflow_y_scroll().px_2().py_1().gap_0p5()
                 .on_drop(cx.listener(|this, paths: &ExternalPaths, window, cx| this.drop_projects(paths.paths(), window, cx)))
-                .when(filtering && shown.is_empty(), |d| d.child(div().px_2().py_3().text_size(px(12.)).text_color(t.muted_foreground).child("没有匹配的会话")))
                 .children(shown.into_iter().map(|(pi, sessions)| {
                     let p = &projects[pi];
-                    // 过滤时强制展开,方便直接看到命中的会话
-                    let expanded = p.expanded || filtering;
+                    let expanded = p.expanded;
                     let pinned = wb.ui_state.pinned_projects.contains(&p.path);
                     let workspace = wb.ui_state.workspace_by_dir(&p.path).cloned();
                     let worktree = wb.is_worktree_project(&p.path);
