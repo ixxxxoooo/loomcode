@@ -6892,6 +6892,7 @@ dependencies = [
  "ucode-config",
  "ucode-core",
  "ucode-demo",
+ "ucode-term",
  "uuid",
 ]
 

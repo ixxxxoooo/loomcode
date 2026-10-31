@@ -13,6 +13,7 @@ Rust + gpui-kit 0.8 的 Claude Code 工作台。只支持 Claude Code,直连本�
 | `ucode-canvas` | Canvas 画布文档模型、校验与存储 |
 | `ucode-automation` | 自动化的计划、存储与运行器 |
 | `ucode-browser` | 内置阅读模式浏览器的抓取与正文提取 |
+| `ucode-term` | 伪终端内核:`portable-pty` 起 shell + `alacritty_terminal` 解析,输出画面快照与按键编码(与界面无关) |
 | `ucode-app` | gpui-kit 界面(二进制名 `ucode`) |
 
 数据流:`AgentBackend` → `AgentEvent` → `SessionState::apply`(纯函数归约)→ `SessionModel` 实体 → 界面。界面只读 `SessionState`,所有交互都转成 `AgentCommand` 发给后端,因此演示与真实后端共用同一套界面。
@@ -42,7 +43,7 @@ scripts/package.sh [--dmg]           # 打包 dist/UCode.app
 - 不读取、不输出、不提交任何密钥或钥匙串内容;环境变量只展示名称,值遮盖。
 - 不提交构建产物(`target`、`dist`)。
 - 在 `ucode-app` 里 `use gpui_kit::*` 会遮蔽内置 `#[test]`,单元测试请写 `#[::core::prelude::v1::test]`;其他 crate 用普通 `#[test]`。
-- Agent 窗口右侧只有一个固定可折叠面板,用分段切换(改动/文件/终端/计划/输出);IDE 编辑器支持多标签(逻辑在 `ide_tabs.rs`,参考 Zed Pane:预览标签、就近插入、关闭回到最近使用)。
+- Agent 窗口右侧只有一个固定可折叠面板,用分段切换(改动/文件/终端/计划/输出);「终端」分段允许多个终端标签(`term_store.rs` 按项目根分组、各窗口共用,标签条在 `term_panel.rs`,第一个固定标签是只读的「Agent 命令」);IDE 编辑器支持多标签(逻辑在 `ide_tabs.rs`,参考 Zed Pane:预览标签、就近插入、关闭回到最近使用)。
 - 编译零警告;改动后跑 `cargo test --workspace`。
 
 ## Claude 协议要点(已对真实 claude 2.1.x 验证)
