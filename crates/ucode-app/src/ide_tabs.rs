@@ -92,6 +92,19 @@ impl TabModel {
         None
     }
 
+    /// 除 `keep` 之外的标签(用于「关闭其他」)。
+    pub fn others(&self, keep: &Path) -> Vec<PathBuf> {
+        self.order.iter().filter(|p| *p != keep).cloned().collect()
+    }
+
+    /// `path` 右侧的标签(用于「关闭右侧」)。
+    pub fn right_of(&self, path: &Path) -> Vec<PathBuf> {
+        match self.order.iter().position(|p| p == path) {
+            Some(ix) => self.order[ix + 1..].to_vec(),
+            None => Vec::new(),
+        }
+    }
+
     /// 相邻切换:`step` 为 +1 / -1,首尾循环。
     pub fn cycle(&mut self, step: isize) -> Option<PathBuf> {
         let cur = self.active.as_ref().and_then(|a| self.order.iter().position(|p| p == a))? as isize;
@@ -167,6 +180,16 @@ mod tests {
         m.activate(&p("c"));
         assert_eq!(m.close(&p("c")), Some(p("a")));
         assert_eq!(m.active(), Some(p("a").as_path()));
+    }
+
+    #[test]
+    fn 其他与右侧() {
+        let mut m = TabModel::default();
+        for n in ["a", "b", "c"] {
+            m.open(&p(n), false);
+        }
+        assert_eq!(m.others(&p("b")), [p("a"), p("c")]);
+        assert_eq!(m.right_of(&p("a")), [p("b"), p("c")]);
     }
 
     #[test]

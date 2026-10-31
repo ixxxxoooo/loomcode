@@ -7,7 +7,7 @@
 use serde::{Deserialize, Serialize};
 use std::collections::{BTreeMap, BTreeSet};
 use std::path::{Path, PathBuf};
-use ucode_core::SessionMeta;
+use ucode_core::{Project, SessionMeta};
 
 /// 用户对侧栏做的选择。所有字段都有默认值,旧文件缺字段时不会报错。
 #[derive(Debug, Clone, PartialEq, Default, Serialize, Deserialize)]
@@ -23,6 +23,8 @@ pub struct UiState {
     pub pinned_projects: BTreeSet<String>,
     /// 从侧栏移除(隐藏)的项目路径
     pub hidden_projects: BTreeSet<String>,
+    /// 项目路径 → 自定义显示名(只改显示,不改目录)
+    pub project_names: BTreeMap<String, String>,
 }
 
 impl UiState {
@@ -92,6 +94,39 @@ impl UiState {
         self.names.remove(id);
     }
 
+    /// 重命名项目的显示名;空白表示恢复目录名。
+    pub fn rename_project(&mut self, path: &str, name: &str) {
+        let name = name.trim();
+        if name.is_empty() {
+            self.project_names.remove(path);
+        } else {
+            self.project_names.insert(path.to_string(), name.to_string());
+        }
+    }
+
+    /// 从侧栏移除项目(只是隐藏,不动磁盘上的文件),同时取消置顶。
+    pub fn hide_project(&mut self, path: &str) {
+        self.hidden_projects.insert(path.to_string());
+        self.pinned_projects.remove(path);
+    }
+
+    /// 重新显示被移除的项目(再次添加同一目录时调用)。
+    pub fn unhide_project(&mut self, path: &str) {
+        self.hidden_projects.remove(path);
+    }
+
+    /// 把自定义项目名合并进项目列表,置顶项目稳定排到最前。
+    ///
+    /// 参数:`projects` 待合并的项目列表(原地修改)。
+    pub fn apply_projects(&self, projects: &mut [Project]) {
+        for p in projects.iter_mut() {
+            if let Some(name) = self.project_names.get(&p.path) {
+                p.name = name.clone();
+            }
+        }
+        projects.sort_by_key(|p| !self.pinned_projects.contains(&p.path));
+    }
+
     /// 切换项目置顶,返回切换后的状态。
     pub fn toggle_pin_project(&mut self, path: &str) -> bool {
         toggle(&mut self.pinned_projects, path)
@@ -148,6 +183,24 @@ mod tests {
         st.set_archived("a", true);
         st.forget_session("a");
         assert_eq!(st, UiState::default());
+    }
+
+    #[test]
+    fn 项目置顶改名与隐藏() {
+        let mk = |n: &str, path: &str| Project { name: n.into(), path: path.into(), branch: None, sessions: vec![], expanded: false };
+        let mut st = UiState::default();
+        st.toggle_pin_project("/b");
+        st.rename_project("/c", " 自定义 ");
+        let mut list = vec![mk("a", "/a"), mk("b", "/b"), mk("c", "/c")];
+        st.apply_projects(&mut list);
+        assert_eq!(list.iter().map(|p| p.path.as_str()).collect::<Vec<_>>(), ["/b", "/a", "/c"]);
+        assert_eq!(list[2].name, "自定义");
+        st.hide_project("/b");
+        assert!(st.hidden_projects.contains("/b") && !st.pinned_projects.contains("/b"));
+        st.unhide_project("/b");
+        assert!(st.hidden_projects.is_empty());
+        st.rename_project("/c", "");
+        assert!(st.project_names.is_empty());
     }
 
     #[test]

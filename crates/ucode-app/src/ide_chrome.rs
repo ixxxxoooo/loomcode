@@ -6,6 +6,7 @@ use crate::ide::IdeView;
 use crate::ui::{MONO, icon};
 use gpui_kit::assets::IconName;
 use gpui_kit::component::button::{Button, ButtonVariants};
+use gpui_kit::component::menu::{ContextMenuExt as _, PopupMenu, PopupMenuItem};
 use gpui_kit::component::{ActiveTheme, Sizable, h_flex, v_flex};
 use gpui_kit::prelude::FluentBuilder as _;
 use gpui_kit::*;
@@ -31,6 +32,7 @@ pub fn tab_bar(items: Vec<(PathBuf, bool, bool, bool)>, cx: &mut Context<IdeView
             let name = path.file_name().map(|n| n.to_string_lossy().to_string()).unwrap_or_default();
             let group = SharedString::from(format!("tab-{i}"));
             let (p_click, p_close, p_mid) = (path.clone(), path.clone(), path.clone());
+            let menu = tab_menu(cx.entity().downgrade(), path.clone());
             h_flex()
                 .id(SharedString::from(format!("ide-tab-{i}")))
                 .group(group.clone())
@@ -54,6 +56,7 @@ pub fn tab_bar(items: Vec<(PathBuf, bool, bool, bool)>, cx: &mut Context<IdeView
                     }
                 }))
                 .on_mouse_down(MouseButton::Middle, cx.listener(move |this, _, window, cx| this.close_tab(&p_mid, window, cx)))
+                .context_menu(menu)
                 .child(icon(IconName::FileText, 13., t.muted_foreground))
                 .child(div().min_w_0().truncate().when(preview, |d| d.italic()).child(name))
                 .child(
@@ -80,6 +83,28 @@ pub fn tab_bar(items: Vec<(PathBuf, bool, bool, bool)>, cx: &mut Context<IdeView
                         ),
                 )
         }))
+}
+
+/// 标签右键菜单:关闭 / 关闭其他 / 关闭右侧 / 复制路径。
+fn tab_menu(view: WeakEntity<IdeView>, path: PathBuf) -> impl Fn(PopupMenu, &mut Window, &mut Context<PopupMenu>) -> PopupMenu + 'static {
+    move |menu, _, _| {
+        let item = |label: &'static str, icon: IconName| PopupMenuItem::new(label).icon(icon);
+        let (v, p) = (view.clone(), path.clone());
+        let close = item("关闭", IconName::X).on_click(move |_, window, cx| {
+            let _ = v.update(cx, |this, cx| this.close_tab(&p, window, cx));
+        });
+        let (v, p) = (view.clone(), path.clone());
+        let others = item("关闭其他", IconName::X).on_click(move |_, window, cx| {
+            let _ = v.update(cx, |this, cx| this.close_others(&p, window, cx));
+        });
+        let (v, p) = (view.clone(), path.clone());
+        let right = item("关闭右侧", IconName::X).on_click(move |_, window, cx| {
+            let _ = v.update(cx, |this, cx| this.close_right(&p, window, cx));
+        });
+        let p = path.clone();
+        let copy = item("复制路径", IconName::Copy).on_click(move |_, _, cx| cx.write_to_clipboard(ClipboardItem::new_string(p.display().to_string())));
+        menu.item(close).item(others).item(right).separator().item(copy)
+    }
 }
 
 /// 面包屑:项目内的相对路径,最后一段为文件名;保存失败等提示显示在右侧。

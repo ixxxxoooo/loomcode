@@ -9,6 +9,8 @@ use crate::ide_tabs::TabModel;
 use crate::ui::empty_state;
 use gpui_kit::assets::IconName;
 use gpui_kit::component::input::{Editor, EditorState, InputEvent};
+use gpui_kit::component::WindowExt as _;
+use gpui_kit::component::button::ButtonVariant;
 use gpui_kit::component::{ActiveTheme, v_flex};
 use gpui_kit::*;
 use std::collections::HashMap;
@@ -127,12 +129,65 @@ impl IdeView {
         cx.notify();
     }
 
-    /// 关闭一个标签(有未保存修改时同样直接关闭,与 Zed 的「丢弃」一致由用户先保存)。
-    pub fn close_tab(&mut self, path: &Path, window: &mut Window, cx: &mut Context<Self>) {
+    /// 立即关闭一个标签并丢弃其文档。
+    fn drop_tab(&mut self, path: &Path) {
         self.docs.remove(path);
         self.tabs.close(path);
+    }
+
+    /// 请求关闭一批标签:有未保存修改时先弹确认,否则直接关闭。
+    ///
+    /// 参数:`paths` 要关闭的标签。
+    pub fn request_close(&mut self, paths: Vec<PathBuf>, window: &mut Window, cx: &mut Context<Self>) {
+        let dirty: Vec<String> = paths
+            .iter()
+            .filter(|p| self.docs.get(*p).is_some_and(|d| !d.saved))
+            .map(|p| p.file_name().map(|n| n.to_string_lossy().to_string()).unwrap_or_default())
+            .collect();
+        if dirty.is_empty() {
+            self.close_now(&paths, window, cx);
+            return;
+        }
+        let (view, list) = (cx.entity().downgrade(), dirty.join("、"));
+        window.open_alert_dialog(cx, move |alert, _, _| {
+            let (view, paths) = (view.clone(), paths.clone());
+            alert
+                .confirm()
+                .title("放弃未保存的修改?")
+                .description(format!("「{list}」有未保存的修改,关闭后将丢失。可取消后先按 ⌘S 保存。"))
+                .ok_text("放弃并关闭")
+                .ok_variant(ButtonVariant::Danger)
+                .on_ok(move |_, window, cx| {
+                    let _ = view.update(cx, |this, cx| this.close_now(&paths, window, cx));
+                    true
+                })
+        });
+    }
+
+    /// 关闭一批标签并让编辑器聚焦到新的当前标签。
+    fn close_now(&mut self, paths: &[PathBuf], window: &mut Window, cx: &mut Context<Self>) {
+        for p in paths {
+            self.drop_tab(p);
+        }
         self.focus_active(window, cx);
         cx.notify();
+    }
+
+    /// 关闭一个标签(有未保存修改会先确认)。
+    pub fn close_tab(&mut self, path: &Path, window: &mut Window, cx: &mut Context<Self>) {
+        self.request_close(vec![path.to_path_buf()], window, cx);
+    }
+
+    /// 关闭除 `keep` 之外的所有标签。
+    pub fn close_others(&mut self, keep: &Path, window: &mut Window, cx: &mut Context<Self>) {
+        let list = self.tabs.others(keep);
+        self.request_close(list, window, cx);
+    }
+
+    /// 关闭 `path` 右侧的所有标签。
+    pub fn close_right(&mut self, path: &Path, window: &mut Window, cx: &mut Context<Self>) {
+        let list = self.tabs.right_of(path);
+        self.request_close(list, window, cx);
     }
 
     /// 关闭当前标签。

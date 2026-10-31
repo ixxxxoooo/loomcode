@@ -18,6 +18,8 @@ mod ide_chrome;
 mod ide_tabs;
 mod ide_window;
 mod palette;
+mod project_actions;
+mod project_menu;
 mod real;
 mod rich_text;
 mod session_actions;

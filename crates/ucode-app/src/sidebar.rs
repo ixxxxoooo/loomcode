@@ -1,5 +1,6 @@
 //! 左侧项目栏:项目 → 会话树,置顶、状态点、搜索入口、设置入口。
 
+use crate::project_menu;
 use crate::session_menu;
 use crate::sidebar_filter::visible_sessions;
 use crate::ui::{icon, status_dot};
@@ -95,6 +96,7 @@ pub fn render(wb: &Workbench, cx: &mut Context<Workbench>) -> impl IntoElement {
     let shown: Vec<(usize, Vec<SessionMeta>)> = projects
         .iter()
         .enumerate()
+        .filter(|(_, p)| !wb.ui_state.hidden_projects.contains(&p.path))
         .filter_map(|(pi, p)| visible_sessions(&query, p, wb.show_archived, wb.active.as_deref()).map(|v| (pi, v.into_iter().cloned().collect())))
         .collect();
     v_flex()
@@ -134,6 +136,8 @@ pub fn render(wb: &Workbench, cx: &mut Context<Workbench>) -> impl IntoElement {
                     let p = &projects[pi];
                     // 过滤时强制展开,方便直接看到命中的会话
                     let expanded = p.expanded || filtering;
+                    let pinned = wb.ui_state.pinned_projects.contains(&p.path);
+                    let menu = project_menu::build(cx.entity().downgrade(), p.path.clone(), p.name.clone(), pinned);
                     v_flex()
                         .child(
                             h_flex().id(SharedString::from(format!("proj-{pi}"))).h(px(28.)).px_1().gap_1p5().items_center().rounded(px(6.)).cursor_pointer()
@@ -142,10 +146,12 @@ pub fn render(wb: &Workbench, cx: &mut Context<Workbench>) -> impl IntoElement {
                                 .child(icon(if expanded { IconName::ChevronDown } else { IconName::ChevronRight }, 12., t.muted_foreground))
                                 .child(icon(IconName::Folder, 14., t.muted_foreground))
                                 .child(div().flex_1().truncate().text_size(px(13.)).font_weight(FontWeight::MEDIUM).child(p.name.clone()))
+                                .when(pinned, |d| d.child(icon(IconName::Pin, 11., t.muted_foreground)))
                                 .when_some(p.branch.clone(), |d, b| {
                                     d.child(h_flex().gap_0p5().items_center().text_size(px(11.)).text_color(t.muted_foreground)
                                         .child(icon(IconName::GitBranch, 11., t.muted_foreground)).child(b))
-                                }),
+                                })
+                                .context_menu(menu),
                         )
                         .when(expanded, |d| d.children(sessions.iter().map(|s| session_row(wb, pi, s, cx).into_any_element())))
                 })),

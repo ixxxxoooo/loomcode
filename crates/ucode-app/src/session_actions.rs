@@ -15,11 +15,14 @@ impl Workbench {
     pub fn apply_ui_state(&mut self) {
         for p in self.projects.iter_mut() {
             self.ui_state.apply(&mut p.sessions);
+            if let Some(name) = self.ui_state.project_names.get(&p.path) {
+                p.name = name.clone();
+            }
         }
     }
 
     /// 保存 `state.json`;演示模式也写(落在沙盒目录里)。
-    fn persist_ui_state(&self) {
+    pub fn persist_ui_state(&self) {
         if let Err(e) = self.ui_state.save(&self.ui_state_path) {
             eprintln!("保存界面状态失败:{e}");
         }

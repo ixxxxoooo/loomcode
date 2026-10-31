@@ -11,7 +11,7 @@ use crate::workbench::{Page, RightTab, SaveFile, ToggleIde, ToggleLeft, ToggleRi
 use gpui_kit::assets::IconName;
 use gpui_kit::component::TitleBar;
 use gpui_kit::component::button::{Button, ButtonVariants};
-use gpui_kit::component::{ActiveTheme, Selectable, Sizable, h_flex, v_flex};
+use gpui_kit::component::{ActiveTheme, Selectable, Sizable, h_flex, h_resizable, resizable_panel, v_flex};
 use gpui_kit::prelude::FluentBuilder as _;
 use gpui_kit::*;
 
@@ -176,9 +176,16 @@ impl Render for IdeWindow {
             .child(
                 h_flex().flex_1().min_h_0().w_full()
                     .child(self.activity_bar(cx))
-                    .when(self.left_open, |d| d.child(div().w(px(260.)).h_full().flex_none().border_r_1().border_color(t.border).child(self.panel.clone())))
-                    .child(div().flex_1().min_w_0().h_full().child(self.ide.clone()))
-                    .when(self.chat_open, |d| d.child(div().w(px(420.)).h_full().flex_none().border_l_1().border_color(t.border).child(chat_panel(parts, branch, demo, cx)))),
+                    .child(
+                        div().flex_1().min_w_0().h_full().child(
+                            h_resizable("ide-split")
+                                .child(resizable_panel().size(px(260.)).size_range(px(160.)..px(520.)).flex_none().visible(self.left_open)
+                                    .child(div().size_full().border_r_1().border_color(t.border).child(self.panel.clone())))
+                                .child(resizable_panel().size_range(px(320.)..Pixels::MAX).child(div().size_full().child(self.ide.clone())))
+                                .child(resizable_panel().size(px(420.)).size_range(px(320.)..px(900.)).flex_none().visible(self.chat_open)
+                                    .child(div().size_full().border_l_1().border_color(t.border).child(chat_panel(parts, branch, demo, cx)))),
+                        ),
+                    ),
             )
             .child(status)
     }

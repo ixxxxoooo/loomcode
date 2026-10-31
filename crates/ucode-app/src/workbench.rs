@@ -710,6 +710,8 @@ impl Workbench {
                 p.expanded = true;
             }
         }
+        // 置顶项目排前;之后下面的循环按路径恢复已打开会话的项目下标
+        self.ui_state.apply_projects(&mut projects);
         self.projects = projects;
         self.apply_ui_state();
         for (id, v) in self.views.iter_mut() {
@@ -771,6 +773,11 @@ impl Workbench {
     }
 
     fn register_project(&mut self, path: String, window: &mut Window, cx: &mut Context<Self>) {
+        // 之前被移除的项目重新添加时恢复显示
+        if self.ui_state.hidden_projects.contains(&path) {
+            self.ui_state.unhide_project(&path);
+            self.persist_ui_state();
+        }
         self.update_settings(cx, |s| s.touch_project(&path));
         let ix = match self.projects.iter().position(|p| p.path == path) {
             Some(ix) => ix,
