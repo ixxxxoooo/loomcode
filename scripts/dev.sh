@@ -1,6 +1,6 @@
 #!/bin/sh
 # 重启开发版:先编译,成功后杀掉所有旧的开发版实例,再启动唯一的新实例。
-# 开发版带 UCODE_DEV=1,界面标题栏会显示「DEV」标识。
+# 开发版带 UCODE_DEV=1,界面左下角会显示「开发版」徽章(演示模式下显示「演示模式」)。
 # 用法:scripts/dev.sh [--demo]     日志:target/dev.log
 #
 # @author ixxxxoooo

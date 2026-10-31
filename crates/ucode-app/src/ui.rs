@@ -88,17 +88,24 @@ pub fn dev_badge(cx: &App) -> Option<Div> {
         return None;
     }
     let t = cx.theme();
-    Some(pill("开发版", t.background, t.warning))
+    Some(pill("开发版", t.primary_foreground, t.primary))
 }
 
-/// 当前运行环境的标识(只显示一个,按优先级):演示模式 > 开发版 > 无。
-/// 放在左下角设置按钮的右侧;正式版的真实模式返回 `None`,调用方不占位置。
+/// 当前运行环境的标识,一次只显示一个,都是主题色徽章。
+///
+/// | 后端 | 构建 | 显示 |
+/// | --- | --- | --- |
+/// | 演示(`--demo` / `UCODE_DEMO=1`) | 开发版或正式版 | 演示模式(演示会换掉后端和数据,优先提示) |
+/// | 真实(默认) | 开发版(`scripts/dev.sh`,`UCODE_DEV=1`) | 开发版 |
+/// | 真实 | 正式版(打包的 UCode.app) | 无,不占位置 |
+///
+/// 放在左下角设置按钮的右侧。
 ///
 /// 参数:`demo` 是否演示模式。
 pub fn env_badges(demo: bool, cx: &App) -> Option<Div> {
     let t = cx.theme();
     if demo {
-        return Some(pill("演示模式", t.muted_foreground, t.muted));
+        return Some(pill("演示模式", t.primary_foreground, t.primary));
     }
     dev_badge(cx)
 }

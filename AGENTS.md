@@ -33,7 +33,7 @@ scripts/package.sh [--dmg]           # 打包 dist/UCode.app
 1. **改完即提交**:每完成一处修改,先 `cargo test --workspace` 通过,再把全部改动(含文档、脚本)`git add` 并提交,不留未提交的改动。一个功能一个提交,提交信息用中文 Conventional Commits。
 2. **改完即重启开发版**:提交后运行 `scripts/dev.sh`(演示模式加 `--demo`),让用户立刻看到效果。
 3. **始终只保留一个开发版实例**:脚本先编译,成功后杀掉所有旧的开发版(pid 文件 `target/dev.pid` + 按 `target/debug/ucode` 路径兜底),再启动新实例;不要用 `cargo run` 另起实例,也不要动 `dist/UCode.app` 的打包版。
-4. **开发版有标识**:开发版以 `UCODE_DEV=1` 启动,标题栏(Agent 窗口与 IDE 窗口)显示橙色「DEV」徽标;正式版 / 打包版不显示。日志在 `target/dev.log`。
+4. **开发版有标识**:开发版以 `UCODE_DEV=1` 启动,左下角设置按钮右侧(IDE 窗口在底部状态栏最左)显示主题色徽章:演示模式显示「演示模式」,真实模式的开发版显示「开发版」,一次只显示一个;正式版 / 打包版的真实模式不显示。日志在 `target/dev.log`。
 5. 编译失败时旧开发版保持运行,先修好再重试,不要留下半成品状态。
 
 ## 约定
