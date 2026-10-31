@@ -112,9 +112,7 @@ pub fn render(wb: &Workbench, cx: &mut Context<Workbench>) -> impl IntoElement {
                 .child(nav_row("nav-new", IconName::SquarePen, "新对话", Some("⌘N"), false, cx,
                     |this, window, cx| this.new_session(this.target_project(), window, cx)))
                 .child(nav_row("nav-auto-row", IconName::Timer, "自动化", None, wb.page == Page::Automation, cx,
-                    |this, _, cx| this.set_page(Page::Automation, cx)))
-                .child(nav_row("nav-custom", IconName::SlidersHorizontal, "自定义", None, false, cx,
-                    |this, _, cx| this.set_page(Page::Settings, cx))),
+                    |this, _, cx| this.set_page(Page::Automation, cx))),
         )
         .child(div().px_2().pb_1().child(Input::new(&wb.sidebar_filter)))
         .child(
