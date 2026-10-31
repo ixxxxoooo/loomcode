@@ -42,7 +42,7 @@ scripts/package.sh [--dmg]           # 打包 dist/UCode.app
 - 不读取、不输出、不提交任何密钥或钥匙串内容;环境变量只展示名称,值遮盖。
 - 不提交构建产物(`target`、`dist`)。
 - 在 `ucode-app` 里 `use gpui_kit::*` 会遮蔽内置 `#[test]`,单元测试请写 `#[::core::prelude::v1::test]`;其他 crate 用普通 `#[test]`。
-- 不做多标签:右侧只有一个固定可折叠面板,用分段切换(改动/文件/终端/计划/输出)。
+- Agent 窗口右侧只有一个固定可折叠面板,用分段切换(改动/文件/终端/计划/输出);IDE 编辑器支持多标签(逻辑在 `ide_tabs.rs`,参考 Zed Pane:预览标签、就近插入、关闭回到最近使用)。
 - 编译零警告;改动后跑 `cargo test --workspace`。
 
 ## Claude 协议要点(已对真实 claude 2.1.x 验证)
