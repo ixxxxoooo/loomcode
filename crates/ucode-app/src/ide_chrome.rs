@@ -89,10 +89,7 @@ pub fn tab_bar(items: Vec<TabItem>, cx: &mut Context<IdeView>) -> impl IntoEleme
                 .drag_over::<DraggedTab>(move |s, _, _, _| s.bg(accent))
                 .on_drop(cx.listener(move |this, d: &DraggedTab, _, cx| this.move_tab(&d.path, &p_drop, cx)))
                 .context_menu(menu)
-                .child({
-                    let (ic, col) = crate::file_icons::file_icon(&name, cx);
-                    if pinned { icon(IconName::Pin, 13., t.muted_foreground) } else { icon(ic, 13., col) }
-                })
+                .child(if pinned { icon(IconName::Pin, 13., t.muted_foreground).into_any_element() } else { crate::file_icons::file_icon_img(&name, false, false, 14.).into_any_element() })
                 .child(div().min_w_0().truncate().when(preview, |d| d.italic()).child(name))
                 .child(
                     div()

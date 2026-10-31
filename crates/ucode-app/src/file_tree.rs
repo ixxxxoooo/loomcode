@@ -1,6 +1,6 @@
 //! 「文件」面板:项目文件树 + 只读代码预览(带语法高亮)。
 
-use crate::file_icons::file_icon;
+use crate::file_icons::file_icon_img;
 use crate::file_ops::row_menu;
 use crate::git_status::{GitMark, GitStatus};
 use crate::right_panel::{PanelEvent, RightPanel};
@@ -228,12 +228,7 @@ impl FileTree {
                     .relative()
                     .children((0..depth).map(|i| div().absolute().top_0().bottom_0().left(px(14. + i as f32 * 14.)).w(px(1.)).bg(t.border.opacity(0.7))))
                     .child(div().w(px(12.)).flex_none().when(is_dir, |d| d.child(icon(if open { IconName::ChevronDown } else { IconName::ChevronRight }, 12., t.muted_foreground))))
-                    .child(if is_dir {
-                        icon(if open { IconName::FolderOpen } else { IconName::Folder }, 14., t.muted_foreground)
-                    } else {
-                        let (ic, col) = file_icon(&node.name, cx);
-                        icon(ic, 14., col)
-                    })
+                    .child(file_icon_img(&node.name, is_dir, open, 16.))
                     .context_menu(row_menu(cx.entity().downgrade(), node.path.clone(), is_dir))
                     .child(div().flex_1().min_w_0().truncate().text_color(color).child(node.name))
                     .when_some(mark.filter(|_| !is_dir), |d, m| {

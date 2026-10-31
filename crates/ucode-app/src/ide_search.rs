@@ -3,7 +3,7 @@
 //!
 //! @author ixxxxoooo
 
-use crate::file_icons::file_icon;
+use crate::file_icons::file_icon_img;
 use crate::ui::{MONO, empty_state};
 use gpui_kit::assets::IconName;
 use gpui_kit::component::input::{Input, InputEvent, InputState};
@@ -149,9 +149,8 @@ impl Render for SearchPanel {
                 .children(self.results.iter().enumerate().flat_map(|(fi, f)| {
                     let rel = f.path.strip_prefix(&root).unwrap_or(&f.path).display().to_string();
                     let name = f.path.file_name().map(|n| n.to_string_lossy().to_string()).unwrap_or_default();
-                    let (ic, col) = file_icon(&name, cx);
                     let mut rows: Vec<AnyElement> = vec![h_flex().h(px(24.)).px_3().gap_1p5().items_center().text_size(px(12.5))
-                        .child(crate::ui::icon(ic, 13., col))
+                        .child(file_icon_img(&name, false, false, 14.))
                         .child(div().flex_none().child(name))
                         .child(div().flex_1().min_w_0().truncate().text_size(px(11.)).text_color(t.muted_foreground).child(rel))
                         .into_any_element()];
