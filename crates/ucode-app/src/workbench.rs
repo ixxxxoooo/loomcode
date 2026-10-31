@@ -1048,6 +1048,8 @@ impl Render for Workbench {
             .on_action(cx.listener(|this, _: &ToggleLeft, _, cx| { this.left_open = !this.left_open; cx.notify(); }))
             .on_action(cx.listener(|this, _: &ToggleRight, _, cx| { this.right_open = !this.right_open; cx.notify(); }))
             .on_action(cx.listener(|this, _: &TogglePalette, window, cx| this.toggle_palette(window, cx)))
+            .on_action(cx.listener(|this, _: &crate::term_actions::ToggleTerminal, window, cx| this.toggle_terminal(window, cx)))
+            .on_action(cx.listener(|this, _: &crate::term_actions::NewTerminal, window, cx| this.open_new_terminal(window, cx)))
             .on_action(cx.listener(|this, _: &OpenSettings, _, cx| {
                 let next = if this.page == Page::Settings { Page::Chat } else { Page::Settings };
                 this.set_page(next, cx)

@@ -46,6 +46,7 @@ mod settings;
 mod right_panel;
 mod sidebar;
 mod sidebar_filter;
+mod term_actions;
 mod term_geom;
 mod term_palette;
 mod term_panel;
@@ -88,6 +89,8 @@ fn main() {
             KeyBinding::new("cmd-n", workbench::NewSession, None),
             KeyBinding::new("cmd-s", workbench::SaveFile, None),
             KeyBinding::new("cmd-shift-e", workbench::ToggleIde, None),
+            KeyBinding::new("ctrl-`", term_actions::ToggleTerminal, None),
+            KeyBinding::new("ctrl-shift-`", term_actions::NewTerminal, None),
             KeyBinding::new("shift-tab", workbench::CycleMode, Some("Workbench")),
         ]);
         let mut options = TitleBar::window_options();
