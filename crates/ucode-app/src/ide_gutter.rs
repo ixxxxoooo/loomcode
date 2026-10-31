@@ -35,15 +35,14 @@ pub fn parse_hunks(diff: &str) -> Vec<(Range<usize>, GitMark)> {
     out
 }
 
-/// 读取文件相对 HEAD 的改动;未跟踪文件视为整文件新增,非仓库返回空。
+/// 读取文件相对 HEAD 的改动;未跟踪文件和非仓库文件返回空。
 pub fn read_hunks(path: &Path) -> Vec<(Range<usize>, GitMark)> {
     let (Some(dir), Some(name)) = (path.parent(), path.file_name()) else { return Vec::new() };
     let git = |args: &[&str]| Command::new("git").arg("-C").arg(dir).args(args).arg(name).output().ok().filter(|o| o.status.success());
     let tracked = git(&["ls-files", "--error-unmatch", "--"]).is_some();
     if !tracked {
-        // 不在仓库里也会走到这里:再确认一下确实是仓库
-        let in_repo = Command::new("git").arg("-C").arg(dir).args(["rev-parse", "--is-inside-work-tree"]).output().is_ok_and(|o| o.status.success());
-        return if in_repo { vec![(0..usize::MAX / 2, GitMark::Added)] } else { Vec::new() };
+        // 未跟踪的新文件不逐行标记(VSCode 同样只在资源管理器里标 U),整页着色只会淹没真正的改动
+        return Vec::new();
     }
     git(&["diff", "-U0", "HEAD", "--"]).map(|o| parse_hunks(&String::from_utf8_lossy(&o.stdout))).unwrap_or_default()
 }
@@ -66,11 +65,12 @@ pub fn apply(editor: &Entity<EditorState>, slot: &mut Option<RangeDecorationColl
                 GitMark::Modified => t.warning,
                 GitMark::Deleted => t.danger,
             };
+            let is_deleted = mark == GitMark::Deleted;
             let last = lines - 1;
             let (from, to) = (range.start.min(last), range.end.min(lines));
-            (from..to.max(from + 1)).map(move |ix| (ix, color)).collect::<Vec<_>>()
+            (from..to.max(from + 1)).map(move |ix| (ix, color, is_deleted)).collect::<Vec<_>>()
         })
-        .map(|(ix, color)| RangeDecoration::new(starts[ix]..end_of(ix)).with_style(RangeDecorationStyle::Fill).with_color(color.opacity(0.16)))
+        .map(|(ix, color, is_deleted)| RangeDecoration::new(starts[ix]..end_of(ix)).with_style(RangeDecorationStyle::Fill).with_color(color.opacity(if is_deleted { 0.10 } else { 0.13 })))
         .collect();
     match slot {
         Some(c) => c.set(decos, cx),
@@ -108,7 +108,7 @@ mod tests {
         std::fs::write(dir.join("new.txt"), "x\ny\n").unwrap();
         let h = read_hunks(&dir.join("a.txt"));
         assert_eq!(h, vec![(1..2, GitMark::Modified), (3..4, GitMark::Added)]);
-        assert_eq!(read_hunks(&dir.join("new.txt")), vec![(0..usize::MAX / 2, GitMark::Added)]);
+        assert!(read_hunks(&dir.join("new.txt")).is_empty());
         let _ = std::fs::remove_dir_all(&dir);
     }
 }
