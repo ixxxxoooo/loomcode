@@ -46,6 +46,7 @@ mod settings;
 mod right_panel;
 mod sidebar;
 mod sidebar_filter;
+mod term_geom;
 mod term_palette;
 mod term_panel;
 mod term_store;

@@ -112,3 +112,43 @@ fn 丢弃终端会结束子进程() {
     }
     assert!(!alive(pid), "Drop 后子进程应被结束");
 }
+
+/// 找到画面里包含某段文字的行号。
+fn row_of(t: &Terminal, needle: &str) -> usize {
+    let text = t.snapshot().text();
+    text.lines().position(|l| l.contains(needle)).unwrap_or_else(|| panic!("画面里没有 {needle}:{text:?}"))
+}
+
+#[test]
+fn 拖动选择字符并取文本() {
+    let t = sh("echo hello world; sleep 2");
+    wait_for(&t, |s| s.text().contains("hello world"));
+    let row = row_of(&t, "hello world");
+    t.start_selection(row, 0, false, SelectKind::Simple);
+    t.update_selection(row, 4, true);
+    assert_eq!(t.selection_text().as_deref(), Some("hello"));
+    assert_eq!(t.snapshot().selection, Some(((row, 0), (row, 4))));
+    t.clear_selection();
+    assert_eq!(t.selection_text(), None);
+    assert_eq!(t.snapshot().selection, None);
+}
+
+#[test]
+fn 双击选单词_三击选整行() {
+    let t = sh("echo hello world; sleep 2");
+    wait_for(&t, |s| s.text().contains("hello world"));
+    let row = row_of(&t, "hello world");
+    t.start_selection(row, 8, false, SelectKind::Word);
+    assert_eq!(t.selection_text().as_deref(), Some("world"));
+    t.start_selection(row, 3, false, SelectKind::Line);
+    assert!(t.selection_text().unwrap().contains("hello world"));
+}
+
+#[test]
+fn 越界坐标被夹到边缘不会崩() {
+    let t = sh("echo hi; sleep 2");
+    wait_for(&t, |s| s.text().contains("hi"));
+    t.start_selection(9999, 9999, true, SelectKind::Simple);
+    t.update_selection(0, 0, false);
+    assert!(t.snapshot().selection.is_some());
+}

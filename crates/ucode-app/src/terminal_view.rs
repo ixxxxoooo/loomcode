@@ -2,6 +2,7 @@
 //!
 //! @author ixxxxoooo
 
+use crate::term_geom::{cell_at, selection_spans};
 use crate::term_palette::indexed_rgb;
 use crate::ui::MONO;
 use gpui_kit::component::ActiveTheme;
@@ -9,7 +10,7 @@ use gpui_kit::prelude::FluentBuilder as _;
 use gpui_kit::*;
 use std::ops::Range;
 use std::sync::Arc;
-use ucode_term::{Mods, Run, SpawnOptions, TermColor, Terminal, encode_key};
+use ucode_term::{Mods, Run, SelectKind, SpawnOptions, TermColor, Terminal, encode_key};
 
 const FONT_SIZE: f32 = 12.;
 const LINE_H: f32 = 16.;
@@ -24,6 +25,12 @@ pub struct TerminalView {
     cell_w: Option<Pixels>,
     /// 当前终端的 (列, 行)
     grid: (u16, u16),
+    /// 终端区域在窗口里的位置(把鼠标坐标换算成格子用)
+    bounds: Option<Bounds<Pixels>>,
+    /// 鼠标左键正按着,在拖动选择
+    selecting: bool,
+    /// 这次按下之后鼠标是否移动过(没动过的单击要清掉选区)
+    dragged: bool,
     _pump: Task<()>,
 }
 
@@ -46,7 +53,19 @@ impl TerminalView {
                     }
                 }
             });
-            Self { term: Arc::new(term), focus: cx.focus_handle(), cell_w: None, grid: (80, 24), _pump: pump }
+            // 调试用:UCODE_TERM_SELECT=起点行,起点列,终点行,终点列,一秒后自动选中这一段,方便截图检查高亮
+            let term = Arc::new(term);
+            if let Some([r0, c0, r1, c1]) = std::env::var("UCODE_TERM_SELECT").ok().and_then(|v| v.split(',').map(|n| n.trim().parse::<usize>().ok()).collect::<Option<Vec<_>>>()).and_then(|v| <[usize; 4]>::try_from(v).ok()) {
+                let (t, ex) = (term.clone(), cx.background_executor().clone());
+                cx.spawn(async move |this, cx| {
+                    ex.timer(std::time::Duration::from_secs(1)).await;
+                    t.start_selection(r0, c0, false, SelectKind::Simple);
+                    t.update_selection(r1, c1, true);
+                    let _ = this.update(cx, |_, cx| cx.notify());
+                })
+                .detach();
+            }
+            Self { term, focus: cx.focus_handle(), cell_w: None, grid: (80, 24), bounds: None, selecting: false, dragged: false, _pump: pump }
         }))
     }
 
@@ -67,6 +86,7 @@ impl TerminalView {
 
     /// 由容器尺寸换算成列数 / 行数并通知终端调整大小。
     fn apply_bounds(&mut self, bounds: Bounds<Pixels>, cx: &mut Context<Self>) {
+        self.bounds = Some(bounds);
         let Some(cell_w) = self.cell_w else { return };
         let cols = (((bounds.size.width - px(2. * PAD)) / cell_w).floor().max(2.)) as u16;
         let rows = (((bounds.size.height - px(2. * PAD)) / px(LINE_H)).floor().max(1.)) as u16;
@@ -80,10 +100,20 @@ impl TerminalView {
     fn on_key(&mut self, ev: &KeyDownEvent, cx: &mut Context<Self>) {
         let (k, m) = (&ev.keystroke, &ev.keystroke.modifiers);
         if m.platform {
-            // ⌘V 粘贴;其余 ⌘ 组合键(⌘K、⌘B 等)交还给应用
-            if k.key == "v" {
-                self.paste(cx);
-                cx.stop_propagation();
+            match k.key.as_str() {
+                "v" => {
+                    self.paste(cx);
+                    cx.stop_propagation();
+                }
+                // ⌘C 复制选中文本;没有选区时不拦截,交还给应用
+                "c" => {
+                    if let Some(text) = self.term.selection_text() {
+                        cx.write_to_clipboard(ClipboardItem::new_string(text));
+                        cx.stop_propagation();
+                    }
+                }
+                // 其余 ⌘ 组合键(⌘K、⌘B 等)也交还给应用
+                _ => {}
             }
             return;
         }
@@ -91,6 +121,8 @@ impl TerminalView {
         let bytes = encode_key(&k.key, mods, self.term.app_cursor())
             .or_else(|| k.key_char.as_ref().filter(|_| !m.control && !m.alt).map(|s| s.clone().into_bytes()));
         if let Some(bytes) = bytes {
+            // 一开始输入,旧选区就失效了
+            self.term.clear_selection();
             self.term.scroll_to_bottom();
             self.term.write(&bytes);
             cx.stop_propagation();
@@ -104,6 +136,48 @@ impl TerminalView {
         let data = if self.term.bracketed_paste() { format!("\x1b[200~{text}\x1b[201~") } else { text };
         self.term.scroll_to_bottom();
         self.term.write(data.as_bytes());
+    }
+
+    /// 鼠标位置 → 终端格子;还没量出区域大小时返回 `None`。
+    fn cell_under(&self, pos: Point<Pixels>) -> Option<crate::term_geom::CellPos> {
+        let (b, cell_w) = (self.bounds?, self.cell_w?);
+        let (x, y) = (f32::from(pos.x - b.origin.x), f32::from(pos.y - b.origin.y));
+        Some(cell_at(x, y, f32::from(cell_w), LINE_H, PAD, self.grid.0 as usize, self.grid.1 as usize))
+    }
+
+    /// 按下左键:单击拖动选字符,双击选单词,三击选整行。
+    fn begin_select(&mut self, ev: &MouseDownEvent, cx: &mut Context<Self>) {
+        let Some(c) = self.cell_under(ev.position) else { return };
+        let kind = match ev.click_count {
+            0 | 1 => SelectKind::Simple,
+            2 => SelectKind::Word,
+            _ => SelectKind::Line,
+        };
+        self.term.start_selection(c.row, c.col, c.right, kind);
+        self.selecting = true;
+        self.dragged = false;
+        cx.notify();
+    }
+
+    /// 按住左键拖动:更新选区终点。
+    fn drag_select(&mut self, ev: &MouseMoveEvent, cx: &mut Context<Self>) {
+        if !self.selecting || ev.pressed_button != Some(MouseButton::Left) {
+            return;
+        }
+        if let Some(c) = self.cell_under(ev.position) {
+            self.dragged = true;
+            self.term.update_selection(c.row, c.col, c.right);
+            cx.notify();
+        }
+    }
+
+    /// 松开左键:没拖动过的单击不留选区。
+    fn end_select(&mut self, ev: &MouseUpEvent, cx: &mut Context<Self>) {
+        if self.selecting && !self.dragged && ev.click_count <= 1 {
+            self.term.clear_selection();
+        }
+        self.selecting = false;
+        cx.notify();
     }
 
     fn on_wheel(&mut self, ev: &ScrollWheelEvent, cx: &mut Context<Self>) {
@@ -185,11 +259,21 @@ impl Render for TerminalView {
         });
         div().id("terminal").key_context("Terminal").track_focus(&self.focus)
             .on_key_down(cx.listener(|this, ev: &KeyDownEvent, _, cx| this.on_key(ev, cx)))
-            .on_mouse_down(MouseButton::Left, cx.listener(|this, _, window, cx| window.focus(&this.focus, cx)))
+            .on_mouse_down(MouseButton::Left, cx.listener(|this, ev: &MouseDownEvent, window, cx| {
+                window.focus(&this.focus, cx);
+                this.begin_select(ev, cx);
+            }))
+            .on_mouse_move(cx.listener(|this, ev: &MouseMoveEvent, _, cx| this.drag_select(ev, cx)))
+            .on_mouse_up(MouseButton::Left, cx.listener(|this, ev: &MouseUpEvent, _, cx| this.end_select(ev, cx)))
             .on_scroll_wheel(cx.listener(|this, ev: &ScrollWheelEvent, _, cx| this.on_wheel(ev, cx)))
             .relative().size_full().overflow_hidden().bg(t.background).text_color(t.foreground)
             .font_family(MONO).text_size(px(FONT_SIZE)).line_height(px(LINE_H))
             .child(div().absolute().top(px(PAD)).left(px(PAD)).flex().flex_col().children(lines))
+            // 选区高亮:半透明色块盖在文字上
+            .children(snap.selection.into_iter().flat_map(|sel| selection_spans(sel, snap.cols)).map(|(row, from, to)| {
+                div().absolute().left(px(PAD) + cell_w * from as f32).top(px(PAD + LINE_H * row as f32))
+                    .w(cell_w * (to - from + 1) as f32).h(px(LINE_H)).bg(t.primary.opacity(0.28))
+            }))
             .when_some(snap.cursor, |d, (row, col)| {
                 let cursor = div().absolute().left(px(PAD) + cell_w * col as f32).top(px(PAD + LINE_H * row as f32)).w(cell_w).h(px(LINE_H));
                 d.child(if focused { cursor.bg(t.primary.opacity(0.6)) } else { cursor.border_1().border_color(t.primary) })

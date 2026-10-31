@@ -50,6 +50,8 @@ pub struct Snapshot {
     pub exit_code: Option<u32>,
     /// 画面正停在历史记录里(没有在最底部)
     pub scrolled_back: bool,
+    /// 选区在当前画面里的范围 (起点行列, 终点行列),含两端;超出画面的部分已夹到边缘
+    pub selection: Option<((usize, usize), (usize, usize))>,
 }
 
 impl Snapshot {
@@ -117,7 +119,16 @@ pub(crate) fn build<T: EventListener>(term: &Term<T>, title: String, exit_code: 
     let at_bottom = content.display_offset == 0;
     let cursor_visible = content.mode.contains(TermMode::SHOW_CURSOR) && at_bottom;
     let cursor = cursor_visible.then(|| (content.cursor.point.line.0.max(0) as usize, content.cursor.point.column.0)).filter(|(r, c)| *r < rows && *c < cols);
-    Snapshot { cols, rows, lines, cursor, title, exit_code, scrolled_back: !at_bottom }
+    let selection = content.selection.and_then(|r| {
+        let (top, bottom) = (r.start.line.0 + offset, r.end.line.0 + offset);
+        if bottom < 0 || top >= rows as i32 {
+            return None;
+        }
+        let start = if top < 0 { (0, 0) } else { (top as usize, r.start.column.0.min(cols - 1)) };
+        let end = if bottom >= rows as i32 { (rows - 1, cols - 1) } else { (bottom as usize, r.end.column.0.min(cols - 1)) };
+        Some((start, end))
+    });
+    Snapshot { cols, rows, lines, cursor, title, exit_code, scrolled_back: !at_bottom, selection }
 }
 
 /// 行尾可以裁掉的格子:宽字符占位,或没有背景色、没有反色的空格。

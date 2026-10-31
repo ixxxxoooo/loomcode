@@ -5,6 +5,8 @@
 use crate::snapshot::{self, Snapshot};
 use alacritty_terminal::event::{Event, EventListener};
 use alacritty_terminal::grid::{Dimensions, Scroll};
+use alacritty_terminal::index::{Column, Line, Point, Side};
+use alacritty_terminal::selection::{Selection, SelectionType};
 use alacritty_terminal::term::{Config, Term, TermMode};
 use alacritty_terminal::vte::ansi::Processor;
 use portable_pty::{Child, CommandBuilder, MasterPty, PtySize, native_pty_system};
@@ -20,6 +22,14 @@ pub struct SpawnOptions {
     pub command: Option<Vec<String>>,
     pub cols: u16,
     pub rows: u16,
+}
+
+/// 选择的粒度:单击拖动选字符,双击选单词,三击选整行。
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum SelectKind {
+    Simple,
+    Word,
+    Line,
 }
 
 type SharedWriter = Arc<Mutex<Box<dyn Write + Send>>>;
@@ -62,6 +72,17 @@ impl Dimensions for Size {
     fn columns(&self) -> usize {
         self.cols
     }
+}
+
+/// 画面上的 (行, 列) → 网格坐标(要减去回看偏移);越界夹到边缘。
+fn screen_point<T>(term: &Term<T>, row: usize, col: usize) -> Point {
+    let offset = term.grid().display_offset() as i32;
+    let row = row.min(term.screen_lines().saturating_sub(1)) as i32;
+    Point::new(Line(row - offset), Column(col.min(term.columns().saturating_sub(1))))
+}
+
+fn side(right: bool) -> Side {
+    if right { Side::Right } else { Side::Left }
 }
 
 /// 调整终端网格大小。
@@ -192,6 +213,38 @@ impl Terminal {
     /// 程序是否开启了括号粘贴模式(粘贴时要用 `ESC[200~` 包起来)。
     pub fn bracketed_paste(&self) -> bool {
         self.inner.lock().unwrap().term.mode().contains(TermMode::BRACKETED_PASTE)
+    }
+
+    /// 开始一次选择。`row` / `col` 是画面上的行列(0 起始,越界会夹到边缘),
+    /// `right` 表示鼠标落在字符右半边(决定边界字符是否被选中)。
+    pub fn start_selection(&self, row: usize, col: usize, right: bool, kind: SelectKind) {
+        let mut g = self.inner.lock().unwrap();
+        let p = screen_point(&g.term, row, col);
+        let ty = match kind {
+            SelectKind::Simple => SelectionType::Simple,
+            SelectKind::Word => SelectionType::Semantic,
+            SelectKind::Line => SelectionType::Lines,
+        };
+        g.term.selection = Some(Selection::new(ty, p, side(right)));
+    }
+
+    /// 拖动时更新选择终点;没有进行中的选择则忽略。
+    pub fn update_selection(&self, row: usize, col: usize, right: bool) {
+        let mut g = self.inner.lock().unwrap();
+        let p = screen_point(&g.term, row, col);
+        if let Some(sel) = g.term.selection.as_mut() {
+            sel.update(p, side(right));
+        }
+    }
+
+    /// 清除选择。
+    pub fn clear_selection(&self) {
+        self.inner.lock().unwrap().term.selection = None;
+    }
+
+    /// 选中的文本;没有选择或选区为空返回 `None`。
+    pub fn selection_text(&self) -> Option<String> {
+        self.inner.lock().unwrap().term.selection_to_string().filter(|s| !s.is_empty())
     }
 
     /// 取当前画面快照。

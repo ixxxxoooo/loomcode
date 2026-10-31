@@ -11,4 +11,4 @@ mod terminal;
 
 pub use keys::{Mods, encode_key};
 pub use snapshot::{Run, Snapshot, Style, TermColor};
-pub use terminal::{SpawnOptions, Terminal};
+pub use terminal::{SelectKind, SpawnOptions, Terminal};
