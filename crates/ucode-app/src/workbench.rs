@@ -15,7 +15,8 @@ use gpui_kit::assets::IconName;
 use gpui_kit::component::TitleBar;
 use gpui_kit::component::button::{Button, ButtonVariants};
 use gpui_kit::component::message_scroller::MessageScroller;
-use gpui_kit::component::{ActiveTheme, Selectable, Sizable, h_flex, v_flex};
+use crate::layout_rules::{CENTER_MIN, LEFT_MAX, LEFT_MIN, RIGHT_MAX, RIGHT_MIN};
+use gpui_kit::component::{ActiveTheme, Selectable, Sizable, h_flex, h_resizable, resizable_panel, v_flex};
 use gpui_kit::prelude::FluentBuilder as _;
 use gpui_kit::*;
 use std::collections::{HashMap, HashSet};
@@ -102,6 +103,14 @@ pub struct Workbench {
     pub right_open: bool,
     pub left_w: f32,
     pub right_w: f32,
+    /// 三栏拖动调宽的状态(侧栏 | 对话 | 右面板)
+    pub split: Entity<gpui_kit::component::resizable::ResizableState>,
+    /// 窗口当前是否窄到需要自动收起侧栏
+    pub layout_narrow: bool,
+    /// 变窄之前侧栏是不是开着(变宽后恢复)
+    pub left_before_narrow: bool,
+    /// 栏宽保存任务已排队
+    pub width_save_pending: bool,
     pub panel: Entity<RightPanel>,
     pub page: Page,
     pub settings: AppSettings,
@@ -191,6 +200,7 @@ impl Workbench {
         let claude_path = settings.claude_path.clone();
         let automation = cx.new(|cx| AutomationPage::new(AutomationStore::new(auto_dir), demo, claude_path, project_list, window, cx));
         let browser = cx.new(|cx| BrowserPage::new(window, cx));
+        let settings_widths = (settings.left_width, settings.right_width);
         let mut wb = Self {
             demo,
             projects,
@@ -198,8 +208,12 @@ impl Workbench {
             views: HashMap::new(),
             left_open: true,
             right_open: settings.right_open,
-            left_w: 264.,
-            right_w: 400.,
+            left_w: crate::layout_rules::clamp_left(settings_widths.0),
+            right_w: crate::layout_rules::clamp_right(settings_widths.1),
+            split: cx.new(|_| gpui_kit::component::resizable::ResizableState::default()),
+            layout_narrow: false,
+            left_before_narrow: true,
+            width_save_pending: false,
             panel,
             page: Page::Chat,
             settings,
@@ -1030,6 +1044,8 @@ pub fn chat_panel_with_footer(parts: Option<(Entity<SessionModel>, Entity<Compos
 impl Render for Workbench {
     fn render(&mut self, window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
         let t = cx.theme().clone();
+        // 窗口太窄时自动收起侧栏(变宽后恢复)
+        self.apply_responsive(window.viewport_size().width);
         // 设置是整窗页面:隐藏侧栏、右侧面板与状态栏
         let full_settings = self.page == Page::Settings;
         // 融合模式的 IDE:整窗替换 Agent 布局(标题栏、侧栏、状态栏都是 IDE 的)
@@ -1069,10 +1085,21 @@ impl Render for Workbench {
             .when(!show_ide, |d| d
                 .child(if full_settings { self.settings_title_bar(cx).into_any_element() } else { self.title_bar(cx).into_any_element() })
                 .child(
-                    h_flex().flex_1().min_h_0().w_full()
-                        .when(self.left_open && !full_settings, |d| d.child(sidebar::render(self, cx)))
-                        .child(div().flex_1().min_w_0().h_full().child(center))
-                        .when(self.right_open && self.page == Page::Chat, |d| d.child(div().w(px(self.right_w)).h_full().flex_none().border_l_1().border_color(t.border).child(self.panel.clone()))),
+                    h_flex().flex_1().min_h_0().w_full().child(
+                        h_resizable("agent-split").with_state(&self.split)
+                            .on_resize({
+                                let wb = cx.entity().downgrade();
+                                move |state, _, cx| {
+                                    let sizes = state.read(cx).sizes().clone();
+                                    let _ = wb.update(cx, |this, cx| this.on_split_resized(&sizes, cx));
+                                }
+                            })
+                            .child(resizable_panel().size(px(self.left_w)).size_range(px(LEFT_MIN)..px(LEFT_MAX)).flex_none().visible(self.left_visible())
+                                .child(sidebar::render(self, cx)))
+                            .child(resizable_panel().size_range(px(CENTER_MIN)..Pixels::MAX).child(div().size_full().child(center)))
+                            .child(resizable_panel().size(px(self.right_w)).size_range(px(RIGHT_MIN)..px(RIGHT_MAX)).flex_none().visible(self.right_visible())
+                                .child(div().size_full().border_l_1().border_color(t.border).child(self.panel.clone()))),
+                    ),
                 ))
             .when_some(self.palette.clone(), |d, p| d.child(p))
     }

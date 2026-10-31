@@ -27,6 +27,10 @@ pub struct AppSettings {
     pub expand_thinking: bool,
     /// 右侧面板默认打开
     pub right_open: bool,
+    /// Agent 窗口左侧栏宽度(像素,拖动调整后保存)
+    pub left_width: f32,
+    /// Agent 窗口右侧面板宽度(像素,拖动调整后保存)
+    pub right_width: f32,
     /// 融合模式:开启后 Agent 与 IDE 在同一窗口原地切换;关闭时 IDE 是独立窗口
     pub fused_ide: bool,
     /// 手动指定 `claude` 可执行文件路径;空则自动查找
@@ -44,6 +48,8 @@ impl Default for AppSettings {
             default_effort: Effort::Medium,
             expand_thinking: false,
             right_open: true,
+            left_width: 264.,
+            right_width: 400.,
             fused_ide: false,
             claude_path: None,
             recent_projects: Vec::new(),
@@ -90,6 +96,12 @@ mod tests {
         assert!(s.expand_thinking);
         assert_eq!(s.default_model, "default");
         assert!(s.right_open);
+    }
+
+    #[test]
+    fn 旧文件缺宽度字段时用默认值() {
+        let s: AppSettings = serde_json::from_str(r#"{"right_open":false}"#).unwrap();
+        assert_eq!((s.left_width, s.right_width), (264., 400.));
     }
 
     #[test]

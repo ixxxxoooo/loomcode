@@ -33,6 +33,7 @@ mod ide_chrome;
 mod ide_close;
 mod ide_tabs;
 mod ide_window;
+mod layout_rules;
 mod palette;
 mod palette_search;
 mod project_actions;
@@ -41,6 +42,7 @@ mod project_menu;
 mod real;
 mod rich_text;
 mod session_actions;
+mod split_layout;
 mod session_menu;
 mod settings;
 mod right_panel;
@@ -94,8 +96,11 @@ fn main() {
             KeyBinding::new("shift-tab", workbench::CycleMode, Some("Workbench")),
         ]);
         let mut options = TitleBar::window_options();
-        options.window_bounds = Some(WindowBounds::Windowed(Bounds::centered(None, size(px(1360.), px(860.)), cx)));
-        options.window_min_size = Some(size(px(900.), px(560.)));
+        // 调试用:UCODE_WINDOW_SIZE=宽,高 覆盖初始窗口大小(验证窄窗口布局)
+        let (w, h) = std::env::var("UCODE_WINDOW_SIZE").ok().and_then(|v| v.split_once(',').and_then(|(a, b)| Some((a.trim().parse::<f32>().ok()?, b.trim().parse::<f32>().ok()?)))).unwrap_or((1360., 860.));
+        options.window_bounds = Some(WindowBounds::Windowed(Bounds::centered(None, size(px(w), px(h)), cx)));
+        // 最小宽度放到 640:窗口窄于 780 时侧栏自动收起,不再被 900 的下限挡住
+        options.window_min_size = Some(size(px(640.), px(480.)));
         open_window(options, cx, move |window, cx| cx.new(|cx| Workbench::new(demo, session_arg, window, cx)))
             .expect("打开主窗口失败");
         cx.activate(true);

@@ -101,9 +101,7 @@ pub fn render(wb: &Workbench, cx: &mut Context<Workbench>) -> impl IntoElement {
         .filter_map(|(pi, p)| visible_sessions(&query, p, wb.show_archived, wb.active.as_deref()).map(|v| (pi, v.into_iter().cloned().collect())))
         .collect();
     v_flex()
-        .w(px(wb.left_w))
-        .h_full()
-        .flex_none()
+        .size_full()
         .bg(t.sidebar)
         .border_r_1()
         .border_color(t.sidebar_border)
