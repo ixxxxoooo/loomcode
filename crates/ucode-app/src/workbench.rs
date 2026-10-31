@@ -382,7 +382,7 @@ impl Workbench {
             }
         }
         if let Some(root) = self.active_project_path() {
-            for f in crate::palette::collect_files(std::path::Path::new(&root), 3000) {
+            for f in crate::palette_search::collect_files(std::path::Path::new(&root), 3000) {
                 items.push(PaletteItem { title: f.rsplit('/').next().unwrap_or(&f).to_string(), subtitle: f.clone(), group: Group::File, icon: IconName::FileText, action: PaletteAction::OpenFile(f) });
             }
         }
