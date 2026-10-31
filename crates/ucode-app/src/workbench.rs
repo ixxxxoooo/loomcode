@@ -893,10 +893,13 @@ impl Workbench {
                     .on_click(cx.listener(|this, _, _, cx| { this.left_open = !this.left_open; cx.notify(); })))
                 .when_some(dev_badge(cx), |d, b| d.child(b))
                 .child(div().flex_1().flex().justify_center().text_size(px(13.)).text_color(t.muted_foreground).child(title))
-                .child(Button::new("tb-ide").small().ghost().icon(IconName::Code).selected(self.ide).tooltip("IDE(⇧⌘E)")
-                    .on_click(cx.listener(|this, _, window, cx| this.toggle_ide(window, cx))))
                 .child(Button::new("tb-right").small().ghost().icon(if self.right_open { IconName::PanelRightClose } else { IconName::PanelRightOpen })
-                    .on_click(cx.listener(|this, _, _, cx| { this.right_open = !this.right_open; cx.notify(); }))),
+                    .on_click(cx.listener(|this, _, _, cx| { this.right_open = !this.right_open; cx.notify(); })))
+                .child(Button::new("tb-settings").small().ghost().icon(IconName::Settings).selected(self.page == Page::Settings).tooltip("设置(⌘,)")
+                    .on_click(cx.listener(|this, _, _, cx| this.set_page(Page::Settings, cx))))
+                .child(Button::new("tb-ide").small().primary().label("IDE")
+                    .icon(if self.settings.fused_ide { IconName::Code } else { IconName::ExternalLink }).tooltip("切换到 IDE(⇧⌘E)")
+                    .on_click(cx.listener(|this, _, window, cx| this.toggle_ide(window, cx)))),
         )
     }
 

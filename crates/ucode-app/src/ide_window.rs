@@ -6,7 +6,7 @@
 use crate::ide::IdeView;
 use crate::ui::dev_badge;
 use crate::right_panel::{PanelEvent, RightPanel};
-use crate::workbench::{RightTab, SaveFile, ToggleIde, Workbench, chat_panel};
+use crate::workbench::{Page, RightTab, SaveFile, ToggleIde, Workbench, chat_panel};
 use gpui_kit::assets::IconName;
 use gpui_kit::component::TitleBar;
 use gpui_kit::component::button::{Button, ButtonVariants};
@@ -20,6 +20,8 @@ pub struct IdeWindow {
     panel: Entity<RightPanel>,
     ide: Entity<IdeView>,
     focus: FocusHandle,
+    /// 文件面板是否展开
+    left_open: bool,
     /// 面板已同步到的会话 id
     synced: Option<String>,
     _subs: Vec<Subscription>,
@@ -46,7 +48,7 @@ impl IdeWindow {
         let focus = cx.focus_handle();
         window.focus(&focus, cx);
         // 此时工作台可能正处于更新中,不在这里回读它;首次渲染时再同步
-        Self { wb, panel, ide, focus, synced: None, _subs: subs }
+        Self { wb, panel, ide, focus, left_open: true, synced: None, _subs: subs }
     }
 
     /// 让面板与根目录跟随工作台当前会话。
@@ -100,13 +102,20 @@ impl Render for IdeWindow {
             .child(TitleBar::new().child(
                 h_flex().w_full().items_center().gap_1()
                     .when_some(dev_badge(cx), |d, b| d.child(b))
+                    .child(Button::new("iw-left").small().ghost().icon(if self.left_open { IconName::PanelLeftClose } else { IconName::PanelLeftOpen })
+                        .on_click(cx.listener(|this, _, _, cx| { this.left_open = !this.left_open; cx.notify(); })))
                     .child(div().flex_1().flex().justify_center().text_size(px(13.)).text_color(t.muted_foreground).child(format!("IDE · {title}")))
-                    .child(Button::new("iw-agent").small().ghost().icon(IconName::MessageSquare).tooltip("回到 Agent 窗口(⇧⌘E)")
+                    .child(Button::new("iw-settings").small().ghost().icon(IconName::Settings).tooltip("设置(在 Agent 窗口打开)")
+                        .on_click(cx.listener(|this, _, _, cx| {
+                            this.wb.update(cx, |wb, cx| wb.set_page(Page::Settings, cx));
+                            this.back_to_agent(cx);
+                        })))
+                    .child(Button::new("iw-agent").small().primary().label("Agents Window").icon(IconName::ExternalLink).tooltip("回到 Agent 窗口(⇧⌘E)")
                         .on_click(cx.listener(|this, _, _, cx| this.back_to_agent(cx)))),
             ))
             .child(
                 h_flex().flex_1().min_h_0().w_full()
-                    .child(div().w(px(280.)).h_full().flex_none().border_r_1().border_color(t.border).child(self.panel.clone()))
+                    .when(self.left_open, |d| d.child(div().w(px(280.)).h_full().flex_none().border_r_1().border_color(t.border).child(self.panel.clone())))
                     .child(div().flex_1().min_w_0().h_full().child(self.ide.clone()))
                     .child(div().w(px(420.)).h_full().flex_none().border_l_1().border_color(t.border).child(chat_panel(parts, cx))),
             )
