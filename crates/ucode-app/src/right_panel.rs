@@ -145,6 +145,8 @@ pub struct RightPanel {
     pub(crate) root: String,
     /// 终端集合变化时重绘面板
     _term_hub_sub: Subscription,
+    /// 「改动」分段里的 Git 更改
+    pub(crate) git: crate::git_changes::GitPane,
 }
 
 impl RightPanel {
@@ -161,6 +163,7 @@ impl RightPanel {
             pending_open: None,
             root,
             _term_hub_sub: sub,
+            git: crate::git_changes::GitPane::new(),
         }
     }
 
@@ -169,6 +172,7 @@ impl RightPanel {
         self._sub = model.as_ref().map(|m| cx.observe(m, |_, _, cx| cx.notify()));
         self.model = model;
         self.open_changes.clear();
+        self.git.reset();
         self.root = root.clone();
         self.files.set_root(root);
         self.reload_files(cx);
@@ -213,7 +217,7 @@ impl RightPanel {
 
     // ---------- 改动 ----------
 
-    fn changes_view(&self, items: &[TimelineItem], cx: &mut Context<Self>) -> AnyElement {
+    pub(crate) fn changes_view(&self, items: &[TimelineItem], cx: &mut Context<Self>) -> AnyElement {
         let t = cx.theme().clone();
         let changes = collect_changes(items);
         if changes.is_empty() {
@@ -358,7 +362,7 @@ impl RightPanel {
 }
 
 /// 把路径拆成 (目录, 文件名)。
-fn split_path(path: &str) -> (String, String) {
+pub(crate) fn split_path(path: &str) -> (String, String) {
     match path.rsplit_once('/') {
         Some((dir, name)) => (dir.to_string(), name.to_string()),
         None => (String::new(), path.to_string()),
@@ -372,9 +376,12 @@ impl Render for RightPanel {
             self.files.open(&path, window, cx);
         }
         let items = self.items(cx);
+        if self.tab == RightTab::Changes && self.git.mode == crate::git_changes::ChangesMode::Git {
+            self.git_auto_refresh(items.len(), cx);
+        }
         let change_count = collect_changes(&items).len();
         let body = match self.tab {
-            RightTab::Changes => self.changes_view(&items, cx),
+            RightTab::Changes => self.changes_tab(&items, cx),
             RightTab::Files => self.files.render(cx),
             RightTab::Terminal => self.terminal_tab(&items, cx),
             RightTab::Plan => self.plan_view(&items, cx),

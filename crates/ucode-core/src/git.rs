@@ -25,6 +25,58 @@ pub struct Worktree {
     pub is_main: bool,
 }
 
+/// `git status` 的一项:一个有改动的文件。
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct StatusEntry {
+    /// 相对仓库根目录的路径
+    pub path: String,
+    /// 暂存区状态(`git status --porcelain` 的第一列),空格表示没有
+    pub index: char,
+    /// 工作区状态(第二列),空格表示没有
+    pub worktree: char,
+}
+
+impl StatusEntry {
+    /// 给用户看的单字母状态:未跟踪 `U`,冲突 `!`,否则优先工作区状态,再看暂存区。
+    pub fn label(&self) -> char {
+        match (self.index, self.worktree) {
+            ('?', '?') => 'U',
+            ('U', _) | (_, 'U') | ('A', 'A') | ('D', 'D') => '!',
+            (i, ' ') => i,
+            (_, w) => w,
+        }
+    }
+
+    /// 是否是未跟踪的新文件(HEAD 里没有它)。
+    pub fn untracked(&self) -> bool {
+        self.index == '?' && self.worktree == '?'
+    }
+
+    /// 是否已经完全暂存(工作区没有进一步改动)。
+    pub fn staged(&self) -> bool {
+        self.index != ' ' && self.index != '?' && self.worktree == ' '
+    }
+}
+
+/// 解析 `git status --porcelain=v1 -z` 的输出:`XY 路径\0`;重命名 / 复制多带一个原路径字段,会被跳过。
+pub fn parse_status(out: &str) -> Vec<StatusEntry> {
+    let mut fields = out.split('\0');
+    let mut list = Vec::new();
+    while let Some(f) = fields.next() {
+        let mut cs = f.chars();
+        let (Some(index), Some(worktree), Some(' ')) = (cs.next(), cs.next(), cs.next()) else { continue };
+        let path = cs.as_str();
+        if path.is_empty() {
+            continue;
+        }
+        if matches!(index, 'R' | 'C') || matches!(worktree, 'R' | 'C') {
+            fields.next();
+        }
+        list.push(StatusEntry { path: path.to_string(), index, worktree });
+    }
+    list
+}
+
 /// 一个目录的 Git 状态快照:分支与 worktree 列表,供界面渲染菜单用。
 #[derive(Debug, Clone, Default, PartialEq, Eq)]
 pub struct GitSnapshot {
@@ -133,6 +185,18 @@ pub fn worktrees(dir: &str) -> Result<Vec<Worktree>, String> {
     git(dir, &["worktree", "list", "--porcelain"]).map(|o| parse_worktrees(&o))
 }
 
+/// 工作区有改动的文件(含未跟踪的单个文件)。路径相对仓库根目录。
+pub fn status(dir: &str) -> Result<Vec<StatusEntry>, String> {
+    git(dir, &["status", "--porcelain=v1", "-z", "--untracked-files=all"]).map(|o| parse_status(&o))
+}
+
+/// 某个文件在 HEAD 里的内容;HEAD 里没有(新文件、空仓库)或不是文本时返回 `None`。
+///
+/// 参数:`dir` 仓库内任意目录;`rel` 相对仓库根目录的路径。
+pub fn file_at_head(dir: &str, rel: &str) -> Option<String> {
+    git(dir, &["show", &format!("HEAD:{rel}")]).ok()
+}
+
 /// 切换到已有分支。工作区有冲突改动时 git 会拒绝,错误原样返回。
 pub fn switch_branch(dir: &str, name: &str) -> Result<(), String> {
     validate_branch_name(name)?;
@@ -182,6 +246,32 @@ mod tests {
         assert_eq!(w[1].branch.as_deref(), Some("feature/a"));
         assert!(!w[1].is_main);
         assert_eq!(w[2].branch, None);
+    }
+
+    #[test]
+    fn 解析状态含重命名与特殊路径() {
+        let out = "M  a.rs\0 M b b.rs\0?? 中文 文件.md\0R  new.rs\0old.rs\0 D gone.rs\0AM added.rs\0UU conflict.rs\0";
+        let e = parse_status(out);
+        let paths: Vec<_> = e.iter().map(|x| x.path.as_str()).collect();
+        // 重命名的原路径 old.rs 不能当成独立条目
+        assert_eq!(paths, ["a.rs", "b b.rs", "中文 文件.md", "new.rs", "gone.rs", "added.rs", "conflict.rs"]);
+        let label = |p: &str| e.iter().find(|x| x.path == p).unwrap().label();
+        assert_eq!(label("a.rs"), 'M');
+        assert_eq!(label("b b.rs"), 'M');
+        assert_eq!(label("中文 文件.md"), 'U');
+        assert_eq!(label("new.rs"), 'R');
+        assert_eq!(label("gone.rs"), 'D');
+        assert_eq!(label("added.rs"), 'M', "已暂存的新文件又被改过:显示工作区的 M");
+        assert_eq!(label("conflict.rs"), '!');
+        assert!(e[2].untracked() && !e[0].untracked());
+        assert!(e[0].staged() && !e[1].staged());
+    }
+
+    #[test]
+    fn 解析状态忽略空与畸形字段() {
+        assert!(parse_status("").is_empty());
+        assert!(parse_status("\0\0").is_empty());
+        assert!(parse_status("x\0M\0").is_empty());
     }
 
     #[test]
@@ -240,6 +330,20 @@ mod tests {
         assert!(wt.join("a.txt").exists());
         // 同一分支不能在两个 worktree 里同时检出,错误透传
         assert!(add_worktree(&dir, &base.join("wts/other"), "feature/x", None).is_err());
+
+        // 工作区状态:修改、新增(未跟踪)、删除、含中文文件名
+        std::fs::write(repo.join("a.txt"), "changed").unwrap();
+        std::fs::write(repo.join("新文件.txt"), "new").unwrap();
+        run(&["rm", "-q", "--cached", "a.txt"]);
+        let st = status(&dir).unwrap();
+        assert!(st.iter().any(|e| e.path == "新文件.txt" && e.untracked()), "状态:{st:?}");
+        assert!(st.iter().any(|e| e.path == "a.txt" && e.index == 'D'), "状态:{st:?}");
+        // HEAD 里的旧内容;新文件在 HEAD 里没有
+        assert_eq!(file_at_head(&dir, "a.txt").as_deref(), Some("x"));
+        assert_eq!(file_at_head(&dir, "新文件.txt"), None);
+        run(&["reset", "-q", "--hard"]);
+        std::fs::remove_file(repo.join("新文件.txt")).unwrap();
+        assert!(status(&dir).unwrap().is_empty(), "清理后应干净");
 
         // 游离 HEAD:列表里不能出现伪分支
         run(&["checkout", "-q", "--detach"]);

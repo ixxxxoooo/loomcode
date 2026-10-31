@@ -19,6 +19,7 @@ mod file_lang;
 mod file_tree;
 mod git_status;
 mod git_actions;
+mod git_changes;
 mod ide;
 mod ide_activity;
 mod ide_minimap;
