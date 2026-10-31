@@ -147,7 +147,7 @@ impl IdeWindow {
     fn title_bar(&self, project: String, fused: bool, cx: &mut Context<Self>) -> impl IntoElement {
         let t = cx.theme().clone();
         TitleBar::new().child(
-            h_flex().w_full().items_center().gap_1()
+            h_flex().w_full().items_center().gap_1().pr_2()
                 .child(no_drag(Button::new("iw-left").small().ghost().icon(IconName::PanelLeft).selected(self.left_open).tooltip("侧栏(⌘B)")
                     .on_click(cx.listener(|this, _, _, cx| { this.left_open = !this.left_open; cx.notify(); }))))
                 .when_some(dev_badge(cx), |d, b| d.child(b))
@@ -165,7 +165,7 @@ impl IdeWindow {
                         this.wb.update(cx, |wb, cx| wb.set_page(Page::Settings, cx));
                         this.back_to_agent(cx);
                     }))))
-                .child(no_drag(Button::new("iw-agent").small().primary().label("Agents Window").icon(if fused { IconName::MessageSquare } else { IconName::ExternalLink }).tooltip("切换到 Agents Window(⇧⌘E)")
+                .child(no_drag(crate::ui::mode_switch("iw-agent", "Agents Window", if fused { IconName::MessageSquare } else { IconName::ExternalLink }).tooltip("切换到 Agents Window(⇧⌘E)")
                     .on_click(cx.listener(|this, _, _, cx| this.back_to_agent(cx))))),
         )
     }

@@ -956,7 +956,7 @@ impl Workbench {
         let t = cx.theme().clone();
         let title = self.active_model().map(|m| m.read(cx).state.title.clone()).unwrap_or_else(|| "UCode".into());
         TitleBar::new().child(
-            h_flex().w_full().items_center().gap_1()
+            h_flex().w_full().items_center().gap_1().pr_2()
                 .child(no_drag(Button::new("tb-left").small().ghost().icon(IconName::PanelLeft).selected(self.left_open).tooltip("侧栏(⌘B)")
                     .on_click(cx.listener(|this, _, _, cx| { this.left_open = !this.left_open; cx.notify(); }))))
                 .child(no_drag(Button::new("tb-search").small().ghost().icon(IconName::Search).tooltip("搜索(⌘K)")
@@ -965,8 +965,7 @@ impl Workbench {
                 .child(div().flex_1().flex().justify_center().text_size(px(13.)).text_color(t.muted_foreground).child(title))
                 .child(no_drag(Button::new("tb-right").small().ghost().icon(IconName::PanelRight).selected(self.right_open).tooltip("右侧面板(⌥⌘B)")
                     .on_click(cx.listener(|this, _, _, cx| { this.right_open = !this.right_open; cx.notify(); }))))
-                .child(no_drag(Button::new("tb-ide").small().outline().label("IDE").w(px(96.))
-                    .icon(if self.settings.fused_ide { IconName::Code } else { IconName::ExternalLink }).tooltip("切换到 IDE(⇧⌘E)")
+                .child(no_drag(crate::ui::mode_switch("tb-ide", "IDE", if self.settings.fused_ide { IconName::Code } else { IconName::ExternalLink }).tooltip("切换到 IDE(⇧⌘E)")
                     .on_click(cx.listener(|this, _, window, cx| this.toggle_ide(window, cx))))),
         )
     }

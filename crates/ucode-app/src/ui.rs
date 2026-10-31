@@ -110,3 +110,16 @@ pub fn dialog_footer(ok_label: &'static str) -> gpui_kit::component::dialog::Dia
         .child(DialogClose::new().trigger(|b| b.label("取消")))
         .child(DialogAction::new().child(Button::new("dialog-ok").primary().label(ok_label)))
 }
+
+/// 标题栏右侧的「窗口切换」按钮(Agent 窗口的「IDE」与 IDE 窗口的「Agents Window」共用),
+/// 固定同一宽度、同一样式,这样两个窗口里切换按钮的位置和大小一致。
+///
+/// 参数:`id` 元素 id;`label` 文案;`icon_name` 图标。
+pub fn mode_switch(id: &'static str, label: &'static str, icon_name: IconName) -> gpui_kit::component::button::Button {
+    use gpui_kit::component::Sizable;
+    use gpui_kit::component::button::Button;
+    Button::new(id).small().outline().label(label).icon(icon_name).w(px(MODE_SWITCH_W))
+}
+
+/// 窗口切换按钮的宽度。
+pub const MODE_SWITCH_W: f32 = 150.;
