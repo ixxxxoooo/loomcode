@@ -105,9 +105,9 @@ impl Render for IdeWindow {
     fn render(&mut self, _window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
         self.sync_state(cx);
         let t = cx.theme().clone();
-        let (parts, title, status, fused) = {
+        let (parts, title, status, fused, branch, demo) = {
             let wb = self.wb.read(cx);
-            (wb.chat_parts(), wb.active_model().map(|m| m.read(cx).state.title.clone()).unwrap_or_else(|| "UCode".into()), wb.status_bar(cx), wb.settings.fused_ide)
+            (wb.chat_parts(), wb.active_model().map(|m| m.read(cx).state.title.clone()).unwrap_or_else(|| "UCode".into()), wb.status_bar(cx), wb.settings.fused_ide, wb.active_branch(), wb.demo)
         };
         v_flex()
             .key_context("IdeWindow")
@@ -135,7 +135,7 @@ impl Render for IdeWindow {
                 h_flex().flex_1().min_h_0().w_full()
                     .when(self.left_open, |d| d.child(div().w(px(280.)).h_full().flex_none().border_r_1().border_color(t.border).child(self.panel.clone())))
                     .child(div().flex_1().min_w_0().h_full().child(self.ide.clone()))
-                    .child(div().w(px(420.)).h_full().flex_none().border_l_1().border_color(t.border).child(chat_panel(parts, cx))),
+                    .child(div().w(px(420.)).h_full().flex_none().border_l_1().border_color(t.border).child(chat_panel(parts, branch, demo, cx))),
             )
             .child(status)
     }

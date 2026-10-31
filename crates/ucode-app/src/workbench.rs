@@ -884,22 +884,28 @@ impl Workbench {
         let title = self.active_model().map(|m| m.read(cx).state.title.clone()).unwrap_or_else(|| "UCode".into());
         TitleBar::new().child(
             h_flex().w_full().items_center().gap_1()
-                .child(Button::new("tb-left").small().ghost().icon(if self.left_open { IconName::PanelLeftClose } else { IconName::PanelLeftOpen })
+                .child(Button::new("tb-left").small().ghost().icon(IconName::PanelLeft).selected(self.left_open).tooltip("侧栏(⌘B)")
                     .on_click(cx.listener(|this, _, _, cx| { this.left_open = !this.left_open; cx.notify(); })))
+                .child(Button::new("tb-search").small().ghost().icon(IconName::Search).tooltip("搜索(⌘K)")
+                    .on_click(cx.listener(|this, _, window, cx| this.toggle_palette(window, cx))))
                 .when_some(dev_badge(cx), |d, b| d.child(b))
                 .child(div().flex_1().flex().justify_center().text_size(px(13.)).text_color(t.muted_foreground).child(title))
-                .child(Button::new("tb-right").small().ghost().icon(if self.right_open { IconName::PanelRightClose } else { IconName::PanelRightOpen })
+                .child(Button::new("tb-right").small().ghost().icon(IconName::PanelRight).selected(self.right_open).tooltip("右侧面板(⌥⌘B)")
                     .on_click(cx.listener(|this, _, _, cx| { this.right_open = !this.right_open; cx.notify(); })))
-                .child(Button::new("tb-settings").small().ghost().icon(IconName::Settings).selected(self.page == Page::Settings).tooltip("设置(⌘,)")
-                    .on_click(cx.listener(|this, _, _, cx| this.set_page(Page::Settings, cx))))
-                .child(Button::new("tb-ide").small().primary().label("IDE")
+                .child(Button::new("tb-ide").small().outline().label("IDE").w(px(96.))
                     .icon(if self.settings.fused_ide { IconName::Code } else { IconName::ExternalLink }).tooltip("切换到 IDE(⇧⌘E)")
                     .on_click(cx.listener(|this, _, window, cx| this.toggle_ide(window, cx)))),
         )
     }
 
+    /// 当前会话所在项目的 Git 分支。
+    pub fn active_branch(&self) -> Option<String> {
+        let v = self.active.as_ref().and_then(|id| self.views.get(id))?;
+        self.projects.get(v.project_ix).and_then(|p| p.branch.clone())
+    }
+
     fn chat_view(&self, cx: &mut Context<Self>) -> AnyElement {
-        chat_panel(self.chat_parts(), cx)
+        chat_panel(self.chat_parts(), self.active_branch(), self.demo, cx)
     }
 
     /// 设置页的标题栏:整窗设置,左侧返回。
@@ -939,7 +945,7 @@ impl Workbench {
 }
 
 /// 渲染对话区(时间线 + 输入框),Agent 窗口、融合模式与 IDE 窗口共用。
-pub fn chat_panel(parts: Option<(Entity<SessionModel>, Entity<Composer>)>, cx: &App) -> AnyElement {
+pub fn chat_panel(parts: Option<(Entity<SessionModel>, Entity<Composer>)>, branch: Option<String>, demo: bool, cx: &App) -> AnyElement {
     let t = cx.theme().clone();
     let Some((model, composer)) = parts else {
         return empty_state(IconName::MessageSquare, "选择或新建一个会话", "左侧选择会话,或点击「新会话」", cx).into_any_element();
@@ -956,6 +962,12 @@ pub fn chat_panel(parts: Option<(Entity<SessionModel>, Entity<Composer>)>, cx: &
             ),
         )
         .child(composer)
+        .child(
+            h_flex().h(px(26.)).px_4().items_center().text_size(px(12.)).text_color(t.muted_foreground)
+                .child(h_flex().gap_1().items_center().when_some(branch, |d, b| d.child(icon(IconName::GitBranch, 12., t.muted_foreground)).child(b)))
+                .child(div().flex_1())
+                .child(if demo { "演示模式" } else { "Claude Code" }),
+        )
         .into_any_element()
 }
 

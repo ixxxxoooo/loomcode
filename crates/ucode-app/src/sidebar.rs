@@ -35,6 +35,26 @@ fn session_row(wb: &Workbench, project_ix: usize, meta: &SessionMeta, cx: &mut C
         .when(meta.pinned, |d| d.child(icon(IconName::Pin, 11., t.muted_foreground)))
 }
 
+/// 侧栏顶部的一行入口(图标 + 文字 + 可选快捷键)。
+fn nav_row(
+    id: &'static str,
+    ic: IconName,
+    label: &'static str,
+    shortcut: Option<&'static str>,
+    active: bool,
+    cx: &mut Context<Workbench>,
+    on_click: impl Fn(&mut Workbench, &mut Window, &mut Context<Workbench>) + 'static,
+) -> impl IntoElement {
+    let t = cx.theme().clone();
+    h_flex().id(id).h(px(32.)).px_2().gap_2().items_center().rounded(px(6.)).cursor_pointer()
+        .when(active, |d| d.bg(t.sidebar_accent))
+        .hover(|d| d.bg(t.sidebar_accent))
+        .on_click(cx.listener(move |this, _, window, cx| on_click(this, window, cx)))
+        .child(icon(ic, 15., t.muted_foreground))
+        .child(div().flex_1().text_size(px(13.)).child(label))
+        .when_some(shortcut, |d, k| d.child(div().text_size(px(11.)).text_color(t.muted_foreground).child(k)))
+}
+
 /// 渲染整个左侧栏。
 pub fn render(wb: &Workbench, cx: &mut Context<Workbench>) -> impl IntoElement {
     let t = cx.theme().clone();
@@ -48,12 +68,20 @@ pub fn render(wb: &Workbench, cx: &mut Context<Workbench>) -> impl IntoElement {
         .border_color(t.sidebar_border)
         .text_color(t.sidebar_foreground)
         .child(
-            h_flex().px_2().pt_2().pb_1().gap_1()
-                .child(Button::new("new-chat").small().primary().icon(IconName::Plus).label("新会话").flex_1()
-                    .on_click(cx.listener(|this, _, window, cx| this.new_session(this.target_project(), window, cx))))
+            v_flex().px_2().pt_2().pb_1().gap_0p5()
+                .child(nav_row("nav-new", IconName::SquarePen, "新对话", Some("⌘N"), false, cx,
+                    |this, window, cx| this.new_session(this.target_project(), window, cx)))
+                .child(nav_row("nav-auto-row", IconName::Timer, "自动化", None, wb.page == Page::Automation, cx,
+                    |this, _, cx| this.set_page(Page::Automation, cx)))
+                .child(nav_row("nav-custom", IconName::SlidersHorizontal, "自定义", None, false, cx,
+                    |this, _, cx| this.set_page(Page::Settings, cx))),
+        )
+        .child(
+            h_flex().px_3().pt_3().pb_1().gap_1().items_center()
+                .child(div().flex_1().text_size(px(12.)).text_color(t.muted_foreground).child("工作区"))
                 .when(!wb.demo, |d| d.child(Button::new("add-project").small().ghost().icon(IconName::FolderPlus).tooltip("添加项目目录")
                     .on_click(cx.listener(|this, _, window, cx| this.add_project(window, cx)))))
-                .child(Button::new("search").small().ghost().icon(IconName::Search)
+                .child(Button::new("search").small().ghost().icon(IconName::Search).tooltip("搜索(⌘K)")
                     .on_click(cx.listener(|this, _, window, cx| this.toggle_palette(window, cx)))),
         )
         .child(
@@ -78,7 +106,7 @@ pub fn render(wb: &Workbench, cx: &mut Context<Workbench>) -> impl IntoElement {
         )
         .child(
             h_flex().h(px(40.)).px_2().gap_1().items_center().border_t_1().border_color(t.sidebar_border)
-                .child(Button::new("nav-settings").small().ghost().icon(IconName::Settings).label("设置")
+                .child(Button::new("nav-settings").small().ghost().icon(IconName::Settings).tooltip("设置")
                     .on_click(cx.listener(|this, _, _, cx| this.set_page(Page::Settings, cx))))
                 .child(div().flex_1())
                 .child(Button::new("nav-canvas").small().ghost().icon(IconName::LayoutDashboard)
