@@ -1,35 +1,40 @@
-//! IDE 编辑器视图:单文件编辑器(不做多标签),独立窗口与融合模式共用。
-//! 文件由宿主(IDE 窗口或融合模式的工作台)通过 `open` 传入;编辑后 ⌘S 保存。
+//! IDE 编辑器视图:多标签编辑器(参考 Zed 的 Pane:预览标签、MRU 关闭、就近插入),
+//! 独立窗口与融合模式共用。文件由宿主通过 `open` 传入;⌘S 保存,⌘W 关闭标签。
 //!
 //! @author ixxxxoooo
 
 use crate::file_tree::language_for;
-use crate::ui::{MONO, empty_state, icon};
+use crate::ide_chrome::{breadcrumbs, info_strip, tab_bar, welcome};
+use crate::ide_tabs::TabModel;
+use crate::ui::empty_state;
 use gpui_kit::assets::IconName;
-use gpui_kit::component::button::{Button, ButtonVariants};
 use gpui_kit::component::input::{Editor, EditorState, InputEvent};
-use gpui_kit::component::{ActiveTheme, Disableable, Sizable, h_flex, v_flex};
-use gpui_kit::prelude::FluentBuilder as _;
+use gpui_kit::component::{ActiveTheme, v_flex};
 use gpui_kit::*;
+use std::collections::HashMap;
 use std::path::{Path, PathBuf};
+
+actions!(ide, [CloseTab, NextTab, PrevTab]);
 
 /// 超过这个大小的文件不在编辑器里打开。
 const MAX_EDIT_BYTES: u64 = 1024 * 1024;
 
-/// 当前在编辑器里打开的文件。
+/// 一个已打开的文档。
 pub struct IdeDoc {
-    pub path: PathBuf,
     pub editor: Entity<EditorState>,
     /// 内容是否与磁盘一致
     pub saved: bool,
+    /// 文件使用 CRLF 换行(仅用于状态显示)
+    pub crlf: bool,
     _sub: Subscription,
 }
 
-/// 编辑器视图:持有当前文档,不依赖工作台,可被任意窗口嵌入。
+/// 编辑器视图:持有所有标签的文档,不依赖工作台,可被任意窗口嵌入。
 pub struct IdeView {
     /// 当前项目根目录,用于显示相对路径
     root: String,
-    doc: Option<IdeDoc>,
+    docs: HashMap<PathBuf, IdeDoc>,
+    tabs: TabModel,
     /// 打不开文件或保存失败时的说明
     note: Option<String>,
 }
@@ -37,7 +42,7 @@ pub struct IdeView {
 impl IdeView {
     /// 创建空的编辑器视图。
     pub fn new() -> Self {
-        Self { root: String::new(), doc: None, note: None }
+        Self { root: String::new(), docs: HashMap::new(), tabs: TabModel::default(), note: None }
     }
 
     /// 设置项目根目录(会话切换时由宿主调用)。
@@ -48,45 +53,99 @@ impl IdeView {
         }
     }
 
-    /// 读取文本文件并建立编辑器;二进制或过大的文件给出说明。
-    pub fn open(&mut self, path: PathBuf, window: &mut Window, cx: &mut Context<Self>) {
-        match load(&path, window, cx) {
-            Ok(doc) => {
-                self.doc = Some(doc);
-                self.note = None;
-            }
-            Err(note) => {
-                self.doc = None;
-                self.note = Some(note);
+    /// 打开文件:`preview` 为真时作为预览标签(文件树单击),否则固定。
+    /// 已打开的文件只激活;读取失败时在编辑区给出说明。
+    pub fn open(&mut self, path: PathBuf, preview: bool, window: &mut Window, cx: &mut Context<Self>) {
+        self.note = None;
+        if !self.docs.contains_key(&path) {
+            match load(&path, window, cx) {
+                Ok(doc) => {
+                    self.docs.insert(path.clone(), doc);
+                }
+                Err(note) => {
+                    self.note = Some(note);
+                    cx.notify();
+                    return;
+                }
             }
         }
+        let out = self.tabs.open(&path, preview);
+        if let Some(old) = out.replaced {
+            self.docs.remove(&old);
+        }
+        self.focus_active(window, cx);
         cx.notify();
     }
 
-    /// 保存到磁盘。
+    /// 激活已有标签(点击标签栏)。
+    pub fn activate(&mut self, path: &Path, window: &mut Window, cx: &mut Context<Self>) {
+        self.tabs.activate(path);
+        self.focus_active(window, cx);
+        cx.notify();
+    }
+
+    /// 双击标签:固定预览。
+    pub fn pin(&mut self, path: &Path, cx: &mut Context<Self>) {
+        self.tabs.pin(path);
+        cx.notify();
+    }
+
+    /// 让当前标签的编辑器获得焦点。
+    fn focus_active(&self, window: &mut Window, cx: &mut Context<Self>) {
+        if let Some(doc) = self.tabs.active().and_then(|p| self.docs.get(p)) {
+            doc.editor.update(cx, |e, cx| e.focus(window, cx));
+        }
+    }
+
+    /// 保存当前文件到磁盘。
     pub fn save(&mut self, cx: &mut Context<Self>) {
-        let Some(doc) = self.doc.as_mut() else { return };
+        let Some(path) = self.tabs.active().map(Path::to_path_buf) else { return };
+        let Some(doc) = self.docs.get_mut(&path) else { return };
         let text = doc.editor.read(cx).value().to_string();
-        match std::fs::write(&doc.path, text) {
+        match std::fs::write(&path, text) {
             Ok(()) => {
                 doc.saved = true;
                 self.note = None;
+                self.tabs.pin(&path);
             }
             Err(e) => self.note = Some(format!("保存失败:{e}")),
         }
         cx.notify();
     }
 
-    /// 从磁盘重新载入当前文件。
+    /// 从磁盘重新载入当前文件(丢弃未保存的修改)。
     pub fn reload(&mut self, window: &mut Window, cx: &mut Context<Self>) {
-        if let Some(path) = self.doc.as_ref().map(|d| d.path.clone()) {
-            self.open(path, window, cx);
+        let Some(path) = self.tabs.active().map(Path::to_path_buf) else { return };
+        self.docs.remove(&path);
+        match load(&path, window, cx) {
+            Ok(doc) => {
+                self.docs.insert(path.clone(), doc);
+                self.focus_active(window, cx);
+            }
+            Err(note) => self.note = Some(note),
+        }
+        cx.notify();
+    }
+
+    /// 关闭一个标签(有未保存修改时同样直接关闭,与 Zed 的「丢弃」一致由用户先保存)。
+    pub fn close_tab(&mut self, path: &Path, window: &mut Window, cx: &mut Context<Self>) {
+        self.docs.remove(path);
+        self.tabs.close(path);
+        self.focus_active(window, cx);
+        cx.notify();
+    }
+
+    /// 关闭当前标签。
+    pub fn close_active(&mut self, window: &mut Window, cx: &mut Context<Self>) {
+        if let Some(p) = self.tabs.active().map(Path::to_path_buf) {
+            self.close_tab(&p, window, cx);
         }
     }
 
-    /// 关闭当前文件。
-    pub fn close(&mut self, cx: &mut Context<Self>) {
-        self.doc = None;
+    /// 切换到相邻标签。
+    fn cycle(&mut self, step: isize, window: &mut Window, cx: &mut Context<Self>) {
+        self.tabs.cycle(step);
+        self.focus_active(window, cx);
         cx.notify();
     }
 }
@@ -99,52 +158,53 @@ fn load(path: &Path, window: &mut Window, cx: &mut Context<IdeView>) -> Result<I
     }
     let bytes = std::fs::read(path).map_err(|e| format!("无法读取 {}:{e}", path.display()))?;
     let text = String::from_utf8(bytes).map_err(|_| "二进制文件,不在编辑器中打开".to_string())?;
-    let lang = language_for(path);
-    let editor = cx.new(|cx| EditorState::new(window, cx).language(lang).default_value(text));
-    // 编辑后标记为未保存
-    let sub = cx.subscribe(&editor, |this: &mut IdeView, _, ev: &InputEvent, cx| {
-        if matches!(ev, InputEvent::Change)
-            && let Some(doc) = this.doc.as_mut()
-            && doc.saved
-        {
-            doc.saved = false;
-            cx.notify();
+    let crlf = text.contains("\r\n");
+    let editor = cx.new(|cx| EditorState::new(window, cx).language(language_for(path)).searchable(true).default_value(text));
+    // 编辑后标记未保存并固定预览标签;光标移动时刷新状态条
+    let key = path.to_path_buf();
+    let sub = cx.subscribe(&editor, move |this: &mut IdeView, _, ev: &InputEvent, cx| {
+        if matches!(ev, InputEvent::Change) {
+            this.tabs.pin(&key);
+            if let Some(doc) = this.docs.get_mut(&key) {
+                doc.saved = false;
+            }
         }
+        cx.notify();
     });
-    Ok(IdeDoc { path: path.to_path_buf(), editor, saved: true, _sub: sub })
+    Ok(IdeDoc { editor, saved: true, crlf, _sub: sub })
 }
 
 impl Render for IdeView {
     fn render(&mut self, _window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
         let t = cx.theme().clone();
-        let Some(doc) = &self.doc else {
+        let root = v_flex()
+            .key_context("IdeView")
+            .size_full()
+            .bg(t.background)
+            .on_action(cx.listener(|this, _: &CloseTab, window, cx| this.close_active(window, cx)))
+            .on_action(cx.listener(|this, _: &NextTab, window, cx| this.cycle(1, window, cx)))
+            .on_action(cx.listener(|this, _: &PrevTab, window, cx| this.cycle(-1, window, cx)));
+        let active = self.tabs.active().map(Path::to_path_buf);
+        let Some(path) = active.filter(|p| self.docs.contains_key(p)) else {
             if let Some(note) = self.note.clone() {
-                return empty_state(IconName::Code, "无法打开", &note, cx).into_any_element();
+                return root.child(empty_state(IconName::Code, "无法打开", &note, cx)).into_any_element();
             }
-            let hints = [("显示 / 隐藏侧栏", "⌘B"), ("显示 / 隐藏对话栏", "⌥⌘B"), ("保存文件", "⌘S"), ("切换到 Agents Window", "⇧⌘E")];
-            return v_flex().size_full().items_center().justify_center().gap_4().bg(t.background)
-                .child(icon(IconName::Code, 40., t.muted_foreground))
-                .child(v_flex().gap_1().w(px(260.)).children(hints.into_iter().map(|(label, key)| {
-                    h_flex().text_size(px(12.)).text_color(t.muted_foreground)
-                        .child(div().flex_1().child(label))
-                        .child(div().child(key))
-                })))
-                .into_any_element();
+            return root.child(welcome(cx)).into_any_element();
         };
-        let shown = doc.path.strip_prefix(&self.root).unwrap_or(&doc.path).display().to_string();
-        let saved = doc.saved;
-        v_flex().size_full().bg(t.background)
-            .child(
-                h_flex().h(px(34.)).px_3().gap_2().items_center().border_b_1().border_color(t.border)
-                    .child(icon(IconName::FileText, 14., t.muted_foreground))
-                    .child(div().min_w_0().truncate().font_family(MONO).text_size(px(12.)).child(shown))
-                    .when(!saved, |d| d.child(div().size(px(7.)).rounded_full().bg(t.warning)))
-                    .child(div().flex_1())
-                    .child(Button::new("ide-save").small().ghost().icon(IconName::Save).label("保存").disabled(saved).on_click(cx.listener(|this, _, _, cx| this.save(cx))))
-                    .child(Button::new("ide-reload").small().ghost().icon(IconName::RefreshCw).tooltip("从磁盘重新载入").on_click(cx.listener(|this, _, window, cx| this.reload(window, cx))))
-                    .child(Button::new("ide-close").small().ghost().icon(IconName::X).on_click(cx.listener(|this, _, _, cx| this.close(cx)))),
-            )
-            .child(div().flex_1().min_h_0().child(Editor::new(&doc.editor).bordered(false).appearance(false).size_full()))
+        let doc = &self.docs[&path];
+        let editor = doc.editor.clone();
+        let pos = editor.read(cx).cursor_position();
+        let lang = language_for(&path);
+        let items: Vec<_> = self
+            .tabs
+            .tabs()
+            .iter()
+            .map(|p| (p.clone(), self.docs.get(p).is_some_and(|d| !d.saved), self.tabs.is_preview(p), *p == path))
+            .collect();
+        root.child(tab_bar(items, cx))
+            .child(breadcrumbs(&path, &self.root, doc.saved, self.note.clone(), cx))
+            .child(div().flex_1().min_h_0().child(Editor::new(&editor).bordered(false).appearance(false).size_full()))
+            .child(info_strip(pos.line + 1, pos.character + 1, lang, doc.crlf, cx))
             .into_any_element()
     }
 }

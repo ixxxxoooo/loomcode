@@ -114,6 +114,8 @@ pub struct Workbench {
     pub show_archived: bool,
     /// 后台跑完、用户还没看过的会话
     pub unread: HashSet<String>,
+    /// 侧栏顶部的过滤输入框
+    pub sidebar_filter: Entity<InputState>,
     /// 已打开会话的使用顺序(队首最久未用),用于淘汰空闲会话
     pub view_order: Vec<String>,
     pub claude_cfg: ClaudeConfig,
@@ -166,6 +168,7 @@ impl Workbench {
             ucode_config::claude::load(&home, None)
         };
         let rule_input = settings::new_rule_input(window, cx);
+        let sidebar_filter = cx.new(|cx| InputState::new(window, cx).placeholder("过滤会话…"));
         let focus = cx.focus_handle();
         let panel_root = if demo { demo_root.to_string_lossy().to_string() } else { std::env::var("HOME").unwrap_or_default() };
         let panel = cx.new(|cx| RightPanel::new(panel_root, demo, window, cx));
@@ -204,6 +207,7 @@ impl Workbench {
             ui_state_path,
             show_archived: false,
             unread: HashSet::new(),
+            sidebar_filter,
             view_order: Vec::new(),
             claude_cfg,
             settings_tab: SettingsTab::General,
@@ -228,6 +232,9 @@ impl Workbench {
         wb.apply_ui_state();
         let panel_sub = cx.subscribe_in(&wb.panel, window, |this, _, ev: &PanelEvent, window, cx| this.on_panel_event(ev, window, cx));
         wb._subs.push(panel_sub);
+        // 过滤框内容变化时重绘侧栏
+        let filter_sub = cx.subscribe(&wb.sidebar_filter, |_, _, _: &gpui_kit::component::input::InputEvent, cx| cx.notify());
+        wb._subs.push(filter_sub);
         if demo {
             let id = session.unwrap_or_else(|| "showcase-tour".into());
             if let Some(pi) = wb.projects.iter().position(|p| p.sessions.iter().any(|s| s.id == id)) {

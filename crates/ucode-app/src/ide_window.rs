@@ -4,7 +4,7 @@
 //!
 //! @author ixxxxoooo
 
-use crate::ide::IdeView;
+use crate::ide::{CloseTab, IdeView, NextTab, PrevTab};
 use crate::right_panel::{PanelEvent, RightPanel};
 use crate::ui::{dev_badge, icon, no_drag};
 use crate::workbench::{Page, RightTab, SaveFile, ToggleIde, ToggleLeft, ToggleRight, Workbench, chat_panel};
@@ -41,6 +41,7 @@ pub struct IdeWindow {
 impl IdeWindow {
     /// 创建窗口视图。`demo`、`root` 由调用方传入,避免在工作台更新期间回读它。
     pub fn new(wb: Entity<Workbench>, demo: bool, root: String, window: &mut Window, cx: &mut Context<Self>) -> Self {
+        bind_ide_keys(cx);
         let panel = cx.new(|cx| RightPanel::new(root.clone(), demo, window, cx));
         panel.update(cx, |p, cx| {
             p.show_tabs = false;
@@ -88,7 +89,7 @@ impl IdeWindow {
     /// 在编辑器里打开文件(文件树点选,或融合模式下由工作台转发)。
     pub fn open_file(&mut self, path: std::path::PathBuf, window: &mut Window, cx: &mut Context<Self>) {
         self.panel.update(cx, |p, _| p.files.reveal(&path));
-        self.ide.update(cx, |v, cx| v.open(path, window, cx));
+        self.ide.update(cx, |v, cx| v.open(path, true, window, cx));
     }
 
     /// 保存当前文件。
@@ -181,4 +182,16 @@ impl Render for IdeWindow {
             )
             .child(status)
     }
+}
+
+/// 注册编辑器快捷键(⌘W 关闭标签、⌥⌘←/→ 切换标签);全局只注册一次。
+fn bind_ide_keys(cx: &mut App) {
+    static ONCE: std::sync::Once = std::sync::Once::new();
+    ONCE.call_once(|| {
+        cx.bind_keys([
+            KeyBinding::new("cmd-w", CloseTab, Some("IdeView")),
+            KeyBinding::new("cmd-alt-right", NextTab, Some("IdeView")),
+            KeyBinding::new("cmd-alt-left", PrevTab, Some("IdeView")),
+        ]);
+    });
 }

@@ -1,10 +1,12 @@
 //! 左侧项目栏:项目 → 会话树,置顶、状态点、搜索入口、设置入口。
 
 use crate::session_menu;
+use crate::sidebar_filter::visible_sessions;
 use crate::ui::{icon, status_dot};
 use crate::workbench::{Page, Workbench};
 use gpui_kit::assets::IconName;
 use gpui_kit::component::button::{Button, ButtonVariants};
+use gpui_kit::component::input::Input;
 use gpui_kit::component::menu::ContextMenuExt as _;
 use gpui_kit::component::{ActiveTheme, Selectable, Sizable, h_flex, v_flex};
 use gpui_kit::prelude::FluentBuilder as _;
@@ -87,6 +89,14 @@ fn nav_row(
 pub fn render(wb: &Workbench, cx: &mut Context<Workbench>) -> impl IntoElement {
     let t = cx.theme().clone();
     let projects = wb.projects.clone();
+    let query = wb.sidebar_filter.read(cx).value().to_string();
+    let filtering = !query.trim().is_empty();
+    // 先算出每个项目要显示的会话;过滤时没有命中的项目整个隐藏
+    let shown: Vec<(usize, Vec<SessionMeta>)> = projects
+        .iter()
+        .enumerate()
+        .filter_map(|(pi, p)| visible_sessions(&query, p, wb.show_archived, wb.active.as_deref()).map(|v| (pi, v.into_iter().cloned().collect())))
+        .collect();
     v_flex()
         .w(px(wb.left_w))
         .h_full()
@@ -104,8 +114,9 @@ pub fn render(wb: &Workbench, cx: &mut Context<Workbench>) -> impl IntoElement {
                 .child(nav_row("nav-custom", IconName::SlidersHorizontal, "自定义", None, false, cx,
                     |this, _, cx| this.set_page(Page::Settings, cx))),
         )
+        .child(div().px_2().pb_1().child(Input::new(&wb.sidebar_filter)))
         .child(
-            h_flex().px_3().pt_3().pb_1().gap_1().items_center()
+            h_flex().px_3().pt_2().pb_1().gap_1().items_center()
                 .child(div().flex_1().text_size(px(12.)).text_color(t.muted_foreground).child("工作区"))
                 .when(!wb.demo, |d| d.child(Button::new("add-project").small().ghost().icon(IconName::FolderPlus).tooltip("添加项目目录")
                     .on_click(cx.listener(|this, _, window, cx| this.add_project(window, cx)))))
@@ -118,8 +129,11 @@ pub fn render(wb: &Workbench, cx: &mut Context<Workbench>) -> impl IntoElement {
         )
         .child(
             v_flex().id("projects").flex_1().min_h_0().overflow_y_scroll().px_2().py_1().gap_0p5()
-                .children(projects.iter().enumerate().map(|(pi, p)| {
-                    let expanded = p.expanded;
+                .when(filtering && shown.is_empty(), |d| d.child(div().px_2().py_3().text_size(px(12.)).text_color(t.muted_foreground).child("没有匹配的会话")))
+                .children(shown.into_iter().map(|(pi, sessions)| {
+                    let p = &projects[pi];
+                    // 过滤时强制展开,方便直接看到命中的会话
+                    let expanded = p.expanded || filtering;
                     v_flex()
                         .child(
                             h_flex().id(SharedString::from(format!("proj-{pi}"))).h(px(28.)).px_1().gap_1p5().items_center().rounded(px(6.)).cursor_pointer()
@@ -133,7 +147,7 @@ pub fn render(wb: &Workbench, cx: &mut Context<Workbench>) -> impl IntoElement {
                                         .child(icon(IconName::GitBranch, 11., t.muted_foreground)).child(b))
                                 }),
                         )
-                        .when(expanded, |d| d.children(p.sessions.iter().filter(|s| wb.show_archived || !s.archived || wb.active.as_deref() == Some(s.id.as_str())).map(|s| session_row(wb, pi, s, cx).into_any_element())))
+                        .when(expanded, |d| d.children(sessions.iter().map(|s| session_row(wb, pi, s, cx).into_any_element())))
                 })),
         )
         .child(
