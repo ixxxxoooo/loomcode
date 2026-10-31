@@ -55,7 +55,7 @@ impl Workbench {
                 input.focus_handle(cx).focus(window, cx);
             }
             let (wb, path, input) = (wb.clone(), path.clone(), input.clone());
-            dialog.title("重命名项目").child(Input::new(&input.clone())).on_ok(move |_, _, cx| {
+            dialog.title("重命名项目").child(Input::new(&input.clone())).footer(crate::ui::dialog_footer("保存")).on_ok(move |_, _, cx| {
                 let name = input.read(cx).value().to_string();
                 let _ = wb.update(cx, |this, cx| this.rename_project(&path, &name, cx));
                 true

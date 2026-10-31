@@ -262,6 +262,15 @@ impl Workbench {
             wb.page = Page::Settings;
             wb.settings_tab = SettingsTab::ALL.into_iter().find(|t| format!("{t:?}").to_lowercase() == tab).unwrap_or(SettingsTab::General);
         }
+        // 调试用:启动后直接打开重命名对话框,方便截图检查按钮
+        if std::env::var("UCODE_DIALOG").is_ok_and(|v| v == "rename") {
+            // 等窗口根层就绪后再开,否则对话框会丢
+            cx.spawn_in(window, async move |this, cx| {
+                cx.background_executor().timer(std::time::Duration::from_millis(800)).await;
+                let _ = this.update_in(cx, |this, window, cx| this.debug_open_rename(window, cx));
+            })
+            .detach();
+        }
         if let Ok(q) = std::env::var("UCODE_PALETTE") {
             wb.toggle_palette(window, cx);
             if let Some(p) = wb.palette.clone() {

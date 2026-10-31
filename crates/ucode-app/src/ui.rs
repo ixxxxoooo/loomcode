@@ -96,3 +96,17 @@ pub fn dev_badge(cx: &App) -> Option<Div> {
 pub fn no_drag(child: impl IntoElement) -> Div {
     div().on_mouse_down(MouseButton::Left, |_, _, cx| cx.stop_propagation()).child(child)
 }
+
+/// 对话框底部的「取消 / 确认」按钮。
+///
+/// 普通 `Dialog` 不会自己渲染按钮,需要显式放进 `footer`;确认按钮触发 `on_ok` 回调,
+/// 取消按钮触发 `on_cancel` 并关闭对话框。
+///
+/// 参数:`ok_label` 确认按钮文字。
+pub fn dialog_footer(ok_label: &'static str) -> gpui_kit::component::dialog::DialogFooter {
+    use gpui_kit::component::button::{Button, ButtonVariants};
+    use gpui_kit::component::dialog::{DialogAction, DialogClose, DialogFooter};
+    DialogFooter::new()
+        .child(DialogClose::new().trigger(|b| b.label("取消")))
+        .child(DialogAction::new().child(Button::new("dialog-ok").primary().label(ok_label)))
+}

@@ -7,7 +7,7 @@
 use serde::{Deserialize, Serialize};
 use std::collections::{BTreeMap, BTreeSet};
 use std::path::{Path, PathBuf};
-use ucode_core::{Project, SessionMeta};
+use ucode_core::{Project, SessionMeta, WorkspaceDef};
 
 /// 用户对侧栏做的选择。所有字段都有默认值,旧文件缺字段时不会报错。
 #[derive(Debug, Clone, PartialEq, Default, Serialize, Deserialize)]
@@ -25,6 +25,8 @@ pub struct UiState {
     pub hidden_projects: BTreeSet<String>,
     /// 项目路径 → 自定义显示名(只改显示,不改目录)
     pub project_names: BTreeMap<String, String>,
+    /// 多根工作区
+    pub workspaces: Vec<WorkspaceDef>,
 }
 
 impl UiState {
@@ -127,6 +129,31 @@ impl UiState {
         projects.sort_by_key(|p| !self.pinned_projects.contains(&p.path));
     }
 
+    /// 新增或更新一个工作区(按 id 匹配)。
+    pub fn upsert_workspace(&mut self, def: WorkspaceDef) {
+        match self.workspaces.iter_mut().find(|w| w.id == def.id) {
+            Some(old) => *old = def,
+            None => self.workspaces.push(def),
+        }
+    }
+
+    /// 按工作区专属目录查找工作区。
+    pub fn workspace_by_dir(&self, dir: &str) -> Option<&WorkspaceDef> {
+        self.workspaces.iter().find(|w| w.dir == dir)
+    }
+
+    /// 把工作区合并进项目列表:已有会话历史的项目改用工作区名称,还没有历史的补一个空项目。
+    ///
+    /// 参数:`projects` 项目列表(原地修改,新增的项目排在最前)。
+    pub fn apply_workspaces(&self, projects: &mut Vec<Project>) {
+        for w in &self.workspaces {
+            match projects.iter_mut().find(|p| p.path == w.dir) {
+                Some(p) => p.name = w.name.clone(),
+                None => projects.insert(0, Project { name: w.name.clone(), path: w.dir.clone(), branch: None, sessions: Vec::new(), expanded: false }),
+            }
+        }
+    }
+
     /// 切换项目置顶,返回切换后的状态。
     pub fn toggle_pin_project(&mut self, path: &str) -> bool {
         toggle(&mut self.pinned_projects, path)
@@ -201,6 +228,29 @@ mod tests {
         assert!(st.hidden_projects.is_empty());
         st.rename_project("/c", "");
         assert!(st.project_names.is_empty());
+    }
+
+    fn ws(id: &str, name: &str) -> WorkspaceDef {
+        WorkspaceDef { id: id.into(), name: name.into(), dir: format!("/ws/{id}"), folders: vec!["/a".into(), "/b".into()] }
+    }
+
+    #[test]
+    fn 工作区增改查与合并进项目() {
+        let mut st = UiState::default();
+        st.upsert_workspace(ws("1", "前后端"));
+        st.upsert_workspace(ws("1", "改名后"));
+        assert_eq!(st.workspaces.len(), 1);
+        assert_eq!(st.workspace_by_dir("/ws/1").unwrap().name, "改名后");
+        assert!(st.workspace_by_dir("/nope").is_none());
+        // 已有历史的项目改名,没有历史的补空项目
+        st.upsert_workspace(ws("2", "第二个"));
+        let mk = |path: &str| Project { name: "目录名".into(), path: path.into(), branch: None, sessions: vec![], expanded: false };
+        let mut list = vec![mk("/ws/1"), mk("/other")];
+        st.apply_workspaces(&mut list);
+        assert_eq!(list.len(), 3);
+        assert_eq!(list[0].path, "/ws/2");
+        assert_eq!(list.iter().find(|p| p.path == "/ws/1").unwrap().name, "改名后");
+        assert_eq!(list.iter().find(|p| p.path == "/other").unwrap().name, "目录名");
     }
 
     #[test]

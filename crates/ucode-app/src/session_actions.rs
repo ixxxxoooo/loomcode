@@ -100,12 +100,19 @@ impl Workbench {
                 input.focus_handle(cx).focus(window, cx);
             }
             let (wb, id, input) = (wb.clone(), id.clone(), input.clone());
-            dialog.title("重命名会话").child(Input::new(&input.clone())).on_ok(move |_, _, cx| {
+            dialog.title("重命名会话").child(Input::new(&input.clone())).footer(crate::ui::dialog_footer("保存")).on_ok(move |_, _, cx| {
                 let name = input.read(cx).value().to_string();
                 let _ = wb.update(cx, |this, cx| this.rename_session(&id, &name, cx));
                 true
             })
         });
+    }
+
+    /// 调试用:对当前会话打开重命名对话框(`UCODE_DIALOG=rename`)。
+    pub fn debug_open_rename(&mut self, window: &mut Window, cx: &mut Context<Self>) {
+        let Some(id) = self.active.clone() else { return };
+        let title = self.projects.iter().flat_map(|p| p.sessions.iter()).find(|s| s.id == id).map(|s| s.title.clone()).unwrap_or_default();
+        self.rename_session_dialog(&id, &title, window, cx);
     }
 
     /// 弹出删除确认。运行中的会话额外提示删除会中断它。
