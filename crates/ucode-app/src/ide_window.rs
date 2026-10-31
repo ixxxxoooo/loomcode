@@ -23,6 +23,13 @@ const ACTIVITIES: [(IconName, &str, RightTab); 4] = [
     (IconName::ListTodo, "计划", RightTab::Plan),
 ];
 
+/// 从对话里的文件路径跳转到编辑器(路径可为相对项目根的相对路径)。
+#[derive(Clone, PartialEq, Action)]
+#[action(namespace = ide, no_json)]
+pub struct OpenPath {
+    pub path: String,
+}
+
 /// IDE 窗口的根视图。
 pub struct IdeWindow {
     wb: Entity<Workbench>,
@@ -90,6 +97,14 @@ impl IdeWindow {
     pub fn open_file(&mut self, path: std::path::PathBuf, window: &mut Window, cx: &mut Context<Self>) {
         self.panel.update(cx, |p, _| p.files.reveal(&path));
         self.ide.update(cx, |v, cx| v.open(path, true, window, cx));
+    }
+
+    /// 打开对话里点击的文件(固定标签,不是预览)。
+    fn open_path(&mut self, path: &str, window: &mut Window, cx: &mut Context<Self>) {
+        let p = std::path::PathBuf::from(path);
+        let full = if p.is_absolute() { p } else { std::path::PathBuf::from(self.wb.read(cx).active_project_path().unwrap_or_default()).join(p) };
+        self.panel.update(cx, |p, _| p.files.reveal(&full));
+        self.ide.update(cx, |v, cx| v.open(full, false, window, cx));
     }
 
     /// 保存当前文件。
@@ -166,6 +181,7 @@ impl Render for IdeWindow {
             .key_context("IdeWindow")
             .track_focus(&self.focus)
             .on_action(cx.listener(|this, _: &SaveFile, _, cx| this.save(cx)))
+            .on_action(cx.listener(|this, a: &OpenPath, window, cx| this.open_path(&a.path, window, cx)))
             .on_action(cx.listener(|this, _: &ToggleIde, _, cx| this.back_to_agent(cx)))
             .on_action(cx.listener(|this, _: &ToggleLeft, _, cx| { this.left_open = !this.left_open; cx.notify(); }))
             .on_action(cx.listener(|this, _: &ToggleRight, _, cx| { this.chat_open = !this.chat_open; cx.notify(); }))

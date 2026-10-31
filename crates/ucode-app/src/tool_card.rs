@@ -151,7 +151,14 @@ pub fn render_content(content: &ToolContent, cx: &App) -> AnyElement {
                 .gap_1()
                 .child(
                     h_flex().gap_2().text_size(px(12.)).font_family(MONO)
-                        .child(div().text_color(t.muted_foreground).child(path.clone()))
+                        .child({
+                            // 点击路径:在 IDE 编辑器里打开(Agent 窗口里无处理者,等于无操作)
+                            let target = path.clone();
+                            div().id(SharedString::from(format!("diff-path-{path}"))).cursor_pointer().text_color(t.muted_foreground)
+                                .hover(|s| s.text_color(t.primary).underline())
+                                .on_click(move |_, window, cx| window.dispatch_action(Box::new(crate::ide_window::OpenPath { path: target.clone() }), cx))
+                                .child(path.clone())
+                        })
                         .child(div().text_color(t.success).child(format!("+{added}")))
                         .child(div().text_color(t.danger).child(format!("−{removed}"))),
                 )
