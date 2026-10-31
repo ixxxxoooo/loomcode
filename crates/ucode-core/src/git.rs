@@ -25,6 +25,26 @@ pub struct Worktree {
     pub is_main: bool,
 }
 
+/// 一个目录的 Git 状态快照:分支与 worktree 列表,供界面渲染菜单用。
+#[derive(Debug, Clone, Default, PartialEq, Eq)]
+pub struct GitSnapshot {
+    pub branches: Vec<Branch>,
+    pub worktrees: Vec<Worktree>,
+}
+
+impl GitSnapshot {
+    /// 读取快照;`dir` 不在 Git 仓库里返回 `None`。会起 git 子进程,放到后台线程调用。
+    pub fn load(dir: &str) -> Option<Self> {
+        repo_root(dir)?;
+        Some(Self { branches: branches(dir).unwrap_or_default(), worktrees: worktrees(dir).unwrap_or_default() })
+    }
+
+    /// 当前检出的分支名(游离 HEAD 时为 `None`)。
+    pub fn current(&self) -> Option<&str> {
+        self.branches.iter().find(|b| b.current).map(|b| b.name.as_str())
+    }
+}
+
 /// 解析 `git branch --format=%(HEAD)%(refname:short)` 的输出(每行首字符 `*` 表示当前分支)。
 pub fn parse_branches(out: &str) -> Vec<Branch> {
     out.lines()

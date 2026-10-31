@@ -4,7 +4,7 @@
 //! @author ixxxxoooo
 
 use crate::file_tree::language_for;
-use crate::ide_chrome::{breadcrumbs, info_strip, tab_bar, welcome};
+use crate::ide_chrome::{breadcrumbs, tab_bar, welcome};
 use crate::ide_tabs::TabModel;
 use crate::ui::empty_state;
 use gpui_kit::assets::IconName;
@@ -200,6 +200,14 @@ impl IdeView {
         }
     }
 
+    /// 状态栏要显示的光标与文件信息:(行, 列, 语言, 是否 CRLF);没有打开文件时为 `None`。
+    pub fn cursor_info(&self, cx: &App) -> Option<(u32, u32, &'static str, bool)> {
+        let path = self.tabs.active()?;
+        let doc = self.docs.get(path)?;
+        let pos = doc.editor.read(cx).cursor_position();
+        Some((pos.line + 1, pos.character + 1, language_for(path), doc.crlf))
+    }
+
     /// 切换到相邻标签。
     fn cycle(&mut self, step: isize, window: &mut Window, cx: &mut Context<Self>) {
         self.tabs.cycle(step);
@@ -253,8 +261,6 @@ impl Render for IdeView {
         };
         let doc = &self.docs[&path];
         let editor = doc.editor.clone();
-        let pos = editor.read(cx).cursor_position();
-        let lang = language_for(&path);
         let items: Vec<_> = self
             .tabs
             .tabs()
@@ -264,7 +270,6 @@ impl Render for IdeView {
         root.child(tab_bar(items, cx))
             .child(breadcrumbs(&path, &self.root, doc.saved, self.note.clone(), cx))
             .child(div().flex_1().min_h_0().child(Editor::new(&editor).bordered(false).appearance(false).size_full()))
-            .child(info_strip(pos.line + 1, pos.character + 1, lang, doc.crlf, cx))
             .into_any_element()
     }
 }

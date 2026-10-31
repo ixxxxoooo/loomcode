@@ -5,6 +5,7 @@
 //! @author ixxxxoooo
 
 use crate::ide_chat_header;
+use crate::ide_status;
 use crate::ide::{CloseTab, IdeView, NextTab, PrevTab};
 use crate::right_panel::{PanelEvent, RightPanel};
 use crate::ui::{dev_badge, icon, no_drag};
@@ -64,6 +65,8 @@ impl IdeWindow {
         }));
         // 工作台变化(切换会话等)→ 同步面板与根目录
         subs.push(cx.observe(&wb, |this, _, cx| this.sync(cx)));
+        // 编辑器光标移动 → 刷新状态栏
+        subs.push(cx.observe(&ide, |_, _, cx| cx.notify()));
         let focus = cx.focus_handle();
         window.focus(&focus, cx);
         // 此时工作台可能正处于更新中,不在这里回读它;首次渲染时再同步
@@ -178,10 +181,13 @@ impl Render for IdeWindow {
     fn render(&mut self, _window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
         self.sync_state(cx);
         let t = cx.theme().clone();
-        let (parts, project, status, fused, branch, demo) = {
+        let (parts, project, project_name, mode, fused, branch, demo) = {
             let wb = self.wb.read(cx);
             let project = wb.active_project_path().map(|p| ucode_core::project_name_from_path(&p)).unwrap_or_else(|| "UCode".into());
-            (wb.chat_parts(), project, wb.status_bar(cx), wb.settings.fused_ide, wb.active_branch(), wb.demo)
+            let view = wb.active.as_ref().and_then(|id| wb.views.get(id));
+            let name = view.and_then(|v| wb.projects.get(v.project_ix)).map(|p| p.name.clone());
+            let mode = view.map(|v| v.model.read(cx).state.mode.label().to_string());
+            (wb.chat_parts(), project, name, mode, wb.settings.fused_ide, wb.active_branch(), wb.demo)
         };
         v_flex()
             .key_context("IdeWindow")
@@ -205,11 +211,11 @@ impl Render for IdeWindow {
                                     .child(div().size_full().border_r_1().border_color(t.border).child(self.panel.clone())))
                                 .child(resizable_panel().size_range(px(320.)..Pixels::MAX).child(div().size_full().child(self.ide.clone())))
                                 .child(resizable_panel().size(px(420.)).size_range(px(320.)..px(900.)).flex_none().visible(self.chat_open)
-                                    .child(v_flex().size_full().border_l_1().border_color(t.border).children(ide_chat_header::chat_header(&self.wb, cx)).child(div().flex_1().min_h_0().child(chat_panel(parts, branch, demo, cx))))),
+                                    .child(v_flex().size_full().border_l_1().border_color(t.border).children(ide_chat_header::chat_header(&self.wb, cx)).child(div().flex_1().min_h_0().child(chat_panel(parts, branch.clone(), demo, cx))))),
                         ),
                     ),
             )
-            .child(status)
+            .child(ide_status::status_bar(project_name, branch, self.ide.read(cx).cursor_info(cx), mode, cx))
     }
 }
 

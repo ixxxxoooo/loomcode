@@ -6,6 +6,7 @@
 
 mod ansi;
 mod automation_page;
+mod branch_bar;
 mod browser_page;
 mod canvas_page;
 mod cards;
@@ -14,7 +15,9 @@ mod diff;
 mod model;
 mod file_tree;
 mod git_status;
+mod git_actions;
 mod ide;
+mod ide_status;
 mod ide_chat_header;
 mod ide_gutter;
 mod ide_chrome;

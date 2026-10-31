@@ -3,7 +3,7 @@
 //! @author ixxxxoooo
 
 use crate::ide::IdeView;
-use crate::ui::{MONO, icon};
+use crate::ui::icon;
 use gpui_kit::assets::IconName;
 use gpui_kit::component::button::{Button, ButtonVariants};
 use gpui_kit::component::menu::{ContextMenuExt as _, PopupMenu, PopupMenuItem};
@@ -141,29 +141,6 @@ pub fn breadcrumbs(path: &Path, root: &str, saved: bool, note: Option<String>, c
                 .tooltip("从磁盘重新载入(丢弃未保存修改)")
                 .on_click(cx.listener(|this, _, window, cx| this.reload(window, cx))),
         )
-}
-
-/// 底部信息条:行列、语言、编码、换行符,靠右对齐(类似 Zed / VSCode 状态栏右半部分)。
-pub fn info_strip(line: u32, col: u32, lang: &str, crlf: bool, cx: &App) -> impl IntoElement {
-    let t = cx.theme();
-    let lang = if lang.is_empty() { "纯文本" } else { lang };
-    h_flex()
-        .h(px(22.))
-        .w_full()
-        .flex_none()
-        .px_3()
-        .gap_3()
-        .justify_end()
-        .items_center()
-        .border_t_1()
-        .border_color(t.border)
-        .font_family(MONO)
-        .text_size(px(11.))
-        .text_color(t.muted_foreground)
-        .child(format!("行 {line},列 {col}"))
-        .child(lang.to_string())
-        .child("UTF-8")
-        .child(if crlf { "CRLF" } else { "LF" })
 }
 
 /// 没有打开文件时的欢迎页:常用快捷键。

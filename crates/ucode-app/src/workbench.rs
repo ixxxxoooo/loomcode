@@ -15,7 +15,6 @@ use gpui_kit::assets::IconName;
 use gpui_kit::component::TitleBar;
 use gpui_kit::component::button::{Button, ButtonVariants};
 use gpui_kit::component::message_scroller::MessageScroller;
-use gpui_kit::component::status_bar::StatusBar;
 use gpui_kit::component::{ActiveTheme, Selectable, Sizable, h_flex, v_flex};
 use gpui_kit::prelude::FluentBuilder as _;
 use gpui_kit::*;
@@ -114,6 +113,8 @@ pub struct Workbench {
     pub show_archived: bool,
     /// 后台跑完、用户还没看过的会话
     pub unread: HashSet<String>,
+    /// 各目录的 Git 快照(分支、worktree),后台刷新后供分支菜单渲染
+    pub git: HashMap<String, ucode_core::git::GitSnapshot>,
     /// 侧栏顶部的过滤输入框
     pub sidebar_filter: Entity<InputState>,
     /// 已打开会话的使用顺序(队首最久未用),用于淘汰空闲会话
@@ -207,6 +208,7 @@ impl Workbench {
             ui_state_path,
             show_archived: false,
             unread: HashSet::new(),
+            git: HashMap::new(),
             sidebar_filter,
             view_order: Vec::new(),
             claude_cfg,
@@ -522,6 +524,9 @@ impl Workbench {
         self.active = Some(id.to_string());
         crate::view_cache::touch(&mut self.view_order, id);
         self.evict_idle_views(cx);
+        if let Some(dir) = self.active_git_dir() {
+            self.refresh_git(dir, cx);
+        }
         self.sync_panel(cx);
         // 调试用:打开会话后在终端里运行一条命令(只触发一次)
         if let Ok(cmd) = std::env::var("UCODE_TERM_CMD") {
@@ -758,7 +763,7 @@ impl Workbench {
     }
 
     /// 一个回合结束后,后台刷新该项目的会话列表与分支。
-    fn refresh_project(&mut self, path: String, cx: &mut Context<Self>) {
+    pub fn refresh_project(&mut self, path: String, cx: &mut Context<Self>) {
         let query = path.clone();
         cx.spawn(async move |this, cx| {
             let (sessions, branch) = cx.background_spawn(async move { crate::real::load_project_sessions(&query) }).await;
@@ -831,6 +836,8 @@ impl Workbench {
                     }
                     let path = owner.and_then(|(_, v)| self.projects.get(v.project_ix)).map(|p| p.path.clone());
                     if let Some(path) = path {
+                        let root = self.work_root(&path);
+                        self.refresh_git(root, cx);
                         self.refresh_project(path, cx);
                     }
                 }
@@ -966,7 +973,7 @@ impl Workbench {
     }
 
     fn chat_view(&self, cx: &mut Context<Self>) -> AnyElement {
-        chat_panel(self.chat_parts(), self.active_branch(), self.demo, cx)
+        chat_panel_with_footer(self.chat_parts(), crate::branch_bar::footer(self, cx), cx)
     }
 
     /// 设置页的标题栏:整窗设置,左侧返回。
@@ -981,33 +988,21 @@ impl Workbench {
         )
     }
 
-    /// 底部状态栏:只在 IDE(融合视图与独立窗口)里显示,Agent 窗口没有。
-    pub fn status_bar(&self, cx: &App) -> AnyElement {
-        let t = cx.theme().clone();
-        let (name, branch, mode, usage) = match self.active.as_ref().and_then(|id| self.views.get(id)) {
-            Some(v) => {
-                let st = &v.model.read(cx).state;
-                let p = self.projects.get(v.project_ix);
-                (p.map(|p| p.name.clone()), p.and_then(|p| p.branch.clone()), Some(st.mode), Some(st.usage.clone()))
-            }
-            None => (None, None, None, None),
-        };
-        div().h(px(24.)).w_full().border_t_1().border_color(t.border).bg(t.sidebar).text_size(px(11.)).text_color(t.muted_foreground)
-            .child(
-                StatusBar::new()
-                    .left(h_flex().gap_3().px_2()
-                        .when_some(name, |d, n| d.child(h_flex().gap_1().items_center().child(icon(IconName::Folder, 11., t.muted_foreground)).child(n)))
-                        .when_some(branch, |d, b| d.child(h_flex().gap_1().items_center().child(icon(IconName::GitBranch, 11., t.muted_foreground)).child(b))))
-                    .right(h_flex().gap_3().px_2()
-                        .when_some(mode, |d, m| d.child(div().child(format!("权限:{}", m.label()))))
-                        .when_some(usage.filter(|u| u.context_size > 0), |d, u| d.child(div().child(format!("上下文 {:.0}% · ${:.2}", u.context_ratio() * 100., u.cost_usd))))),
-            )
-            .into_any_element()
-    }
 }
 
-/// 渲染对话区(时间线 + 输入框),Agent 窗口、融合模式与 IDE 窗口共用。
+/// 渲染对话区(时间线 + 输入框 + 静态页脚),IDE 窗口使用。
 pub fn chat_panel(parts: Option<(Entity<SessionModel>, Entity<Composer>)>, branch: Option<String>, demo: bool, cx: &App) -> AnyElement {
+    let t = cx.theme().clone();
+    let footer = h_flex().h(px(26.)).px_4().items_center().text_size(px(12.)).text_color(t.muted_foreground)
+        .child(h_flex().gap_1().items_center().when_some(branch, |d, b| d.child(icon(IconName::GitBranch, 12., t.muted_foreground)).child(b)))
+        .child(div().flex_1())
+        .child(if demo { "演示模式" } else { "Claude Code" })
+        .into_any_element();
+    chat_panel_with_footer(parts, footer, cx)
+}
+
+/// 渲染对话区(时间线 + 输入框),页脚由调用方提供。Agent 窗口用它放可点击的分支菜单。
+pub fn chat_panel_with_footer(parts: Option<(Entity<SessionModel>, Entity<Composer>)>, footer: AnyElement, cx: &App) -> AnyElement {
     let t = cx.theme().clone();
     let Some((model, composer)) = parts else {
         return empty_state(IconName::MessageSquare, "选择或新建一个会话", "左侧选择会话,或点击「新会话」", cx).into_any_element();
@@ -1024,12 +1019,7 @@ pub fn chat_panel(parts: Option<(Entity<SessionModel>, Entity<Composer>)>, branc
             ),
         )
         .child(composer)
-        .child(
-            h_flex().h(px(26.)).px_4().items_center().text_size(px(12.)).text_color(t.muted_foreground)
-                .child(h_flex().gap_1().items_center().when_some(branch, |d, b| d.child(icon(IconName::GitBranch, 12., t.muted_foreground)).child(b)))
-                .child(div().flex_1())
-                .child(if demo { "演示模式" } else { "Claude Code" }),
-        )
+        .child(footer)
         .into_any_element()
 }
 
