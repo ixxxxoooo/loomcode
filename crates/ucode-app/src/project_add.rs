@@ -66,7 +66,11 @@ pub fn build_menu(wb: WeakEntity<Workbench>, recent: Vec<String>) -> impl Fn(Pop
         let create = PopupMenuItem::new("新建文件夹…").icon(IconName::FolderPlus).on_click(move |_, window, cx| {
             let _ = w.update(cx, |this, cx| this.new_folder_project(window, cx));
         });
-        menu.item(open).item(create)
+        let w = wb.clone();
+        let workspace = PopupMenuItem::new("添加工作区…").icon(IconName::Folders).on_click(move |_, window, cx| {
+            let _ = w.update(cx, |this, cx| this.new_workspace_dialog(window, cx));
+        });
+        menu.item(open).item(create).separator().item(workspace)
     }
 }
 

@@ -262,12 +262,12 @@ impl Workbench {
             wb.page = Page::Settings;
             wb.settings_tab = SettingsTab::ALL.into_iter().find(|t| format!("{t:?}").to_lowercase() == tab).unwrap_or(SettingsTab::General);
         }
-        // 调试用:启动后直接打开重命名对话框,方便截图检查按钮
-        if std::env::var("UCODE_DIALOG").is_ok_and(|v| v == "rename") {
+        // 调试用:启动后直接打开对话框(rename / workspace),方便截图检查
+        if let Ok(kind) = std::env::var("UCODE_DIALOG") {
             // 等窗口根层就绪后再开,否则对话框会丢
             cx.spawn_in(window, async move |this, cx| {
                 cx.background_executor().timer(std::time::Duration::from_millis(800)).await;
-                let _ = this.update_in(cx, |this, window, cx| this.debug_open_rename(window, cx));
+                let _ = this.update_in(cx, |this, window, cx| this.debug_open_dialog(&kind, window, cx));
             })
             .detach();
         }
@@ -448,6 +448,8 @@ impl Workbench {
             let cwd = self.projects[project_ix].path.clone();
             let live = id == "showcase-tour";
             let is_new = self.new_sessions.contains(id);
+            // 多根工作区:其余文件夹授权访问,并告诉 claude 它们在哪
+            let workspace = self.ui_state.workspace_by_dir(&cwd).cloned();
             let s = &self.settings;
             let (backend, config): (Box<dyn AgentBackend>, BackendConfig) = if self.demo {
                 // 历史会话瞬时回放,只有「进行中」的会话保持真实节奏
@@ -461,7 +463,8 @@ impl Workbench {
                     model: (s.default_model != "default").then(|| s.default_model.clone()),
                     mode: (s.default_mode != PermissionMode::Default).then_some(s.default_mode),
                     effort: (s.default_effort != Effort::Medium).then_some(s.default_effort),
-                    ..Default::default()
+                    add_dirs: workspace.as_ref().map(|w| w.folders.clone()).unwrap_or_default(),
+                    append_system_prompt: workspace.as_ref().map(|w| w.system_prompt()),
                 };
                 (Box::new(LazyBackend::new(ClaudeBackend::new(s.claude_path.clone()))), config)
             };
@@ -553,7 +556,7 @@ impl Workbench {
 
     /// 当前项目路径。
     pub fn active_project_path(&self) -> Option<String> {
-        self.active.as_ref().and_then(|id| self.views.get(id)).and_then(|v| self.projects.get(v.project_ix)).map(|p| p.path.clone())
+        self.active.as_ref().and_then(|id| self.views.get(id)).and_then(|v| self.projects.get(v.project_ix)).map(|p| self.work_root(&p.path))
     }
 
     /// 权限规则文件:项目级 `.claude/settings.local.json`。
@@ -659,7 +662,7 @@ impl Workbench {
     /// 让右侧面板跟随当前会话。
     fn sync_panel(&mut self, cx: &mut Context<Self>) {
         let model = self.active_model().cloned();
-        let root = self.active.as_ref().and_then(|id| self.views.get(id)).and_then(|v| self.projects.get(v.project_ix)).map(|p| p.path.clone());
+        let root = self.active.as_ref().and_then(|id| self.views.get(id)).and_then(|v| self.projects.get(v.project_ix)).map(|p| self.work_root(&p.path));
         if let Some(root) = root {
             self.panel.update(cx, |p, cx| p.set_session(model, root, cx));
         }
@@ -720,7 +723,8 @@ impl Workbench {
                 p.expanded = true;
             }
         }
-        // 置顶项目排前;之后下面的循环按路径恢复已打开会话的项目下标
+        // 工作区先并进项目列表,再让置顶项目排前;之后下面的循环按路径恢复已打开会话的项目下标
+        self.ui_state.apply_workspaces(&mut projects);
         self.ui_state.apply_projects(&mut projects);
         self.projects = projects;
         self.apply_ui_state();

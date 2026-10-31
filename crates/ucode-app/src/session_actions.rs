@@ -108,8 +108,11 @@ impl Workbench {
         });
     }
 
-    /// 调试用:对当前会话打开重命名对话框(`UCODE_DIALOG=rename`)。
-    pub fn debug_open_rename(&mut self, window: &mut Window, cx: &mut Context<Self>) {
+    /// 调试用:按 `UCODE_DIALOG` 打开对话框。`rename` 重命名当前会话,`workspace` 新建工作区。
+    pub fn debug_open_dialog(&mut self, kind: &str, window: &mut Window, cx: &mut Context<Self>) {
+        if kind == "workspace" {
+            return self.new_workspace_dialog(window, cx);
+        }
         let Some(id) = self.active.clone() else { return };
         let title = self.projects.iter().flat_map(|p| p.sessions.iter()).find(|s| s.id == id).map(|s| s.title.clone()).unwrap_or_default();
         self.rename_session_dialog(&id, &title, window, cx);

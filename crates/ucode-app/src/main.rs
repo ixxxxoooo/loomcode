@@ -15,6 +15,7 @@ mod model;
 mod file_tree;
 mod git_status;
 mod ide;
+mod ide_chat_header;
 mod ide_gutter;
 mod ide_chrome;
 mod ide_tabs;
@@ -37,6 +38,8 @@ mod timeline;
 mod tool_card;
 mod ui;
 mod view_cache;
+mod workspace_actions;
+mod workspace_form;
 mod workbench;
 
 use gpui_kit::component::TitleBar;

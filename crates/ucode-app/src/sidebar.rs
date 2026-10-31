@@ -137,16 +137,18 @@ pub fn render(wb: &Workbench, cx: &mut Context<Workbench>) -> impl IntoElement {
                     // 过滤时强制展开,方便直接看到命中的会话
                     let expanded = p.expanded || filtering;
                     let pinned = wb.ui_state.pinned_projects.contains(&p.path);
-                    let menu = project_menu::build(cx.entity().downgrade(), p.path.clone(), p.name.clone(), pinned);
+                    let workspace = wb.ui_state.workspace_by_dir(&p.path).cloned();
+                    let menu = project_menu::build(cx.entity().downgrade(), p.path.clone(), p.name.clone(), pinned, workspace.is_some());
                     v_flex()
                         .child(
                             h_flex().id(SharedString::from(format!("proj-{pi}"))).h(px(28.)).px_1().gap_1p5().items_center().rounded(px(6.)).cursor_pointer()
                                 .hover(|d| d.bg(t.sidebar_accent))
                                 .on_click(cx.listener(move |this, _, _, cx| this.toggle_project(pi, cx)))
                                 .child(icon(if expanded { IconName::ChevronDown } else { IconName::ChevronRight }, 12., t.muted_foreground))
-                                .child(icon(IconName::Folder, 14., t.muted_foreground))
+                                .child(icon(if workspace.is_some() { IconName::Folders } else { IconName::Folder }, 14., t.muted_foreground))
                                 .child(div().flex_1().truncate().text_size(px(13.)).font_weight(FontWeight::MEDIUM).child(p.name.clone()))
                                 .when(pinned, |d| d.child(icon(IconName::Pin, 11., t.muted_foreground)))
+                                .when_some(workspace.as_ref(), |d, w| d.child(div().text_size(px(11.)).text_color(t.muted_foreground).child(format!("{} 个文件夹", w.folders.len()))))
                                 .when_some(p.branch.clone(), |d, b| {
                                     d.child(h_flex().gap_0p5().items_center().text_size(px(11.)).text_color(t.muted_foreground)
                                         .child(icon(IconName::GitBranch, 11., t.muted_foreground)).child(b))

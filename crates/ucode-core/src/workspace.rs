@@ -74,6 +74,33 @@ impl WorkspaceDef {
         Ok(())
     }
 
+    /// 添加一个文件夹;已存在(忽略末尾斜杠)时不重复添加。
+    ///
+    /// 返回:是否真的添加了。
+    pub fn add_folder(&mut self, path: &str) -> bool {
+        let key = path.trim_end_matches('/');
+        if key.is_empty() || self.folders.iter().any(|f| f.trim_end_matches('/') == key) {
+            return false;
+        }
+        self.folders.push(key.to_string());
+        true
+    }
+
+    /// 移除指定下标的文件夹;下标越界时忽略。
+    pub fn remove_folder(&mut self, ix: usize) {
+        if ix < self.folders.len() {
+            self.folders.remove(ix);
+        }
+    }
+
+    /// 把指定下标的文件夹设为主目录(移到最前);下标越界时忽略。
+    pub fn make_primary(&mut self, ix: usize) {
+        if ix < self.folders.len() {
+            let f = self.folders.remove(ix);
+            self.folders.insert(0, f);
+        }
+    }
+
     /// 追加到系统提示末尾的工作区说明,告诉 claude 真实文件夹在哪。
     pub fn system_prompt(&self) -> String {
         let list: String = self.folders.iter().enumerate().map(|(i, f)| format!("- {f}{}\n", if i == 0 { "(主目录)" } else { "" })).collect();
@@ -100,6 +127,22 @@ mod tests {
         assert!(ws("  ", &["/a"]).validate().is_err());
         assert!(ws("x", &[]).validate().is_err());
         assert!(ws("x", &["/a", "/a/"]).validate().unwrap_err().contains("重复"));
+    }
+
+    #[test]
+    fn 文件夹增删与设主目录() {
+        let mut w = ws("x", &["/a"]);
+        assert!(w.add_folder("/b/"));
+        assert!(!w.add_folder("/b"), "忽略末尾斜杠后重复");
+        assert!(!w.add_folder("/"), "根路径去斜杠后为空,拒绝");
+        assert_eq!(w.folders, ["/a", "/b"]);
+        w.make_primary(1);
+        assert_eq!(w.folders, ["/b", "/a"]);
+        w.remove_folder(9);
+        w.make_primary(9);
+        assert_eq!(w.folders.len(), 2);
+        w.remove_folder(0);
+        assert_eq!(w.folders, ["/a"]);
     }
 
     #[test]
