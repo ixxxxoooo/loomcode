@@ -907,7 +907,20 @@ impl Workbench {
         chat_panel(self.chat_parts(), cx)
     }
 
-    fn status_bar(&self, cx: &mut Context<Self>) -> impl IntoElement {
+    /// 设置页的标题栏:整窗设置,左侧返回。
+    fn settings_title_bar(&self, cx: &mut Context<Self>) -> impl IntoElement {
+        let t = cx.theme().clone();
+        TitleBar::new().child(
+            h_flex().w_full().items_center().gap_1()
+                .child(Button::new("st-back").small().ghost().icon(IconName::ArrowLeft).label("返回")
+                    .on_click(cx.listener(|this, _, _, cx| this.set_page(Page::Chat, cx))))
+                .child(div().flex_1().flex().justify_center().text_size(px(13.)).text_color(t.muted_foreground).child("设置"))
+                .when_some(dev_badge(cx), |d, b| d.child(b)),
+        )
+    }
+
+    /// 底部状态栏:只在 IDE(融合视图与独立窗口)里显示,Agent 窗口没有。
+    pub fn status_bar(&self, cx: &App) -> AnyElement {
         let t = cx.theme().clone();
         let (branch, mode, usage) = match self.active.as_ref().and_then(|id| self.views.get(id)) {
             Some(v) => {
@@ -926,6 +939,7 @@ impl Workbench {
                         .when_some(mode, |d, m| d.child(div().child(format!("权限:{}", m.label()))))
                         .when_some(usage.filter(|u| u.context_size > 0), |d, u| d.child(div().child(format!("上下文 {:.0}% · ${:.2}", u.context_ratio() * 100., u.cost_usd))))),
             )
+            .into_any_element()
     }
 }
 
@@ -953,6 +967,8 @@ pub fn chat_panel(parts: Option<(Entity<SessionModel>, Entity<Composer>)>, cx: &
 impl Render for Workbench {
     fn render(&mut self, window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
         let t = cx.theme().clone();
+        // 设置是整窗页面:隐藏侧栏、右侧面板与状态栏
+        let full_settings = self.page == Page::Settings;
         let center = match self.page {
             Page::Chat if self.ide => h_flex().size_full()
                 .child(div().flex_1().min_w_0().h_full().child(self.ide_view.clone()))
@@ -970,7 +986,10 @@ impl Render for Workbench {
             .on_action(cx.listener(|this, _: &ToggleLeft, _, cx| { this.left_open = !this.left_open; cx.notify(); }))
             .on_action(cx.listener(|this, _: &ToggleRight, _, cx| { this.right_open = !this.right_open; cx.notify(); }))
             .on_action(cx.listener(|this, _: &TogglePalette, window, cx| this.toggle_palette(window, cx)))
-            .on_action(cx.listener(|this, _: &OpenSettings, _, cx| this.set_page(Page::Settings, cx)))
+            .on_action(cx.listener(|this, _: &OpenSettings, _, cx| {
+                let next = if this.page == Page::Settings { Page::Chat } else { Page::Settings };
+                this.set_page(next, cx)
+            }))
             .on_action(cx.listener(|this, _: &NewSession, window, cx| this.new_session(this.target_project(), window, cx)))
             .on_action(cx.listener(|this, _: &SaveFile, _, cx| this.save_ide(cx)))
             .on_action(cx.listener(|this, _: &ToggleIde, window, cx| this.toggle_ide(window, cx)))
@@ -982,14 +1001,14 @@ impl Render for Workbench {
             .size_full()
             .bg(t.background)
             .text_color(t.foreground)
-            .child(self.title_bar(cx))
+            .child(if full_settings { self.settings_title_bar(cx).into_any_element() } else { self.title_bar(cx).into_any_element() })
             .child(
                 h_flex().flex_1().min_h_0().w_full()
-                    .when(self.left_open, |d| d.child(sidebar::render(self, cx)))
+                    .when(self.left_open && !full_settings, |d| d.child(sidebar::render(self, cx)))
                     .child(div().flex_1().min_w_0().h_full().child(center))
                     .when(self.right_open && self.page == Page::Chat, |d| d.child(div().w(px(self.right_w)).h_full().flex_none().border_l_1().border_color(t.border).child(self.panel.clone()))),
             )
-            .child(self.status_bar(cx))
+            .when(self.ide && self.page == Page::Chat, |d| d.child(self.status_bar(cx)))
             .when_some(self.palette.clone(), |d, p| d.child(p))
     }
 }

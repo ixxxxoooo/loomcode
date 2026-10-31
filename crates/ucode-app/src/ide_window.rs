@@ -87,9 +87,9 @@ impl Render for IdeWindow {
     fn render(&mut self, _window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
         self.sync_state(cx);
         let t = cx.theme().clone();
-        let (parts, title) = {
+        let (parts, title, status) = {
             let wb = self.wb.read(cx);
-            (wb.chat_parts(), wb.active_model().map(|m| m.read(cx).state.title.clone()).unwrap_or_else(|| "UCode".into()))
+            (wb.chat_parts(), wb.active_model().map(|m| m.read(cx).state.title.clone()).unwrap_or_else(|| "UCode".into()), wb.status_bar(cx))
         };
         v_flex()
             .key_context("IdeWindow")
@@ -119,5 +119,6 @@ impl Render for IdeWindow {
                     .child(div().flex_1().min_w_0().h_full().child(self.ide.clone()))
                     .child(div().w(px(420.)).h_full().flex_none().border_l_1().border_color(t.border).child(chat_panel(parts, cx))),
             )
+            .child(status)
     }
 }
