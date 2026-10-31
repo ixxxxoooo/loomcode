@@ -27,6 +27,20 @@ pub fn validate_name(name: &str) -> Result<(), String> {
 }
 
 impl RightPanel {
+    /// 重新读取目录,并在后台线程刷新 Git 状态(不阻塞界面)。
+    pub fn reload_files(&mut self, cx: &mut Context<Self>) {
+        self.files.reload();
+        let root = self.files.root_path().to_path_buf();
+        cx.spawn(async move |this, cx| {
+            let git = cx.background_spawn(async move { crate::git_status::GitStatus::read(&root) }).await;
+            let _ = this.update(cx, |this, cx| {
+                this.files.set_git(git);
+                cx.notify();
+            });
+        })
+        .detach();
+    }
+
     /// 弹出「新建文件 / 文件夹」输入框。
     ///
     /// 参数:`dir` 父目录;`is_dir` 为真时新建文件夹。
@@ -40,7 +54,7 @@ impl RightPanel {
             let res = if is_dir { std::fs::create_dir_all(&target) } else { std::fs::write(&target, "") };
             res.map_err(|e| format!("创建失败:{e}"))?;
             this.files.expand_to(&target);
-            this.files.reload();
+            this.reload_files(cx);
             if !is_dir {
                 cx.emit(crate::right_panel::PanelEvent::OpenFile(target));
             }
@@ -51,13 +65,13 @@ impl RightPanel {
     /// 弹出重命名输入框。
     pub fn rename_dialog(&mut self, path: PathBuf, window: &mut Window, cx: &mut Context<Self>) {
         let old = path.file_name().map(|n| n.to_string_lossy().to_string()).unwrap_or_default();
-        self.name_dialog("重命名", old, window, cx, move |this, name, _| {
+        self.name_dialog("重命名", old, window, cx, move |this, name, cx| {
             let target = path.with_file_name(name.trim());
             if target != path && target.exists() {
                 return Err("同名文件已存在".into());
             }
             std::fs::rename(&path, &target).map_err(|e| format!("重命名失败:{e}"))?;
-            this.files.reload();
+            this.reload_files(cx);
             Ok(())
         });
     }
@@ -108,7 +122,7 @@ impl RightPanel {
                     match res {
                         Ok(()) => {
                             let _ = panel.update(cx, |this, cx| {
-                                this.files.reload();
+                                this.reload_files(cx);
                                 cx.notify();
                             });
                         }

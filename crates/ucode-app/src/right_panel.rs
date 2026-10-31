@@ -273,6 +273,7 @@ impl RightPanel {
         self.open_changes.clear();
         self.root = root.clone();
         self.files.set_root(root);
+        self.reload_files(cx);
         cx.notify();
     }
 

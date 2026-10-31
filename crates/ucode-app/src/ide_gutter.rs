@@ -36,29 +36,29 @@ pub fn parse_hunks(diff: &str) -> Vec<(Range<usize>, GitMark)> {
 }
 
 /// 读取文件相对 HEAD 的改动;未跟踪文件视为整文件新增,非仓库返回空。
-fn read_hunks(path: &Path, line_count: usize) -> Vec<(Range<usize>, GitMark)> {
+pub fn read_hunks(path: &Path) -> Vec<(Range<usize>, GitMark)> {
     let (Some(dir), Some(name)) = (path.parent(), path.file_name()) else { return Vec::new() };
     let git = |args: &[&str]| Command::new("git").arg("-C").arg(dir).args(args).arg(name).output().ok().filter(|o| o.status.success());
     let tracked = git(&["ls-files", "--error-unmatch", "--"]).is_some();
     if !tracked {
         // 不在仓库里也会走到这里:再确认一下确实是仓库
         let in_repo = Command::new("git").arg("-C").arg(dir).args(["rev-parse", "--is-inside-work-tree"]).output().is_ok_and(|o| o.status.success());
-        return if in_repo { vec![(0..line_count, GitMark::Added)] } else { Vec::new() };
+        return if in_repo { vec![(0..usize::MAX / 2, GitMark::Added)] } else { Vec::new() };
     }
     git(&["diff", "-U0", "HEAD", "--"]).map(|o| parse_hunks(&String::from_utf8_lossy(&o.stdout))).unwrap_or_default()
 }
 
-/// 刷新一个文档的 Git 行标记。
+/// 把 `hunks` 画到文档上:每个命中行铺一层淡色底。
 ///
-/// 参数:`editor` 文档编辑器;`slot` 该文档持有的装饰集合(首次为 `None`);`path` 文件路径。
-pub fn refresh(editor: &Entity<EditorState>, slot: &mut Option<RangeDecorationCollection>, path: &Path, cx: &mut App) {
+/// 参数:`editor` 文档编辑器;`slot` 该文档持有的装饰集合(首次为 `None`);`hunks` 来自 [`read_hunks`]。
+pub fn apply(editor: &Entity<EditorState>, slot: &mut Option<RangeDecorationCollection>, hunks: Vec<(Range<usize>, GitMark)>, cx: &mut App) {
     let text = editor.read(cx).value().to_string();
     let mut starts = vec![0usize];
     starts.extend(text.match_indices('\n').map(|(i, _)| i + 1));
     let lines = starts.len();
     let end_of = |ix: usize| starts.get(ix + 1).map_or(text.len(), |s| s - 1).max(starts[ix]);
     let t = cx.theme().clone();
-    let decos: Vec<RangeDecoration> = read_hunks(path, lines)
+    let decos: Vec<RangeDecoration> = hunks
         .into_iter()
         .flat_map(|(range, mark)| {
             let color = match mark {
@@ -106,9 +106,9 @@ mod tests {
         sh(&["commit", "-q", "-m", "x"]);
         std::fs::write(dir.join("a.txt"), "1\nB\n3\n4\n").unwrap();
         std::fs::write(dir.join("new.txt"), "x\ny\n").unwrap();
-        let h = read_hunks(&dir.join("a.txt"), 4);
+        let h = read_hunks(&dir.join("a.txt"));
         assert_eq!(h, vec![(1..2, GitMark::Modified), (3..4, GitMark::Added)]);
-        assert_eq!(read_hunks(&dir.join("new.txt"), 2), vec![(0..2, GitMark::Added)]);
+        assert_eq!(read_hunks(&dir.join("new.txt")), vec![(0..usize::MAX / 2, GitMark::Added)]);
         let _ = std::fs::remove_dir_all(&dir);
     }
 }

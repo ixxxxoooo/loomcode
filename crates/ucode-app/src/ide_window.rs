@@ -53,6 +53,7 @@ impl IdeWindow {
         panel.update(cx, |p, cx| {
             p.show_tabs = false;
             p.set_tab(RightTab::Files, cx);
+            p.reload_files(cx);
         });
         let ide = cx.new(|_| IdeView::new());
         ide.update(cx, |v, cx| {
@@ -123,7 +124,7 @@ impl IdeWindow {
         self.ide.update(cx, |v, cx| v.save(cx));
         // 保存后刷新文件树的 Git 标记
         self.panel.update(cx, |p, cx| {
-            p.files.reload();
+            p.reload_files(cx);
             cx.notify();
         });
     }

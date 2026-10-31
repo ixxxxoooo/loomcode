@@ -51,6 +51,7 @@ impl IdeView {
     fn check_disk(&mut self, window: &mut Window, cx: &mut Context<Self>) {
         let paths: Vec<PathBuf> = self.docs.keys().cloned().collect();
         let mut changed = false;
+        let mut reloaded = Vec::new();
         for path in paths {
             let disk = std::fs::metadata(&path).and_then(|m| m.modified()).ok();
             let Some(doc) = self.docs.get_mut(&path) else { continue };
@@ -74,10 +75,13 @@ impl IdeView {
                             e.set_cursor_position(pos, window, cx);
                         }
                     });
-                    crate::ide_gutter::refresh(&editor, &mut doc.marks, &path, cx);
+                    reloaded.push(path.clone());
                     changed = true;
                 }
             }
+        }
+        for p in reloaded {
+            self.refresh_marks(&p, cx);
         }
         if changed {
             cx.notify();

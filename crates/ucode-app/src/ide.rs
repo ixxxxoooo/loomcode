@@ -82,6 +82,7 @@ impl IdeView {
             self.docs.remove(&old);
         }
         self.focus_active(window, cx);
+        self.refresh_marks(&path, cx);
         cx.notify();
     }
 
@@ -105,6 +106,21 @@ impl IdeView {
         }
     }
 
+    /// 在后台线程重新计算某文件的 Git 行标记,完成后铺到编辑器上。
+    pub fn refresh_marks(&mut self, path: &Path, cx: &mut Context<Self>) {
+        let path = path.to_path_buf();
+        cx.spawn(async move |this, cx| {
+            let p = path.clone();
+            let hunks = cx.background_spawn(async move { crate::ide_gutter::read_hunks(&p) }).await;
+            let _ = this.update(cx, |this, cx| {
+                if let Some(doc) = this.docs.get_mut(&path) {
+                    crate::ide_gutter::apply(&doc.editor, &mut doc.marks, hunks, cx);
+                }
+            });
+        })
+        .detach();
+    }
+
     /// 保存当前文件到磁盘。
     pub fn save(&mut self, cx: &mut Context<Self>) {
         let Some(path) = self.tabs.active().map(Path::to_path_buf) else { return };
@@ -117,10 +133,10 @@ impl IdeView {
                 doc.mtime = std::fs::metadata(&path).and_then(|m| m.modified()).ok();
                 self.note = None;
                 self.tabs.pin(&path);
-                crate::ide_gutter::refresh(&doc.editor, &mut doc.marks, &path, cx);
             }
             Err(e) => self.note = Some(format!("保存失败:{e}")),
         }
+        self.refresh_marks(&path, cx);
         cx.notify();
     }
 
@@ -255,8 +271,7 @@ fn load(path: &Path, window: &mut Window, cx: &mut Context<IdeView>) -> Result<I
         }
         cx.notify();
     });
-    let mut marks = None;
-    crate::ide_gutter::refresh(&editor, &mut marks, path, cx);
+    let marks = None;
     let mtime = meta.modified().ok();
     Ok(IdeDoc { editor, saved: true, crlf, mtime, stale: false, marks, _sub: sub })
 }

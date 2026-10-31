@@ -33,6 +33,16 @@ pub struct FileTree {
 pub use crate::file_lang::{Node, language_for, read_dir_sorted};
 
 impl FileTree {
+    /// 项目根目录。
+    pub fn root_path(&self) -> &Path {
+        &self.root
+    }
+
+    /// 写入后台读到的 Git 状态。
+    pub fn set_git(&mut self, git: GitStatus) {
+        self.git = git;
+    }
+
     /// 新建条目时的默认父目录:选中的目录,或选中文件所在目录,否则项目根。
     pub fn target_dir(&self) -> PathBuf {
         match &self.selected {
@@ -90,7 +100,6 @@ impl FileTree {
 
     /// 重新读取根目录与所有已展开目录。
     pub fn reload(&mut self) {
-        self.git = GitStatus::read(&self.root);
         self.children.clear();
         self.children.insert(self.root.clone(), read_dir_sorted(&self.root));
         for dir in self.expanded.clone() {
@@ -253,7 +262,7 @@ impl FileTree {
                                     0 => this.new_entry_dialog(dir, false, window, cx),
                                     1 => this.new_entry_dialog(dir, true, window, cx),
                                     2 => this.files.collapse_all(),
-                                    _ => this.files.reload(),
+                                    _ => this.reload_files(cx),
                                 }
                                 cx.notify();
                             }))
