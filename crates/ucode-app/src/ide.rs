@@ -118,8 +118,18 @@ impl Render for IdeView {
     fn render(&mut self, _window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
         let t = cx.theme().clone();
         let Some(doc) = &self.doc else {
-            let hint = self.note.clone().unwrap_or_else(|| "在左侧「文件」面板里选择一个文件".into());
-            return empty_state(IconName::Code, "IDE", &hint, cx).into_any_element();
+            if let Some(note) = self.note.clone() {
+                return empty_state(IconName::Code, "无法打开", &note, cx).into_any_element();
+            }
+            let hints = [("显示 / 隐藏侧栏", "⌘B"), ("显示 / 隐藏对话栏", "⌥⌘B"), ("保存文件", "⌘S"), ("切换到 Agents Window", "⇧⌘E")];
+            return v_flex().size_full().items_center().justify_center().gap_4().bg(t.background)
+                .child(icon(IconName::Code, 40., t.muted_foreground))
+                .child(v_flex().gap_1().w(px(260.)).children(hints.into_iter().map(|(label, key)| {
+                    h_flex().text_size(px(12.)).text_color(t.muted_foreground)
+                        .child(div().flex_1().child(label))
+                        .child(div().child(key))
+                })))
+                .into_any_element();
         };
         let shown = doc.path.strip_prefix(&self.root).unwrap_or(&doc.path).display().to_string();
         let saved = doc.saved;

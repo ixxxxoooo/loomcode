@@ -1,18 +1,27 @@
-//! IDE 独立窗口:文件树 + 单文件编辑器 + 同一会话的精简对话栏。
+//! IDE 窗口:活动栏 + 文件树 + 单文件编辑器 + 同一会话的对话栏 + 状态栏。
 //! 与 Agent 窗口共用同一个 `Workbench` 实体(会话、设置、项目),因此对话实时同步。
+//! 融合模式下它整窗替换 Agent 布局;独立模式下它是一个单独的窗口。
 //!
 //! @author ixxxxoooo
 
 use crate::ide::IdeView;
-use crate::ui::dev_badge;
 use crate::right_panel::{PanelEvent, RightPanel};
-use crate::workbench::{Page, RightTab, SaveFile, ToggleIde, Workbench, chat_panel};
+use crate::ui::{dev_badge, icon};
+use crate::workbench::{Page, RightTab, SaveFile, ToggleIde, ToggleLeft, ToggleRight, Workbench, chat_panel};
 use gpui_kit::assets::IconName;
 use gpui_kit::component::TitleBar;
 use gpui_kit::component::button::{Button, ButtonVariants};
-use gpui_kit::component::{ActiveTheme, Sizable, h_flex, v_flex};
+use gpui_kit::component::{ActiveTheme, Selectable, Sizable, h_flex, v_flex};
 use gpui_kit::prelude::FluentBuilder as _;
 use gpui_kit::*;
+
+/// 活动栏条目:(图标, 提示, 对应的面板分段)。
+const ACTIVITIES: [(IconName, &str, RightTab); 4] = [
+    (IconName::Folder, "文件", RightTab::Files),
+    (IconName::GitBranch, "改动", RightTab::Changes),
+    (IconName::Terminal, "终端", RightTab::Terminal),
+    (IconName::ListTodo, "计划", RightTab::Plan),
+];
 
 /// IDE 窗口的根视图。
 pub struct IdeWindow {
@@ -22,6 +31,8 @@ pub struct IdeWindow {
     focus: FocusHandle,
     /// 文件面板是否展开
     left_open: bool,
+    /// 对话栏是否展开
+    chat_open: bool,
     /// 面板已同步到的会话 id
     synced: Option<String>,
     _subs: Vec<Subscription>,
@@ -31,24 +42,23 @@ impl IdeWindow {
     /// 创建窗口视图。`demo`、`root` 由调用方传入,避免在工作台更新期间回读它。
     pub fn new(wb: Entity<Workbench>, demo: bool, root: String, window: &mut Window, cx: &mut Context<Self>) -> Self {
         let panel = cx.new(|cx| RightPanel::new(root.clone(), demo, window, cx));
-        panel.update(cx, |p, cx| p.set_tab(RightTab::Files, cx));
+        panel.update(cx, |p, cx| {
+            p.show_tabs = false;
+            p.set_tab(RightTab::Files, cx);
+        });
         let ide = cx.new(|_| IdeView::new());
         ide.update(cx, |v, cx| v.set_root(root, cx));
         let mut subs = Vec::new();
         // 文件树点选 → 编辑器打开
         subs.push(cx.subscribe_in(&panel, window, |this, _, ev: &PanelEvent, window, cx| match ev {
-            PanelEvent::OpenFile(path) => {
-                let path = path.clone();
-                this.panel.update(cx, |p, _| p.files.reveal(&path));
-                this.ide.update(cx, |v, cx| v.open(path, window, cx));
-            }
+            PanelEvent::OpenFile(path) => this.open_file(path.clone(), window, cx),
         }));
         // 工作台变化(切换会话等)→ 同步面板与根目录
         subs.push(cx.observe(&wb, |this, _, cx| this.sync(cx)));
         let focus = cx.focus_handle();
         window.focus(&focus, cx);
         // 此时工作台可能正处于更新中,不在这里回读它;首次渲染时再同步
-        Self { wb, panel, ide, focus, left_open: true, synced: None, _subs: subs }
+        Self { wb, panel, ide, focus, left_open: true, chat_open: true, synced: None, _subs: subs }
     }
 
     /// 让面板与根目录跟随工作台当前会话。
@@ -75,7 +85,7 @@ impl IdeWindow {
         true
     }
 
-    /// 在编辑器里打开文件(融合模式下由工作台转发)。
+    /// 在编辑器里打开文件(文件树点选,或融合模式下由工作台转发)。
     pub fn open_file(&mut self, path: std::path::PathBuf, window: &mut Window, cx: &mut Context<Self>) {
         self.panel.update(cx, |p, _| p.files.reveal(&path));
         self.ide.update(cx, |v, cx| v.open(path, window, cx));
@@ -99,43 +109,75 @@ impl IdeWindow {
             let _ = handle.update(cx, |_, window, _| window.activate_window());
         }
     }
+
+    /// 标题栏:左侧面板开关、居中的项目名搜索框、右侧对话栏开关 / 设置 / 回 Agent。
+    fn title_bar(&self, project: String, fused: bool, cx: &mut Context<Self>) -> impl IntoElement {
+        let t = cx.theme().clone();
+        TitleBar::new().child(
+            h_flex().w_full().items_center().gap_1()
+                .child(Button::new("iw-left").small().ghost().icon(IconName::PanelLeft).selected(self.left_open).tooltip("侧栏(⌘B)")
+                    .on_click(cx.listener(|this, _, _, cx| { this.left_open = !this.left_open; cx.notify(); })))
+                .when_some(dev_badge(cx), |d, b| d.child(b))
+                .child(div().flex_1().flex().justify_center().child(
+                    h_flex().w(px(420.)).max_w_full().h(px(26.)).px_3().gap_2().items_center().justify_center().rounded(px(7.))
+                        .border_1().border_color(t.border).bg(t.muted).text_size(px(12.)).text_color(t.muted_foreground)
+                        .child(icon(IconName::Search, 13., t.muted_foreground))
+                        .child(project),
+                ))
+                .child(Button::new("iw-chat").small().ghost().icon(IconName::PanelRight).selected(self.chat_open).tooltip("对话栏(⌥⌘B)")
+                    .on_click(cx.listener(|this, _, _, cx| { this.chat_open = !this.chat_open; cx.notify(); })))
+                .child(Button::new("iw-settings").small().ghost().icon(IconName::Settings).tooltip("设置")
+                    .on_click(cx.listener(|this, _, _, cx| {
+                        this.wb.update(cx, |wb, cx| wb.set_page(Page::Settings, cx));
+                        this.back_to_agent(cx);
+                    })))
+                .child(Button::new("iw-agent").small().primary().label("Agents Window").icon(if fused { IconName::MessageSquare } else { IconName::ExternalLink }).tooltip("切换到 Agents Window(⇧⌘E)")
+                    .on_click(cx.listener(|this, _, _, cx| this.back_to_agent(cx)))),
+        )
+    }
+
+    /// 最左侧的窄活动栏:切换文件 / 改动 / 终端 / 计划。
+    fn activity_bar(&self, cx: &mut Context<Self>) -> impl IntoElement {
+        let t = cx.theme().clone();
+        let cur = self.panel.read(cx).tab;
+        v_flex().w(px(44.)).h_full().flex_none().items_center().pt_2().gap_1().border_r_1().border_color(t.border).bg(t.sidebar)
+            .children(ACTIVITIES.into_iter().map(|(ic, tip, tab)| {
+                Button::new(SharedString::from(format!("act-{}", tab.key()))).ghost().icon(ic).tooltip(tip).selected(cur == tab && self.left_open)
+                    .on_click(cx.listener(move |this, _, _, cx| {
+                        this.left_open = true;
+                        this.panel.update(cx, |p, cx| p.set_tab(tab, cx));
+                        cx.notify();
+                    }))
+            }))
+    }
 }
 
 impl Render for IdeWindow {
     fn render(&mut self, _window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
         self.sync_state(cx);
         let t = cx.theme().clone();
-        let (parts, title, status, fused, branch, demo) = {
+        let (parts, project, status, fused, branch, demo) = {
             let wb = self.wb.read(cx);
-            (wb.chat_parts(), wb.active_model().map(|m| m.read(cx).state.title.clone()).unwrap_or_else(|| "UCode".into()), wb.status_bar(cx), wb.settings.fused_ide, wb.active_branch(), wb.demo)
+            let project = wb.active_project_path().map(|p| ucode_core::project_name_from_path(&p)).unwrap_or_else(|| "UCode".into());
+            (wb.chat_parts(), project, wb.status_bar(cx), wb.settings.fused_ide, wb.active_branch(), wb.demo)
         };
         v_flex()
             .key_context("IdeWindow")
             .track_focus(&self.focus)
-            .on_action(cx.listener(|this, _: &SaveFile, _, cx| this.ide.update(cx, |v, cx| v.save(cx))))
+            .on_action(cx.listener(|this, _: &SaveFile, _, cx| this.save(cx)))
             .on_action(cx.listener(|this, _: &ToggleIde, _, cx| this.back_to_agent(cx)))
+            .on_action(cx.listener(|this, _: &ToggleLeft, _, cx| { this.left_open = !this.left_open; cx.notify(); }))
+            .on_action(cx.listener(|this, _: &ToggleRight, _, cx| { this.chat_open = !this.chat_open; cx.notify(); }))
             .size_full()
             .bg(t.background)
             .text_color(t.foreground)
-            .child(TitleBar::new().child(
-                h_flex().w_full().items_center().gap_1()
-                    .when_some(dev_badge(cx), |d, b| d.child(b))
-                    .child(Button::new("iw-left").small().ghost().icon(if self.left_open { IconName::PanelLeftClose } else { IconName::PanelLeftOpen })
-                        .on_click(cx.listener(|this, _, _, cx| { this.left_open = !this.left_open; cx.notify(); })))
-                    .child(div().flex_1().flex().justify_center().text_size(px(13.)).text_color(t.muted_foreground).child(format!("IDE · {title}")))
-                    .child(Button::new("iw-settings").small().ghost().icon(IconName::Settings).tooltip("设置")
-                        .on_click(cx.listener(|this, _, _, cx| {
-                            this.wb.update(cx, |wb, cx| wb.set_page(Page::Settings, cx));
-                            this.back_to_agent(cx);
-                        })))
-                    .child(Button::new("iw-agent").small().primary().label("Agents Window").icon(if fused { IconName::MessageSquare } else { IconName::ExternalLink }).tooltip("回到 Agent 窗口(⇧⌘E)")
-                        .on_click(cx.listener(|this, _, _, cx| this.back_to_agent(cx)))),
-            ))
+            .child(self.title_bar(project, fused, cx))
             .child(
                 h_flex().flex_1().min_h_0().w_full()
-                    .when(self.left_open, |d| d.child(div().w(px(280.)).h_full().flex_none().border_r_1().border_color(t.border).child(self.panel.clone())))
+                    .child(self.activity_bar(cx))
+                    .when(self.left_open, |d| d.child(div().w(px(260.)).h_full().flex_none().border_r_1().border_color(t.border).child(self.panel.clone())))
                     .child(div().flex_1().min_w_0().h_full().child(self.ide.clone()))
-                    .child(div().w(px(420.)).h_full().flex_none().border_l_1().border_color(t.border).child(chat_panel(parts, branch, demo, cx))),
+                    .when(self.chat_open, |d| d.child(div().w(px(420.)).h_full().flex_none().border_l_1().border_color(t.border).child(chat_panel(parts, branch, demo, cx)))),
             )
             .child(status)
     }

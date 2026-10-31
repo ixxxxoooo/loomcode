@@ -135,6 +135,8 @@ impl EventEmitter<PanelEvent> for RightPanel {}
 
 pub struct RightPanel {
     pub tab: RightTab,
+    /// 是否显示顶部分段栏(IDE 窗口用活动栏切换,不显示)
+    pub show_tabs: bool,
     model: Option<Entity<SessionModel>>,
     _sub: Option<Subscription>,
     /// 「改动」里已展开 Diff 的文件
@@ -180,6 +182,7 @@ impl RightPanel {
         });
         Self {
             tab: RightTab::Changes,
+            show_tabs: true,
             model: None,
             _sub: None,
             open_changes: HashSet::new(),
@@ -527,7 +530,7 @@ impl Render for RightPanel {
             RightTab::Output => self.output_view(&items, cx),
         };
         v_flex().size_full().bg(t.background)
-            .child(self.tab_bar(change_count, cx))
+            .when(self.show_tabs, |d| d.child(self.tab_bar(change_count, cx)))
             .child(div().flex_1().min_h_0().child(body))
     }
 }

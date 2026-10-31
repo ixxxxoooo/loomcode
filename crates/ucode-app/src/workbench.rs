@@ -923,18 +923,19 @@ impl Workbench {
     /// 底部状态栏:只在 IDE(融合视图与独立窗口)里显示,Agent 窗口没有。
     pub fn status_bar(&self, cx: &App) -> AnyElement {
         let t = cx.theme().clone();
-        let (branch, mode, usage) = match self.active.as_ref().and_then(|id| self.views.get(id)) {
+        let (name, branch, mode, usage) = match self.active.as_ref().and_then(|id| self.views.get(id)) {
             Some(v) => {
                 let st = &v.model.read(cx).state;
-                (self.projects.get(v.project_ix).and_then(|p| p.branch.clone()), Some(st.mode), Some(st.usage.clone()))
+                let p = self.projects.get(v.project_ix);
+                (p.map(|p| p.name.clone()), p.and_then(|p| p.branch.clone()), Some(st.mode), Some(st.usage.clone()))
             }
-            None => (None, None, None),
+            None => (None, None, None, None),
         };
         div().h(px(24.)).w_full().border_t_1().border_color(t.border).bg(t.sidebar).text_size(px(11.)).text_color(t.muted_foreground)
             .child(
                 StatusBar::new()
                     .left(h_flex().gap_3().px_2()
-                        .child(div().child(if self.demo { "演示模式" } else { "Claude Code" }))
+                        .when_some(name, |d, n| d.child(h_flex().gap_1().items_center().child(icon(IconName::Folder, 11., t.muted_foreground)).child(n)))
                         .when_some(branch, |d, b| d.child(h_flex().gap_1().items_center().child(icon(IconName::GitBranch, 11., t.muted_foreground)).child(b))))
                     .right(h_flex().gap_3().px_2()
                         .when_some(mode, |d, m| d.child(div().child(format!("权限:{}", m.label()))))
