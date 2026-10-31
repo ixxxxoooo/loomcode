@@ -15,6 +15,7 @@ mod model;
 mod file_tree;
 mod git_status;
 mod ide;
+mod ide_gutter;
 mod ide_chrome;
 mod ide_tabs;
 mod ide_window;

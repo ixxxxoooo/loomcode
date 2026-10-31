@@ -28,6 +28,8 @@ pub struct IdeDoc {
     pub saved: bool,
     /// 文件使用 CRLF 换行(仅用于状态显示)
     pub crlf: bool,
+    /// Git 行标记装饰集合(首次刷新时创建)
+    marks: Option<gpui_kit::component::input::RangeDecorationCollection>,
     _sub: Subscription,
 }
 
@@ -109,6 +111,7 @@ impl IdeView {
                 doc.saved = true;
                 self.note = None;
                 self.tabs.pin(&path);
+                crate::ide_gutter::refresh(&doc.editor, &mut doc.marks, &path, cx);
             }
             Err(e) => self.note = Some(format!("保存失败:{e}")),
         }
@@ -226,7 +229,9 @@ fn load(path: &Path, window: &mut Window, cx: &mut Context<IdeView>) -> Result<I
         }
         cx.notify();
     });
-    Ok(IdeDoc { editor, saved: true, crlf, _sub: sub })
+    let mut marks = None;
+    crate::ide_gutter::refresh(&editor, &mut marks, path, cx);
+    Ok(IdeDoc { editor, saved: true, crlf, marks, _sub: sub })
 }
 
 impl Render for IdeView {
