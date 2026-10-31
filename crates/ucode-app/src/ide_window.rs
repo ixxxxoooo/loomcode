@@ -55,7 +55,10 @@ impl IdeWindow {
             p.set_tab(RightTab::Files, cx);
         });
         let ide = cx.new(|_| IdeView::new());
-        ide.update(cx, |v, cx| v.set_root(root, cx));
+        ide.update(cx, |v, cx| {
+            v.set_root(root, cx);
+            v.start_watch(window, cx);
+        });
         let search = cx.new(|cx| crate::ide_search::SearchPanel::new(String::new(), window, cx));
         let mut subs = Vec::new();
         // 搜索结果点击 → 打开文件并跳行

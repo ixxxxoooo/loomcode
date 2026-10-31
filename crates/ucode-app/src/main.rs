@@ -24,6 +24,7 @@ mod ide_activity;
 mod ide_quick;
 mod ide_search;
 mod ide_status;
+mod ide_watch;
 mod ide_chat_header;
 mod ide_gutter;
 mod ide_chrome;

@@ -291,7 +291,12 @@ impl Workbench {
             cx.defer_in(window, |this, window, cx| this.toggle_ide(window, cx));
         }
         if let Ok(file) = std::env::var("UCODE_FILE") {
-            wb.open_file(file, window, cx);
+            if std::env::var("UCODE_IDE").is_ok_and(|v| v == "1") {
+                // IDE 窗口在上面的 defer 里才创建,文件要等它建好再打开(连续 defer 两次保证顺序)
+                cx.defer_in(window, move |_, window, cx| cx.defer_in(window, move |this, window, cx| this.open_file(file, window, cx)));
+            } else {
+                wb.open_file(file, window, cx);
+            }
         }
         if let Ok(page) = std::env::var("UCODE_PAGE") {
             match page.as_str() {

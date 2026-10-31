@@ -28,19 +28,23 @@ pub struct IdeDoc {
     pub saved: bool,
     /// 文件使用 CRLF 换行(仅用于状态显示)
     pub crlf: bool,
+    /// 上次读取 / 保存时磁盘文件的修改时间(用来发现外部改动)
+    pub mtime: Option<std::time::SystemTime>,
+    /// 磁盘上的文件在本标签有未保存修改时被改动过(冲突)
+    pub stale: bool,
     /// Git 行标记装饰集合(首次刷新时创建)
-    marks: Option<gpui_kit::component::input::RangeDecorationCollection>,
+    pub(crate) marks: Option<gpui_kit::component::input::RangeDecorationCollection>,
     _sub: Subscription,
 }
 
 /// 编辑器视图:持有所有标签的文档,不依赖工作台,可被任意窗口嵌入。
 pub struct IdeView {
     /// 当前项目根目录,用于显示相对路径
-    root: String,
-    docs: HashMap<PathBuf, IdeDoc>,
-    tabs: TabModel,
+    pub(crate) root: String,
+    pub(crate) docs: HashMap<PathBuf, IdeDoc>,
+    pub(crate) tabs: TabModel,
     /// 打不开文件或保存失败时的说明
-    note: Option<String>,
+    pub(crate) note: Option<String>,
 }
 
 impl IdeView {
@@ -109,6 +113,8 @@ impl IdeView {
         match std::fs::write(&path, text) {
             Ok(()) => {
                 doc.saved = true;
+                doc.stale = false;
+                doc.mtime = std::fs::metadata(&path).and_then(|m| m.modified()).ok();
                 self.note = None;
                 self.tabs.pin(&path);
                 crate::ide_gutter::refresh(&doc.editor, &mut doc.marks, &path, cx);
@@ -251,7 +257,8 @@ fn load(path: &Path, window: &mut Window, cx: &mut Context<IdeView>) -> Result<I
     });
     let mut marks = None;
     crate::ide_gutter::refresh(&editor, &mut marks, path, cx);
-    Ok(IdeDoc { editor, saved: true, crlf, marks, _sub: sub })
+    let mtime = meta.modified().ok();
+    Ok(IdeDoc { editor, saved: true, crlf, mtime, stale: false, marks, _sub: sub })
 }
 
 impl Render for IdeView {
@@ -280,7 +287,7 @@ impl Render for IdeView {
             .map(|p| (p.clone(), self.docs.get(p).is_some_and(|d| !d.saved), self.tabs.is_preview(p), *p == path))
             .collect();
         root.child(tab_bar(items, cx))
-            .child(breadcrumbs(&path, &self.root, doc.saved, self.note.clone(), cx))
+            .child(breadcrumbs(&path, &self.root, doc.saved, self.note.clone().or_else(|| doc.stale.then(|| "磁盘上的文件已被修改,点右侧刷新按钮载入(会丢弃你的修改)".to_string())), cx))
             .child(div().flex_1().min_h_0().child(Editor::new(&editor).bordered(false).appearance(false).size_full()))
             .into_any_element()
     }
