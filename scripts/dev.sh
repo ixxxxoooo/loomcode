@@ -16,7 +16,8 @@ cargo build -p ucode-app
 if [ -f "$PID_FILE" ]; then
   kill "$(cat "$PID_FILE")" 2>/dev/null || true
 fi
-pkill -f "$BIN" 2>/dev/null || true
+# 路径特征匹配(忽略大小写、相对/绝对路径),兼容手动 cargo run 起的实例
+pkill -if "target/debug/ucode( |\$)" 2>/dev/null || true
 sleep 0.5
 
 UCODE_DEV=1 nohup "$BIN" "$@" >"$PWD/target/dev.log" 2>&1 &
