@@ -27,6 +27,7 @@ mod ide_quick;
 mod ide_reference;
 mod ide_search;
 mod ide_status;
+mod ide_terminal;
 mod ide_watch;
 mod ide_chat_header;
 mod ide_gutter;

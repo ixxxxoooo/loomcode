@@ -55,6 +55,13 @@ impl IdeWindow {
             cx.notify();
         })).child(item("act-search".into(), IconName::Search, "搜索(⇧⌘F)", left_open && search_open)));
         for (ic, tip, tab) in ACTIVITIES.into_iter().skip(1) {
+            // 「终端」不在左栏显示,而是开关底部终端面板(和 VS Code 一致)
+            if tab == RightTab::Terminal {
+                let active = self.term_open;
+                col = col.child(div().w_full().on_mouse_down(MouseButton::Left, cx.listener(|this, _, window, cx| this.toggle_term(window, cx)))
+                    .child(item("act-terminal".into(), ic, "终端(⌃`)", active)));
+                continue;
+            }
             let active = left_open && !search_open && cur == tab;
             col = col.child(div().w_full().on_mouse_down(MouseButton::Left, cx.listener(move |this, _, _, cx| {
                 this.left_open = !(this.left_open && !this.search_open && this.panel.read(cx).tab == tab);

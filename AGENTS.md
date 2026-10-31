@@ -26,7 +26,7 @@ cargo run -p ucode-app               # 真实模式:读 ~/.claude/projects,按�
 scripts/package.sh [--dmg]           # 打包 dist/UCode.app
 ```
 
-调试用环境变量(只用于截图与验证):`UCODE_SESSION`、`UCODE_TAB`、`UCODE_FILE`、`UCODE_IDE`、`UCODE_PAGE`、`UCODE_URL`、`UCODE_SETTINGS`、`UCODE_PALETTE`、`UCODE_THEME`、`UCODE_DIALOG`、`UCODE_TERM_SELECT`、`UCODE_CHANGES`、`UCODE_WINDOW_SIZE`、`UCODE_PREFILL`、`UCODE_AUTOSEND`、`UCODE_TERM_CMD`、`UCODE_CANVAS_SKIP`、`UCODE_DEV`(开发版标识,由 `scripts/dev.sh` 设置)。截图:`scripts/shots.sh <场景id>`(输出 `/tmp/ucode-<id>.png`)。
+调试用环境变量(只用于截图与验证):`UCODE_SESSION`、`UCODE_TAB`、`UCODE_FILE`、`UCODE_IDE`、`UCODE_PAGE`、`UCODE_URL`、`UCODE_SETTINGS`、`UCODE_PALETTE`、`UCODE_THEME`、`UCODE_DIALOG`、`UCODE_TERM_SELECT`、`UCODE_CHANGES`、`UCODE_IDE_TERM`、`UCODE_WINDOW_SIZE`、`UCODE_PREFILL`、`UCODE_AUTOSEND`、`UCODE_TERM_CMD`、`UCODE_CANVAS_SKIP`、`UCODE_DEV`(开发版标识,由 `scripts/dev.sh` 设置)。截图:`scripts/shots.sh <场景id>`(输出 `/tmp/ucode-<id>.png`)。
 
 ## 开发流程规则(每次改动都必须执行)
 

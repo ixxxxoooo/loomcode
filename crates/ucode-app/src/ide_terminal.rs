@@ -1,0 +1,136 @@
+//! IDE 窗口底部的终端面板:当前项目的终端标签条 + 当前终端。
+//! 终端本体来自全局的 `ProjectTerminals`,和 Agent 窗口右侧面板共用同一份。
+//!
+//! @author ixxxxoooo
+
+use crate::ide_window::IdeWindow;
+use crate::right_panel::RightPanel;
+use crate::term_store::{ProjectTerminals, TermSel};
+use crate::terminal_view::TerminalView;
+use crate::ui::empty_state;
+use gpui_kit::assets::IconName;
+use gpui_kit::component::button::{Button, ButtonVariants};
+use gpui_kit::component::{ActiveTheme, Sizable, h_flex, v_flex};
+use gpui_kit::prelude::FluentBuilder as _;
+use gpui_kit::*;
+
+/// 标签上最多显示的字符数,超出截断。
+const MAX_TAB_CHARS: usize = 14;
+
+/// 底部终端面板。
+pub struct BottomTerminal {
+    /// 用它的根目录决定显示哪个项目的终端(与文件面板同步)
+    panel: Entity<RightPanel>,
+    _subs: Vec<Subscription>,
+}
+
+impl BottomTerminal {
+    pub fn new(panel: Entity<RightPanel>, cx: &mut Context<Self>) -> Self {
+        let hub = ProjectTerminals::hub(cx);
+        let subs = vec![cx.observe(&hub, |_, _, cx| cx.notify()), cx.observe(&panel, |_, _, cx| cx.notify())];
+        Self { panel, _subs: subs }
+    }
+
+    fn root(&self, cx: &App) -> String {
+        self.panel.read(cx).root.clone()
+    }
+
+    /// 聚焦当前终端:选中的是终端就用它,否则用最后一个;一个都没有就新建。
+    pub fn focus_or_spawn(&mut self, window: &mut Window, cx: &mut Context<Self>) {
+        let hub = ProjectTerminals::hub(cx);
+        let root = self.root(cx);
+        let target = {
+            let h = hub.read(cx);
+            match h.active(&root) {
+                TermSel::Term(id) => Some(id),
+                TermSel::Agent => h.tabs(&root).last().map(|t| t.id),
+            }
+        };
+        match target {
+            Some(id) => {
+                hub.update(cx, |h, cx| h.activate(&root, TermSel::Term(id), cx));
+                self.focus_tab(&hub, &root, id, window, cx);
+            }
+            None => self.new_terminal(window, cx),
+        }
+    }
+
+    /// 新建一个终端并聚焦。
+    pub fn new_terminal(&mut self, window: &mut Window, cx: &mut Context<Self>) {
+        let hub = ProjectTerminals::hub(cx);
+        let root = self.root(cx);
+        match hub.update(cx, |h, cx| h.spawn(&root, None, cx)) {
+            Ok(id) => self.focus_tab(&hub, &root, id, window, cx),
+            Err(e) => eprintln!("打开终端失败:{e}"),
+        }
+    }
+
+    fn focus_tab(&self, hub: &Entity<ProjectTerminals>, root: &str, id: u64, window: &mut Window, cx: &mut Context<Self>) {
+        let handle = hub.read(cx).tabs(root).iter().find(|t| t.id == id).map(|t| t.view.read(cx).focus_handle());
+        if let Some(h) = handle {
+            window.focus(&h, cx);
+        }
+    }
+}
+
+impl Render for BottomTerminal {
+    fn render(&mut self, _window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
+        let t = cx.theme().clone();
+        let hub = ProjectTerminals::hub(cx);
+        let root = self.root(cx);
+        let (active, tabs): (TermSel, Vec<(u64, String, Option<u32>, Entity<TerminalView>)>) = {
+            let h = hub.read(cx);
+            let tabs = h.tabs(&root).iter().map(|tab| {
+                let v = tab.view.read(cx);
+                let title = Some(v.title()).filter(|s| !s.trim().is_empty()).unwrap_or_else(|| tab.name.clone());
+                (tab.id, title, v.exit_code(), tab.view.clone())
+            }).collect();
+            (h.active(&root), tabs)
+        };
+        // 「Agent 命令」在这里没有对应标签:当前选中它时就显示最后一个终端
+        let shown = match active {
+            TermSel::Term(id) => Some(id),
+            TermSel::Agent => tabs.last().map(|x| x.0),
+        };
+        let strip = h_flex().h(px(30.)).px_2().gap_1().items_center().border_b_1().border_color(t.border).bg(t.sidebar)
+            .child(div().pr_2().text_size(px(11.)).text_color(t.muted_foreground).child("终端"))
+            .children(tabs.iter().map(|(id, title, exit, _)| {
+                let id = *id;
+                let label: String = title.chars().take(MAX_TAB_CHARS).collect();
+                let (hub_a, root_a, hub_c, root_c) = (hub.clone(), root.clone(), hub.clone(), root.clone());
+                div().id(SharedString::from(format!("bt-tab-{id}"))).h(px(24.)).px_2().flex().items_center().gap_1().rounded(px(6.)).cursor_pointer().text_size(px(12.))
+                    .when(shown == Some(id), |d| d.bg(t.list_active).font_weight(FontWeight::MEDIUM))
+                    .when(shown != Some(id), |d| d.text_color(t.muted_foreground).hover(|d| d.bg(t.list_hover)))
+                    .when(exit.is_some(), |d| d.text_color(t.muted_foreground))
+                    .on_click(move |_, _, cx| hub_a.update(cx, |h, cx| h.activate(&root_a, TermSel::Term(id), cx)))
+                    .child(label)
+                    .child(Button::new(SharedString::from(format!("bt-close-{id}"))).xsmall().ghost().icon(IconName::X).tooltip("关闭终端")
+                        .on_click(move |_, _, cx| { cx.stop_propagation(); hub_c.update(cx, |h, cx| h.close(&root_c, id, cx)); }))
+            }))
+            .child(Button::new("bt-new").xsmall().ghost().icon(IconName::Plus).tooltip("新建终端(⌃⇧`)")
+                .on_click(cx.listener(|this, _, window, cx| this.new_terminal(window, cx))));
+        let body = match shown.and_then(|id| tabs.iter().find(|x| x.0 == id)) {
+            Some((_, _, _, view)) => div().size_full().child(view.clone()).into_any_element(),
+            None => empty_state(IconName::Terminal, "还没有终端", "点上方「+」新建一个", cx).into_any_element(),
+        };
+        v_flex().size_full().bg(t.background).child(strip).child(div().flex_1().min_h_0().child(body))
+    }
+}
+
+impl IdeWindow {
+    /// ⌃` / 活动栏「终端」:显示或收起底部终端面板;显示时聚焦终端(没有就新建一个)。
+    pub fn toggle_term(&mut self, window: &mut Window, cx: &mut Context<Self>) {
+        self.term_open = !self.term_open;
+        if self.term_open {
+            self.term.update(cx, |t, cx| t.focus_or_spawn(window, cx));
+        }
+        cx.notify();
+    }
+
+    /// ⌃⇧`:展开底部面板并新建一个终端。
+    pub fn open_new_term(&mut self, window: &mut Window, cx: &mut Context<Self>) {
+        self.term_open = true;
+        self.term.update(cx, |t, cx| t.new_terminal(window, cx));
+        cx.notify();
+    }
+}

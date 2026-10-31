@@ -13,7 +13,7 @@ use crate::workbench::{Page, RightTab, SaveFile, ToggleIde, ToggleLeft, ToggleRi
 use gpui_kit::assets::IconName;
 use gpui_kit::component::TitleBar;
 use gpui_kit::component::button::{Button, ButtonVariants};
-use gpui_kit::component::{ActiveTheme, Sizable, h_flex, h_resizable, resizable_panel, v_flex};
+use gpui_kit::component::{ActiveTheme, Sizable, h_flex, h_resizable, resizable_panel, v_flex, v_resizable};
 use gpui_kit::prelude::FluentBuilder as _;
 use gpui_kit::*;
 
@@ -42,6 +42,9 @@ pub struct IdeWindow {
     pub(crate) search: Entity<crate::ide_search::SearchPanel>,
     pub(crate) search_open: bool,
     pub(crate) quick: Option<Entity<crate::palette::Palette>>,
+    /// 底部终端面板是否展开,以及它的视图
+    pub(crate) term_open: bool,
+    pub(crate) term: Entity<crate::ide_terminal::BottomTerminal>,
     pub(crate) _quick_sub: Option<Subscription>,
 }
 
@@ -76,8 +79,11 @@ impl IdeWindow {
         subs.push(cx.observe(&ide, |_, _, cx| cx.notify()));
         let focus = cx.focus_handle();
         window.focus(&focus, cx);
+        let term = cx.new(|cx| crate::ide_terminal::BottomTerminal::new(panel.clone(), cx));
+        // 调试用:UCODE_IDE_TERM=1 启动时就展开底部终端面板,方便截图
+        let term_open = std::env::var("UCODE_IDE_TERM").is_ok_and(|v| v == "1");
         // 此时工作台可能正处于更新中,不在这里回读它;首次渲染时再同步
-        Self { wb, panel, ide, focus, left_open: true, chat_open: true, synced: None, _subs: subs, search, search_open: false, quick: None, _quick_sub: None }
+        Self { wb, panel, ide, focus, left_open: true, chat_open: true, synced: None, _subs: subs, search, search_open: false, quick: None, _quick_sub: None, term_open, term }
     }
 
     /// 让面板与根目录跟随工作台当前会话。
@@ -191,6 +197,8 @@ impl Render for IdeWindow {
             .on_action(cx.listener(|this, _: &GoToLine, window, cx| this.goto_line_dialog(window, cx)))
             .on_action(cx.listener(|this, _: &FindInProject, window, cx| this.show_search(window, cx)))
             .on_action(cx.listener(|this, _: &crate::ide_reference::QuoteSelection, window, cx| this.quote_selection(window, cx)))
+            .on_action(cx.listener(|this, _: &crate::term_actions::ToggleTerminal, window, cx| this.toggle_term(window, cx)))
+            .on_action(cx.listener(|this, _: &crate::term_actions::NewTerminal, window, cx| this.open_new_term(window, cx)))
             .on_action(cx.listener(|this, _: &ToggleIde, _, cx| this.back_to_agent(cx)))
             .on_action(cx.listener(|this, _: &ToggleLeft, _, cx| { this.left_open = !this.left_open; cx.notify(); }))
             .on_action(cx.listener(|this, _: &ToggleRight, _, cx| { this.chat_open = !this.chat_open; cx.notify(); }))
@@ -206,7 +214,12 @@ impl Render for IdeWindow {
                             h_resizable("ide-split")
                                 .child(resizable_panel().size(px(260.)).size_range(px(160.)..px(520.)).flex_none().visible(self.left_open)
                                     .child(div().size_full().border_r_1().border_color(t.border).child(if self.search_open { self.search.clone().into_any_element() } else { self.panel.clone().into_any_element() })))
-                                .child(resizable_panel().size_range(px(320.)..Pixels::MAX).child(div().size_full().child(self.ide.clone())))
+                                .child(resizable_panel().size_range(px(320.)..Pixels::MAX).child(
+                                    v_resizable("ide-vsplit")
+                                        .child(resizable_panel().size_range(px(120.)..Pixels::MAX).child(div().size_full().child(self.ide.clone())))
+                                        .child(resizable_panel().size(px(260.)).size_range(px(120.)..px(600.)).flex_none().visible(self.term_open)
+                                            .child(div().size_full().border_t_1().border_color(t.border).child(self.term.clone()))),
+                                ))
                                 .child(resizable_panel().size(px(420.)).size_range(px(320.)..px(900.)).flex_none().visible(self.chat_open)
                                     .child(v_flex().size_full().border_l_1().border_color(t.border).children(ide_chat_header::chat_header(&self.wb, cx)).child(div().flex_1().min_h_0().child(chat_panel(parts, branch.clone(), demo, cx))))),
                         ),
