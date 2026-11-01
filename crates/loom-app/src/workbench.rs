@@ -10,7 +10,7 @@ use crate::palette::{Group, Palette, PaletteAction, PaletteEvent, PaletteItem};
 use crate::right_panel::{PanelEvent, RightPanel};
 use crate::settings::{self, SettingsTab};
 use crate::ui::{empty_state, icon};
-use crate::{sidebar, theme, timeline};
+use crate::{sidebar, theme};
 use gpui_kit::assets::IconName;
 use gpui_kit::component::TitleBar;
 use crate::layout_rules::{CENTER_MIN, LEFT_MAX, LEFT_MIN, RIGHT_MAX, RIGHT_MIN};
@@ -122,6 +122,8 @@ pub struct Workbench {
     /// 正在按前进 / 后退切换会话:这时打开会话不应再写入历史
     pub nav_navigating: bool,
     pub views: HashMap<String, SessionView>,
+    /// 已打开会话的实时状态摘要(由 observe 回调维护,渲染只读它,见 `live_sig.rs`)
+    pub live: HashMap<String, crate::live_sig::LiveSig>,
     pub left_open: bool,
     pub right_open: bool,
     pub left_w: f32,
@@ -277,6 +279,7 @@ impl Workbench {
             focus_project: None,
             nav_navigating: false,
             views: HashMap::new(),
+            live: HashMap::new(),
             left_open: true,
             right_open: settings.right_open,
             left_w: crate::layout_rules::clamp_left(settings_widths.0),
@@ -344,6 +347,12 @@ impl Workbench {
         let panel_sub = cx.subscribe_in(&wb.panel, window, |this, _, ev: &PanelEvent, window, cx| this.on_panel_event(ev, window, cx));
         wb._subs.push(panel_sub);
         if demo {
+            // 调试用:LOOM_BG_SESSION 先打开一个会话让它在后台播放,再切到 LOOM_SESSION(验证后台会话不连带重绘)
+            if let Ok(bg) = std::env::var("LOOM_BG_SESSION")
+                && let Some(pi) = wb.projects.iter().position(|p| p.sessions.iter().any(|s| s.id == bg))
+            {
+                wb.open_session(pi, &bg, window, cx);
+            }
             let id = session.unwrap_or_else(|| "showcase-tour".into());
             if let Some(pi) = wb.projects.iter().position(|p| p.sessions.iter().any(|s| s.id == id)) {
                 wb.open_session(pi, &id, window, cx);
@@ -479,30 +488,24 @@ impl Workbench {
         wb
     }
 
-    /// 会话行的实时状态点。
-    pub fn live_badge(&self, id: &str, stored: SessionBadge, cx: &App) -> SessionBadge {
-        match self.views.get(id) {
-            Some(v) => {
-                let st = &v.model.read(cx).state;
-                if st.awaiting_user() {
-                    SessionBadge::Waiting
-                } else if st.phase == Phase::Running || st.running_task_count() > 0 {
-                    // 回合结束但后台任务还在跑,也算运行中
-                    SessionBadge::Running
-                } else if self.unread.contains(id) {
-                    SessionBadge::Unread
-                } else {
-                    SessionBadge::Idle
-                }
-            }
-            None if self.unread.contains(id) => SessionBadge::Unread,
+    /// 会话行的实时状态点(读缓存的摘要,不读会话实体,避免后台会话的刷新连带重绘整个窗口)。
+    pub fn live_badge(&self, id: &str, stored: SessionBadge, _cx: &App) -> SessionBadge {
+        let unread = self.unread.contains(id);
+        match self.live_sig(id) {
+            Some(sig) => sig.badge(unread),
+            None if unread => SessionBadge::Unread,
             None => stored,
         }
     }
 
     /// 某个会话里仍在运行的后台任务数(没打开过的会话为 0)。
-    pub fn live_task_count(&self, id: &str, cx: &App) -> usize {
-        self.views.get(id).map_or(0, |v| v.model.read(cx).state.running_task_count())
+    pub fn live_task_count(&self, id: &str, _cx: &App) -> usize {
+        self.live_sig(id).map_or(0, |s| s.tasks)
+    }
+
+    /// 已打开会话的实时状态摘要;没打开过返回 `None`。
+    pub fn live_sig(&self, id: &str) -> Option<crate::live_sig::LiveSig> {
+        self.views.contains_key(id).then(|| self.live.get(id).copied().unwrap_or_default())
     }
 
     pub fn active_model(&self) -> Option<&Entity<SessionModel>> {
@@ -703,6 +706,8 @@ impl Workbench {
                 }
             };
             let model = cx.new(|cx| SessionModel::new(handle, cx));
+            let timeline = cx.new(|cx| crate::timeline_view::TimelineView::new(&model, cx));
+            model.update(cx, |m, _| m.timeline = Some(timeline));
             let composer = cx.new(|cx| Composer::new(model.clone(), self.demo, window, cx));
             self.push_extensions(&composer, &self.work_root(&cwd), cx);
             if !self.demo {
@@ -733,8 +738,17 @@ impl Workbench {
             if let Ok(text) = std::env::var("LOOM_AUTOSEND") {
                 model.update(cx, |m, cx| m.send_prompt(text, cx));
             }
+            // 激活会话的任何变化都要重绘(对话区画在工作台里);
+            // 非激活会话只在状态摘要(侧栏状态点 / 任务数)变化时才重绘
+            let sid = id.to_string();
             let subs = vec![
-                cx.observe(&model, |_, _, cx| cx.notify()),
+                cx.observe(&model, move |this, m, cx| {
+                    let sig = crate::live_sig::LiveSig::of(&m.read(cx).state);
+                    let changed = this.live.insert(sid.clone(), sig) != Some(sig);
+                    if changed || this.active.as_deref() == Some(sid.as_str()) {
+                        cx.notify();
+                    }
+                }),
                 cx.subscribe(&model, |this, m, ev: &UiRequest, cx| this.on_ui_request(Some(m.entity_id()), ev, cx)),
             ];
             // 新会话套用偏好里的默认模型 / 模式 / 强度
@@ -1410,21 +1424,11 @@ pub fn chat_panel_with_footer(parts: Option<(Entity<SessionModel>, Entity<Compos
     let Some((model, composer)) = parts else {
         return empty_state(IconName::MessageSquare, "选择或新建一个会话", "左侧选择会话,或点击「新会话」", cx).into_any_element();
     };
-    let scroller_state = model.read(cx).scroller.clone();
-    let wheel_model = model.clone();
-    let sticky = crate::sticky_user::render(&model, &scroller_state, cx);
+    let timeline = model.read(cx).timeline.clone();
     let model_for_dock = model.clone();
     v_flex().size_full().bg(t.background)
-        .child(
-            div().flex_1().min_h_0().w_full()
-                .on_scroll_wheel(move |ev, _, cx| {
-                    let dy = f32::from(ev.delta.pixel_delta(px(20.)).y);
-                    wheel_model.update(cx, |m, cx| m.on_wheel(dy, cx));
-                })
-                .child(
-                crate::chat_scroll::chat_scroller("timeline", scroller_state, move |ix, window, cx| timeline::render_row(&model, ix, window, cx), sticky, cx),
-            ),
-        )
+        // 时间线是独立的缓存视图:工作台因动画等原因重跑时直接复用上一帧
+        .child(div().flex_1().min_h_0().w_full().children(timeline.map(|tl| tl.cached(StyleRefinement::default().size_full()))))
         .children(crate::dock_cards::render(&model_for_dock, cx))
         .children(crate::task_dock::dock(&model_for_dock, cx))
         .child(composer)
@@ -1452,6 +1456,8 @@ impl Workbench {
         loom_diag::stats::set_gauge("时间线条目", items as u64);
         let terms = crate::term_store::ProjectTerminals::hub(cx).read(cx).count();
         loom_diag::stats::set_gauge("终端", terms as u64);
+        loom_diag::stats::set_gauge("界面构建次数", loom_diag::frames::total());
+        loom_diag::debug!("界面构建累计 {} 次", loom_diag::frames::total());
     }
 
     fn render_inner(&mut self, window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {

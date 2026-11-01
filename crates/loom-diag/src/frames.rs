@@ -12,6 +12,14 @@ const KEEP: usize = 120;
 
 static FRAMES: Mutex<VecDeque<u32>> = Mutex::new(VecDeque::new());
 
+/// 启动以来的累计构建次数(用来观察是否有多余的重绘)。
+static TOTAL: std::sync::atomic::AtomicU64 = std::sync::atomic::AtomicU64::new(0);
+
+/// 启动以来根视图的累计构建次数。
+pub fn total() -> u64 {
+    TOTAL.load(std::sync::atomic::Ordering::Relaxed)
+}
+
 /// 汇总结果(单位微秒)。
 #[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
 pub struct FrameSummary {
@@ -23,6 +31,7 @@ pub struct FrameSummary {
 
 /// 记录一次构建耗时;超过 50 ms 额外记一条 WARN。
 pub fn record(d: Duration) {
+    TOTAL.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
     let us = d.as_micros().min(u32::MAX as u128) as u32;
     if d >= Duration::from_millis(50) {
         crate::warn!("界面构建很慢:{} ms", d.as_millis());

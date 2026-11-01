@@ -10,6 +10,8 @@ pub struct SessionModel {
     pub state: SessionState,
     pub handle: BackendHandle,
     pub scroller: Entity<ChatScroll>,
+    /// 时间线视图(缓存渲染,见 `timeline_view.rs`);由工作台在模型建好后装上
+    pub timeline: Option<Entity<crate::timeline_view::TimelineView>>,
     /// 已展开的条目 id(工具卡、思考、子 Agent、计划等)
     pub expanded: HashSet<String>,
     /// 运行中排队的消息(回合结束后依次发送)
@@ -72,6 +74,7 @@ impl SessionModel {
             state: SessionState::default(),
             handle,
             scroller,
+            timeline: None,
             expanded: HashSet::new(),
             queued: Vec::new(),
             wizard_step: Default::default(),

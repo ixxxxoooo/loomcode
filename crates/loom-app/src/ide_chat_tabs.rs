@@ -12,7 +12,6 @@ use gpui_kit::component::menu::{DropdownMenu as _, PopupMenu, PopupMenuItem};
 use gpui_kit::component::{ActiveTheme, Sizable, h_flex};
 use gpui_kit::prelude::FluentBuilder as _;
 use gpui_kit::*;
-use loom_core::Phase;
 
 /// 历史菜单里最多列出的会话数。
 const MAX_HISTORY: usize = 40;
@@ -110,7 +109,7 @@ impl IdeWindow {
             let history: Vec<(String, String)> = ix.and_then(|i| wb.projects.get(i)).map(|p| {
                 p.sessions.iter().filter(|s| !s.archived).take(MAX_HISTORY).map(|s| (s.id.clone(), s.title.clone())).collect()
             }).unwrap_or_default();
-            let running: Vec<String> = self.chat_tabs.iter().filter(|id| wb.views.get(*id).is_some_and(|v| v.model.read(cx).state.phase == Phase::Running)).cloned().collect();
+            let running: Vec<String> = self.chat_tabs.iter().filter(|id| wb.live_sig(id).is_some_and(|s| s.turn)).cloned().collect();
             (active, history, running)
         };
         let open_ids = self.chat_tabs.clone();

@@ -8,6 +8,8 @@
 #![recursion_limit = "512"]
 
 mod ansi;
+mod live_sig;
+mod timeline_view;
 mod app_menu;
 mod ask_cards;
 mod dock_cards;
