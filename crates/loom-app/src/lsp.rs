@@ -109,35 +109,61 @@ pub struct LspProvider {
     pub sync: Arc<DocSync>,
     /// 补全触发字符(服务器声明的)
     triggers: Vec<String>,
+    /// 所属视图与文档路径(悬停结果写回去)
+    view: WeakEntity<IdeView>,
+    path: PathBuf,
 }
 
 impl LspProvider {
-    pub fn new(sync: Arc<DocSync>) -> Self {
+    pub fn new(sync: Arc<DocSync>, view: WeakEntity<IdeView>, path: PathBuf) -> Self {
         let triggers = sync.client.completion_triggers();
-        Self { sync, triggers }
+        Self { sync, triggers, view, path }
     }
 }
 
 impl HoverProvider for LspProvider {
+    /// 向语言服务器要悬停内容,结果写进文档由 `ide_hover` 渲染;返回 `None` 让编辑器自带的气泡不出现。
     fn hover(&self, text: &Rope, offset: usize, _window: &mut Window, cx: &mut App) -> Task<Result<Option<lsp_types::Hover>>> {
         let sync = self.sync.clone();
         let (full, rope) = (text.to_string(), text.clone());
-        cx.background_spawn(async move {
-            let lines = split_lines(&full);
-            let pos = to_lsp_pos(&rope, offset, &lines);
-            sync.sync(&full);
-            let rx = sync.client.request("textDocument/hover", json!({ "textDocument": { "uri": sync.uri }, "position": pos }));
-            let v = rx.recv().await.map_err(|e| anyhow!("{e}"))?.map_err(|e| anyhow!(e))?;
-            if v.is_null() {
-                loom_diag::debug!("LSP 悬停:服务器没有结果(偏移 {offset})");
+        let (view, path) = (self.view.clone(), self.path.clone());
+        cx.spawn(async move |cx| {
+            // 当前卡片已经覆盖这个位置:不重复请求
+            if view.update(cx, |this, _| this.hover_covers(&path, offset)).unwrap_or(false) {
                 return Ok(None);
             }
-            loom_diag::debug!("LSP 悬停应答 {} 字节", v.to_string().len());
-            let mut hover: lsp_types::Hover = serde_json::from_value(v)?;
-            if let Some(r) = hover.range.as_mut() {
-                fix_range(r, &lines);
-            }
-            Ok(Some(hover))
+            let (req_rope, req_full) = (rope.clone(), full.clone());
+            let res = cx
+                .background_executor()
+                .spawn(async move {
+                    let lines = split_lines(&req_full);
+                    let pos = to_lsp_pos(&req_rope, offset, &lines);
+                    sync.sync(&req_full);
+                    let rx = sync.client.request("textDocument/hover", json!({ "textDocument": { "uri": sync.uri }, "position": pos }));
+                    let v = rx.recv().await.map_err(|e| anyhow!("{e}"))?.map_err(|e| anyhow!(e))?;
+                    if v.is_null() {
+                        loom_diag::debug!("LSP 悬停:服务器没有结果(偏移 {offset})");
+                        return Ok::<_, anyhow::Error>(None);
+                    }
+                    let mut hover: lsp_types::Hover = serde_json::from_value(v)?;
+                    if let Some(r) = hover.range.as_mut() {
+                        fix_range(r, &lines);
+                    }
+                    Ok(Some(hover))
+                })
+                .await;
+            let card = match res {
+                Ok(Some(h)) => crate::ide_hover::hover_markdown(&h).map(|md| {
+                    let range = match h.range {
+                        Some(r) => rope.position_to_offset(&r.start)..rope.position_to_offset(&r.end),
+                        None => rope.word_range(offset).unwrap_or(offset..offset),
+                    };
+                    crate::ide_hover::HoverCard { range, markdown: md.into() }
+                }),
+                _ => None,
+            };
+            let _ = view.update(cx, |this, cx| this.set_hover_card(&path, card, cx));
+            Ok(None)
         })
     }
 }
@@ -305,7 +331,7 @@ impl IdeView {
         }
         let text = doc.editor.read(cx).value().to_string();
         let sync = DocSync::open(client.clone(), path, &text);
-        let provider = Rc::new(LspProvider::new(sync.clone()));
+        let provider = Rc::new(LspProvider::new(sync.clone(), weak.clone(), path.to_path_buf()));
         doc.editor.update(cx, |ed, _| {
             let l = ed.lsp_mut();
             if client.supports("hoverProvider") {

@@ -45,7 +45,7 @@ pub fn tooltip_text(c: &BlameCommit, now: i64) -> String {
         return "未提交的更改\n这一行还没有被提交(或在编辑器里改过尚未保存)".into();
     }
     let when = loom_core::git_log::format_datetime(c.time, loom_diag::local_tz_offset());
-    format!("{}\n{} <{}>\n{} ({})\n{} · 点击复制提交哈希", c.summary, c.author, c.email, when, relative_time(c.time, now), c.short())
+    format!("{}\n{} <{}>\n{} ({})\n{}", c.summary, c.author, c.email, when, relative_time(c.time, now), c.short())
 }
 
 /// 追溯栏单行的文字:`作者  3 天前`。
@@ -107,14 +107,6 @@ impl IdeView {
     }
 }
 
-/// 复制提交哈希并提示。
-fn copy_hash(hash: &str, window: &mut Window, cx: &mut App) {
-    use gpui_kit::component::WindowExt as _;
-    use gpui_kit::component::notification::Notification;
-    cx.write_to_clipboard(ClipboardItem::new_string(hash.to_string()));
-    window.push_notification(Notification::success(format!("已复制提交哈希 {}", &hash[..hash.len().min(7)])), cx);
-}
-
 /// 光标所在行的行内追溯元素。条件不满足(没有追溯、正在选择、行不在视口里…)返回 `None`。
 pub fn inline_blame(doc: &IdeDoc, cx: &App) -> Option<AnyElement> {
     if !crate::prefs(cx).editor.blame_inline || !doc.blame_fresh {
@@ -132,9 +124,8 @@ pub fn inline_blame(doc: &IdeDoc, cx: &App) -> Option<AnyElement> {
     // 行尾那个位置的窗口坐标(行不在视口里时为 None);自动换行时取最后一段的末尾
     let at = ed.range_to_bounds(&(end..end))?;
     let t = cx.theme();
-    let (label, tip, hash) = (inline_label(&commit, now()), tooltip_text(&commit, now()), commit.hash.clone());
-    let uncommitted = commit.uncommitted();
-    let color = if uncommitted { t.warning } else { t.muted_foreground };
+    let label = inline_label(&commit, now());
+    let color = if commit.uncommitted() { t.warning } else { t.muted_foreground };
     let lh = at.size.height;
     // 不越过编辑区右缘(否则会盖到迷你地图上);剩余空间太窄就不显示
     let left = at.origin.x + px(28.);
@@ -145,15 +136,9 @@ pub fn inline_blame(doc: &IdeDoc, cx: &App) -> Option<AnyElement> {
     Some(
         deferred(
             anchored().position(point(left, at.origin.y)).anchor(Anchor::TopLeft).child(
-                div().id("ide-inline-blame").h(lh).max_w(room.min(px(560.))).flex().items_center().px_1().rounded(px(4.)).cursor_pointer()
-                    .text_size(px(12.)).text_color(color.opacity(0.62)).whitespace_nowrap().overflow_hidden()
-                    .hover(|d| d.text_color(color).bg(t.muted.opacity(0.5)))
-                    .tooltip(move |window, cx| gpui_kit::component::tooltip::Tooltip::new(tip.clone()).build(window, cx))
-                    .on_click(move |_, window, cx| {
-                        if !uncommitted {
-                            copy_hash(&hash, window, cx);
-                        }
-                    })
+                // 纯展示:浅灰文字,不响应悬停与点击(不挡住下面的编辑器操作)
+                div().h(lh).max_w(room.min(px(560.))).flex().items_center().px_1().text_size(px(12.)).text_color(color.opacity(0.55))
+                    .whitespace_nowrap().overflow_hidden()
                     .child(label),
             ),
         )

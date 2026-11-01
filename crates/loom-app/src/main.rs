@@ -67,6 +67,7 @@ mod ide_terminal;
 mod ide_watch;
 mod ide_chat_tabs;
 mod ide_blame;
+mod ide_hover;
 mod ide_gutter;
 mod lsp;
 mod ide_memory;
