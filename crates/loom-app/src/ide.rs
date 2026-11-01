@@ -31,8 +31,14 @@ pub struct IdeDoc {
     pub stale: bool,
     /// Git 行标记装饰集合(首次刷新时创建)
     pub(crate) marks: Option<gpui_kit::component::input::RangeDecorationCollection>,
-    /// 缩略图用的行形状
-    pub shape: std::rc::Rc<Vec<(u16, u16)>>,
+    /// 迷你地图的着色色块
+    pub minimap: std::rc::Rc<crate::minimap_model::MiniMap<Hsla>>,
+    /// 迷你地图数据对应的 (语法主题, 是否着色);变了(切主题 / 改设置)就重建
+    pub(crate) mm_key: (std::sync::Arc<gpui_kit::component::highlighter::HighlightTheme>, bool),
+    /// 迷你地图重建的防抖序号
+    pub(crate) mm_gen: u64,
+    /// Git 改动行区间(迷你地图刻度用)
+    pub hunks: std::rc::Rc<Vec<(std::ops::Range<usize>, crate::git_status::GitMark)>>,
     /// 括号配对高亮:上次的配对位置与装饰集合
     pub(crate) bracket_pair: Option<(usize, usize)>,
     pub(crate) bracket_marks: Option<gpui_kit::component::input::RangeDecorationCollection>,
@@ -49,8 +55,8 @@ pub struct IdeView {
     pub(crate) note: Option<String>,
     /// 以图片方式打开的标签(没有文本文档)
     pub(crate) images: std::collections::HashSet<PathBuf>,
-    /// 缩略图上次绘制的区域(鼠标位置换算用)
-    pub(crate) minimap_bounds: std::rc::Rc<std::cell::Cell<Bounds<Pixels>>>,
+    /// 迷你地图的界面状态(区域、悬停、拖动抓取点、编辑区宽度)
+    pub(crate) minimap_ui: std::rc::Rc<crate::ide_minimap::MinimapUi>,
     /// 已套用到所有文档的编辑器偏好(与全局不同就重新套用)
     applied: Option<loom_config::EditorPrefs>,
     /// 编辑计数:延迟自动保存靠它判断「这之后还有没有新的编辑」
@@ -70,7 +76,7 @@ pub struct IdeView {
 impl IdeView {
     /// 创建空的编辑器视图。
     pub fn new() -> Self {
-        Self { root: String::new(), docs: HashMap::new(), tabs: TabModel::default(), note: None, images: Default::default(), minimap_bounds: Default::default(), applied: None, edit_gen: 0, nav: Default::default(), nav_quiet: false, fresh_open: false, recent: Vec::new(), pending_restore: None }
+        Self { root: String::new(), docs: HashMap::new(), tabs: TabModel::default(), note: None, images: Default::default(), minimap_ui: Default::default(), applied: None, edit_gen: 0, nav: Default::default(), nav_quiet: false, fresh_open: false, recent: Vec::new(), pending_restore: None }
     }
 
     /// 设置项目根目录(会话切换时由宿主调用)。
@@ -161,6 +167,29 @@ impl IdeView {
         }
     }
 
+    /// 编辑后 150 毫秒重建迷你地图(防抖:连续输入只重建一次)。
+    fn schedule_minimap(&mut self, path: &Path, cx: &mut Context<Self>) {
+        let Some(doc) = self.docs.get_mut(path) else { return };
+        doc.mm_gen += 1;
+        let (path, gen_at) = (path.to_path_buf(), doc.mm_gen);
+        cx.spawn(async move |this, cx| {
+            cx.background_executor().timer(std::time::Duration::from_millis(150)).await;
+            let _ = this.update(cx, |this, cx| this.rebuild_minimap(&path, Some(gen_at), cx));
+        })
+        .detach();
+    }
+
+    /// 立即重建某文档的迷你地图;`gen_at` 给出时,期间又有编辑(序号变了)就放弃。
+    pub(crate) fn rebuild_minimap(&mut self, path: &Path, gen_at: Option<u64>, cx: &mut Context<Self>) {
+        let prefs = crate::prefs(cx).editor;
+        let theme = cx.theme().highlight_theme.clone();
+        let Some(doc) = self.docs.get_mut(path).filter(|d| gen_at.is_none_or(|g| g == d.mm_gen)) else { return };
+        let text = doc.editor.read(cx).value().to_string();
+        doc.minimap = std::rc::Rc::new(crate::ide_minimap::build_for(&text, language_for(path), prefs.syntax_highlight, &theme));
+        doc.mm_key = (theme, prefs.syntax_highlight);
+        cx.notify();
+    }
+
     /// 「延迟」自动保存:停止输入 1 秒后写盘;期间又有编辑就放弃这次(由最后一次编辑触发)。
     fn schedule_autosave(&mut self, path: &Path, cx: &mut Context<Self>) {
         self.edit_gen += 1;
@@ -200,6 +229,7 @@ impl IdeView {
             let hunks = cx.background_spawn(async move { crate::ide_gutter::read_hunks(&p) }).await;
             let _ = this.update(cx, |this, cx| {
                 if let Some(doc) = this.docs.get_mut(&path) {
+                    doc.hunks = std::rc::Rc::new(hunks.clone());
                     crate::ide_gutter::apply(&doc.editor, &mut doc.marks, hunks, cx);
                 }
             });
@@ -298,7 +328,8 @@ fn load(path: &Path, window: &mut Window, cx: &mut Context<IdeView>) -> Result<I
     let bytes = std::fs::read(path).map_err(|e| format!("无法读取 {}:{e}", path.display()))?;
     let text = String::from_utf8(bytes).map_err(|_| "二进制文件,不在编辑器中打开".to_string())?;
     let crlf = text.contains("\r\n");
-    let shape = std::rc::Rc::new(crate::ide_minimap::shape_of(&text));
+    let theme = cx.theme().highlight_theme.clone();
+    let minimap = std::rc::Rc::new(crate::ide_minimap::build_for(&text, language_for(path), prefs.syntax_highlight, &theme));
     let editor = cx.new(|cx| EditorState::new(window, cx).language(crate::ide_prefs::language(language_for(path), &prefs)).searchable(true).default_value(text));
     editor.update(cx, |ed, cx| crate::ide_prefs::apply(ed, &prefs, window, cx));
     // 编辑后标记未保存并固定预览标签;光标移动时刷新状态条
@@ -309,8 +340,8 @@ fn load(path: &Path, window: &mut Window, cx: &mut Context<IdeView>) -> Result<I
                 this.tabs.pin(&key);
                 if let Some(doc) = this.docs.get_mut(&key) {
                     doc.saved = false;
-                    doc.shape = std::rc::Rc::new(crate::ide_minimap::shape_of(&doc.editor.read(cx).value()));
                 }
+                this.schedule_minimap(&key, cx);
                 this.schedule_autosave(&key, cx);
             }
             // 失焦自动保存:编辑器失去焦点(切标签 / 点到别处 / 窗口失焦)时写盘
@@ -333,7 +364,7 @@ fn load(path: &Path, window: &mut Window, cx: &mut Context<IdeView>) -> Result<I
     });
     let marks = None;
     let mtime = meta.modified().ok();
-    Ok(IdeDoc { editor, saved: true, crlf, mtime, stale: false, marks, shape, bracket_pair: None, bracket_marks: None, _subs: vec![sub, sub2] })
+    Ok(IdeDoc { editor, saved: true, crlf, mtime, stale: false, marks, minimap, mm_key: (theme, prefs.syntax_highlight), mm_gen: 0, hunks: Default::default(), bracket_pair: None, bracket_marks: None, _subs: vec![sub, sub2] })
 }
 
 impl Render for IdeView {
@@ -360,15 +391,26 @@ impl Render for IdeView {
             }
             return root.child(welcome(cx)).into_any_element();
         };
+        // 切换主题 / 语法高亮开关后,当前文档的迷你地图配色要跟着重建
+        let want = (cx.theme().highlight_theme.clone(), crate::prefs(cx).editor.syntax_highlight);
+        if self.docs.get(&path).is_some_and(|d| !std::sync::Arc::ptr_eq(&d.mm_key.0, &want.0) || d.mm_key.1 != want.1) {
+            self.rebuild_minimap(&path, None, cx);
+        }
         let doc = &self.docs[&path];
         let editor = doc.editor.clone();
         root.child(tab_bar(self.tab_items(&path), cx))
             .child(breadcrumbs(&path, &self.root, doc.saved, self.note.clone().or_else(|| doc.stale.then(|| "磁盘上的文件已被修改,点右侧刷新按钮载入(会丢弃你的修改)".to_string())), cx))
-            .child(
-                h_flex().flex_1().min_h_0().w_full()
+            .child({
+                let prefs = crate::prefs(cx).editor;
+                let ui = self.minimap_ui.clone();
+                // 编辑区太窄时自动隐藏迷你地图(宽度取自上一帧的测量)
+                let wide = ui.row_width.get() == 0. || ui.row_width.get() >= crate::ide_minimap::MIN_EDITOR_W;
+                let mm = (prefs.minimap && wide).then(|| crate::ide_minimap::minimap(&editor, doc.minimap.clone(), doc.hunks.clone(), ui.clone(), prefs.minimap_slider_always, cx));
+                h_flex().relative().flex_1().min_h_0().w_full()
+                    .child(canvas(move |b, _, _| ui.row_width.set(f32::from(b.size.width)), |_, _, _, _| {}).absolute().size_full())
                     .child(div().flex_1().min_w_0().h_full().child(Editor::new(&editor).bordered(false).appearance(false).size_full()))
-                    .children(crate::prefs(cx).editor.minimap.then(|| crate::ide_minimap::minimap(&editor, doc.shape.clone(), self.minimap_bounds.clone(), cx))),
-            )
+                    .children(mm)
+            })
             .into_any_element()
     }
 }
