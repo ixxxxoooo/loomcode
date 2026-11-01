@@ -137,17 +137,17 @@ pub fn render_content(content: &ToolContent, run_id: Option<&str>, cx: &App) -> 
             let parsed = ansi::parse(&shown);
             mono_box(cx)
                 .child(
-                    h_flex().gap_2().mb_1().items_center()
-                        .child(div().text_color(t.muted_foreground).child(format!("$ {}", command.lines().next().unwrap_or(""))))
+                    h_flex().gap_2().mb_1().items_start()
+                        // 长命令在卡片内折行,不再把右侧的状态与「在终端面板查看」挤出去
+                        .child(div().flex_1().min_w_0().text_color(t.muted_foreground).child(format!("$ {}", command.lines().next().unwrap_or(""))))
                         .when_some(*exit_code, |d, code| {
                             let (fg, bg) = if code == 0 { (t.success, t.background) } else { (t.danger, t.background) };
-                            d.child(pill(format!("退出码 {code}"), fg, bg))
+                            d.child(div().flex_none().child(pill(format!("退出码 {code}"), fg, bg)))
                         })
-                        .child(div().flex_1())
                         .when_some(run_id.map(str::to_string), |d, id| {
                             // 只有 Agent 窗口处理这个动作(IDE 窗口里没有对应面板,等于无操作)
                             d.child(
-                                div().id(SharedString::from(format!("view-run-{id}"))).cursor_pointer().text_size(px(11.)).text_color(t.muted_foreground)
+                                div().id(SharedString::from(format!("view-run-{id}"))).flex_none().cursor_pointer().text_size(px(11.)).text_color(t.muted_foreground)
                                     .hover(|s| s.text_color(t.primary))
                                     .on_click(move |_, window, cx| window.dispatch_action(Box::new(crate::workbench::ViewAgentRun { id: id.clone() }), cx))
                                     .child("在终端面板查看"),

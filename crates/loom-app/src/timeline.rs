@@ -72,7 +72,7 @@ fn render_working(session: &Entity<SessionModel>, cx: &App) -> AnyElement {
 /// 渲染一个条目(可嵌套在子 Agent 里,`depth` 为嵌套层级)。
 pub fn render_item(session: &Entity<SessionModel>, item: &TimelineItem, depth: usize, window: &mut Window, cx: &mut App) -> AnyElement {
     match item {
-        TimelineItem::User { id, text, images, files } => render_user(session, id, text, images, files, cx),
+        TimelineItem::User { id, text, images, files } => crate::user_message::render_user(session, id, text, images, files, cx),
         TimelineItem::Assistant { id, text, .. } => crate::rich_text::render_assistant(id, text, cx),
         TimelineItem::Thinking { id, text, streaming } => render_thinking(session, id, text, *streaming, cx),
         TimelineItem::Tool(tool) => tool_card::render_tool(session, tool, cx),
@@ -85,54 +85,6 @@ pub fn render_item(session: &Entity<SessionModel>, item: &TimelineItem, depth: u
         TimelineItem::Canvas { id, title } => cards::render_canvas(session, id, title, cx),
         TimelineItem::Changes { files, .. } => cards::render_changes(session, files, cx),
     }
-}
-
-/// 用户消息:卡片底色,图片/文件 chip,长文折叠。
-fn render_user(session: &Entity<SessionModel>, id: &str, text: &str, images: &[String], files: &[String], cx: &App) -> AnyElement {
-    let t = cx.theme();
-    let lines = text.lines().count();
-    let long = lines > 6;
-    let expanded = session.read(cx).is_expanded(id);
-    let shown: String = if long && !expanded { text.lines().take(6).collect::<Vec<_>>().join("\n") } else { text.to_string() };
-    let s = session.clone();
-    let sid = id.to_string();
-    v_flex()
-        .w_full()
-        .gap_1p5()
-        .p_3()
-        .rounded(px(10.))
-        .bg(t.muted)
-        .when(!images.is_empty() || !files.is_empty(), |d| {
-            d.child(
-                h_flex().flex_wrap().gap_1p5()
-                    .children(images.iter().map(|name| {
-                        // 本地文件存在就画缩略图,否则(演示数据)退回文件名 chip
-                        if std::path::Path::new(name).is_file() {
-                            img(std::path::PathBuf::from(name)).max_w(px(240.)).max_h(px(160.)).rounded(px(6.)).border_1().border_color(t.border)
-                                .into_any_element()
-                        } else {
-                            h_flex().gap_1().items_center().px_2().h(px(22.)).rounded(px(6.)).bg(t.background).border_1().border_color(t.border)
-                                .child(icon(IconName::Image, 12., t.muted_foreground))
-                                .child(div().text_size(px(12.)).child(name.clone()))
-                                .into_any_element()
-                        }
-                    }))
-                    .children(files.iter().map(|name| {
-                        h_flex().gap_1().items_center().px_2().h(px(22.)).rounded(px(6.)).bg(t.background).border_1().border_color(t.border)
-                            .child(icon(IconName::FileText, 12., t.muted_foreground))
-                            .child(div().text_size(px(12.)).child(name.clone()))
-                    })),
-            )
-        })
-        .when(!shown.is_empty(), |d| d.child(div().text_size(px(14.)).child(shown.clone())))
-        .when(long, |d| {
-            d.child(
-                div().id(SharedString::from(format!("user-fold-{id}"))).text_size(px(12.)).text_color(t.primary).cursor_pointer()
-                    .on_click(move |_, _, cx| { s.update(cx, |m, cx| m.toggle(&sid, cx)); })
-                    .child(if expanded { "收起".to_string() } else { format!("展开全部({lines} 行)") }),
-            )
-        })
-        .into_any_element()
 }
 
 /// 「已思考 N 秒」文案:不到 1 秒或没有实时计时(历史回放)就只写「已思考」。

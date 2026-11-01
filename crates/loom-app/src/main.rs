@@ -90,6 +90,7 @@ mod timeline;
 mod tool_card;
 mod ui;
 mod updater;
+mod user_message;
 mod view_cache;
 mod workspace_actions;
 mod worktree_actions;

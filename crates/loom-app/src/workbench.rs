@@ -615,6 +615,20 @@ impl Workbench {
             if let Ok(text) = std::env::var("LOOM_PREFILL") {
                 composer.update(cx, |c, cx| c.set_text(&text, window, cx));
             }
+            // 调试用:LOOM_EDIT=第几条用户消息(从 1 起),等历史回放完后自动进入编辑,方便截图检查编辑卡
+            if let Some(n) = std::env::var("LOOM_EDIT").ok().and_then(|v| v.parse::<usize>().ok()) {
+                let m = model.clone();
+                cx.spawn_in(window, async move |_, cx| {
+                    cx.background_executor().timer(std::time::Duration::from_millis(2500)).await;
+                    let _ = cx.update(|window, cx| {
+                        let found = m.read(cx).state.items.iter().filter_map(|i| if let TimelineItem::User { id, text, .. } = i { Some((id.clone(), crate::user_message::display_text(text))) } else { None }).nth(n.saturating_sub(1));
+                        if let Some((id, text)) = found {
+                            m.update(cx, |m, cx| m.begin_edit(&id, &text, window, cx));
+                        }
+                    });
+                })
+                .detach();
+            }
             // 调试用:打开后自动发送一条提示,用于端到端验证真实后端
             if let Ok(text) = std::env::var("LOOM_AUTOSEND") {
                 model.update(cx, |m, cx| m.send_prompt(text, cx));

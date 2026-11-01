@@ -28,6 +28,8 @@ pub struct SessionModel {
     pub turn_started: Option<std::time::Instant>,
     pub thinking_times: std::collections::HashMap<String, (std::time::Instant, Option<std::time::Instant>)>,
     pub item_row: Vec<usize>,
+    /// 正在就地编辑的用户消息(见 `user_message.rs`)
+    pub editing: Option<crate::user_message::UserEdit>,
     pub wheel_acc: f32,
     pub wheel_pending: bool,
     wheel_last: f32,
@@ -67,6 +69,7 @@ impl SessionModel {
             turn_started: None,
             thinking_times: Default::default(),
             item_row: Vec::new(),
+            editing: None,
             wheel_acc: 0.,
             wheel_pending: false,
             wheel_last: 0.,
@@ -233,7 +236,7 @@ impl SessionModel {
         self.expanded.contains(id)
     }
 
-    fn remeasure_id(&mut self, id: &str, cx: &mut Context<Self>) {
+    pub(crate) fn remeasure_id(&mut self, id: &str, cx: &mut Context<Self>) {
         // 折叠组的 key 是「grp:首个工具 id」
         let id = id.strip_prefix("grp:").unwrap_or(id);
         if let Some(row) = self.state.row_of(id).and_then(|i| self.item_row.get(i).copied()) {
