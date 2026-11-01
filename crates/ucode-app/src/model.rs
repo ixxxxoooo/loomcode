@@ -21,6 +21,10 @@ pub struct SessionModel {
     /// 一次滚轮手势里累计的垂直位移与防抖任务是否已排队(用来吸附误触的微小滚动)
     /// 显示行(连续工具调用折成一行)与「条目下标 → 行下标」映射
     pub rows: Vec<crate::row_groups::Row>,
+    /// 刚点过「复制」的助手条目 id(1.5 秒后清掉,用来显示「已复制」)
+    pub copied: Option<String>,
+    /// 思考条目的计时:id → (开始, 结束)。只有实时看到的思考才有时长,历史回放没有
+    pub thinking_times: std::collections::HashMap<String, (std::time::Instant, Option<std::time::Instant>)>,
     pub item_row: Vec<usize>,
     pub wheel_acc: f32,
     pub wheel_pending: bool,
@@ -57,6 +61,8 @@ impl SessionModel {
             wizard_step: Default::default(),
             wizard_draft: Default::default(),
             rows: Vec::new(),
+            copied: None,
+            thinking_times: Default::default(),
             item_row: Vec::new(),
             wheel_acc: 0.,
             wheel_pending: false,
@@ -78,6 +84,13 @@ impl SessionModel {
                 if let Some(row) = self.state.row_of(&id) {
                     dirty_rows.push(row);
                 }
+            }
+        }
+        self.track_thinking();
+        // 回合结束:最后一条助手消息下面会出现操作条,行高变了
+        if turn_ended {
+            if let Some(ix) = self.state.items.iter().rposition(|i| matches!(i, TimelineItem::Assistant { .. })) {
+                dirty_rows.push(ix);
             }
         }
         // 重新算显示行;只有尾部会变,把变化的那一段整体替换,并重新测量内容变了的行
@@ -211,6 +224,45 @@ impl SessionModel {
             });
         }
         cx.notify();
+    }
+
+    /// 记下刚复制了哪条助手消息,1.5 秒后恢复按钮文案。
+    ///
+    /// 参数:`id` 助手条目 id。
+    pub fn mark_copied(&mut self, id: &str, cx: &mut Context<Self>) {
+        self.copied = Some(id.to_string());
+        let id = id.to_string();
+        cx.spawn(async move |this, cx| {
+            cx.background_executor().timer(std::time::Duration::from_millis(1500)).await;
+            let _ = this.update(cx, |m, cx| {
+                if m.copied.as_deref() == Some(id.as_str()) {
+                    m.copied = None;
+                    cx.notify();
+                }
+            });
+        })
+        .detach();
+        cx.notify();
+    }
+
+    /// 思考用时(秒);没有实时计时(历史回放)或还没结束返回 `None`。
+    pub fn thinking_secs(&self, id: &str) -> Option<u64> {
+        let (start, end) = self.thinking_times.get(id)?;
+        end.map(|e| e.duration_since(*start).as_secs())
+    }
+
+    /// 更新末尾几个思考条目的计时:开始流式记开始,结束流式记结束。
+    fn track_thinking(&mut self) {
+        let now = std::time::Instant::now();
+        let n = self.state.items.len();
+        for item in &self.state.items[n.saturating_sub(4)..] {
+            if let TimelineItem::Thinking { id, streaming, .. } = item {
+                let e = self.thinking_times.entry(id.clone()).or_insert((now, None));
+                if !*streaming && e.1.is_none() {
+                    e.1 = Some(now);
+                }
+            }
+        }
     }
 
     /// 滚轮事件:累计位移,手势停下 150ms 后,若只是在贴底处轻微晃动(净位移 < 40px)

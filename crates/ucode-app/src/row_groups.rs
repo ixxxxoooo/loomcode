@@ -180,3 +180,51 @@ mod tests {
         assert!(needs_attention(&[&run]));
     }
 }
+
+/// 第 `ix` 个条目是不是这一回合最后一条助手消息(它下面才显示复制等操作条)。
+///
+/// 规则:它自己不在流式输出;往后一直到下一条用户消息(或结尾)之间没有别的助手消息;
+/// 如果后面就是结尾,回合还在进行(`running`)时不算。
+///
+/// 参数:`items` 时间线条目;`ix` 条目下标;`running` 回合是否在进行。
+pub fn is_turn_last_assistant(items: &[TimelineItem], ix: usize, running: bool) -> bool {
+    match items.get(ix) {
+        Some(TimelineItem::Assistant { streaming: false, .. }) => {}
+        _ => return false,
+    }
+    for item in &items[ix + 1..] {
+        match item {
+            TimelineItem::Assistant { .. } => return false,
+            TimelineItem::User { .. } => return true,
+            _ => {}
+        }
+    }
+    !running
+}
+
+#[cfg(test)]
+mod turn_tests {
+    use super::*;
+
+    fn a(id: &str, streaming: bool) -> TimelineItem {
+        TimelineItem::Assistant { id: id.into(), text: "x".into(), streaming }
+    }
+    fn u() -> TimelineItem {
+        TimelineItem::User { id: "u".into(), text: "q".into(), images: vec![], files: vec![] }
+    }
+
+    #[test]
+    fn 回合最后一条助手消息() {
+        let items = vec![u(), a("1", false), a("2", false), u(), a("3", false)];
+        assert!(!is_turn_last_assistant(&items, 1, false));
+        assert!(is_turn_last_assistant(&items, 2, false));
+        assert!(is_turn_last_assistant(&items, 4, false));
+    }
+
+    #[test]
+    fn 进行中与流式不显示() {
+        let items = vec![u(), a("1", false)];
+        assert!(!is_turn_last_assistant(&items, 1, true));
+        assert!(!is_turn_last_assistant(&[u(), a("1", true)], 1, false));
+    }
+}

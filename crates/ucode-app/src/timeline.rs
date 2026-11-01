@@ -25,7 +25,19 @@ pub fn render_row(session: &Entity<SessionModel>, ix: usize, window: &mut Window
         crate::row_groups::Row::Item(i) => {
             let item = session.read(cx).state.items.get(i).cloned();
             let Some(item) = item else { return div().into_any_element() };
-            render_item(session, &item, 0, window, cx)
+            let running = session.read(cx).state.phase == Phase::Running;
+            let footer = match &item {
+                TimelineItem::Assistant { id, text, .. } if crate::row_groups::is_turn_last_assistant(&session.read(cx).state.items, i, running) => Some((id.clone(), text.clone())),
+                _ => None,
+            };
+            let body = render_item(session, &item, 0, window, cx);
+            match footer {
+                Some((id, text)) => {
+                    let group = SharedString::from(format!("turn-{id}"));
+                    v_flex().w_full().group(group.clone()).child(body).child(crate::turn_footer::render(session, &id, &text, group, cx)).into_any_element()
+                }
+                None => body,
+            }
         }
         crate::row_groups::Row::Tools(range) => crate::tool_group::render_group(session, range, cx),
         crate::row_groups::Row::Working => render_working(cx),
@@ -112,6 +124,17 @@ fn render_user(session: &Entity<SessionModel>, id: &str, text: &str, images: &[S
         .into_any_element()
 }
 
+/// 「已思考 N 秒」文案:不到 1 秒或没有实时计时(历史回放)就只写「已思考」。
+///
+/// 参数:`secs` 思考用时(秒)。
+pub fn thought_label(secs: Option<u64>) -> String {
+    match secs {
+        Some(s) if s >= 60 => format!("已思考 {} 分 {} 秒", s / 60, s % 60),
+        Some(s) if s >= 1 => format!("已思考 {s} 秒"),
+        _ => "已思考".to_string(),
+    }
+}
+
 /// 思考:折叠行,流式时显示流光「思考中…」。
 fn render_thinking(session: &Entity<SessionModel>, id: &str, text: &str, streaming: bool, cx: &App) -> AnyElement {
     let t = cx.theme();
@@ -129,7 +152,7 @@ fn render_thinking(session: &Entity<SessionModel>, id: &str, text: &str, streami
                 .child(if streaming {
                     ShimmerText::new("思考中…").id(SharedString::from(format!("think-shimmer-{id}"))).into_any_element()
                 } else {
-                    div().text_size(px(13.)).text_color(t.muted_foreground).child("已思考").into_any_element()
+                    div().text_size(px(13.)).text_color(t.muted_foreground).child(thought_label(session.read(cx).thinking_secs(id))).into_any_element()
                 })
                 .child(icon(if expanded { IconName::ChevronDown } else { IconName::ChevronRight }, 12., t.muted_foreground)),
         )
@@ -142,4 +165,17 @@ fn render_thinking(session: &Entity<SessionModel>, id: &str, text: &str, streami
 #[allow(dead_code)]
 fn _keep(_: &Hsla) {
     let _ = pill("", gpui_kit::black(), gpui_kit::black());
+}
+
+#[cfg(test)]
+mod tests {
+    use super::thought_label;
+
+    #[::core::prelude::v1::test]
+    fn 思考时长文案() {
+        assert_eq!(thought_label(None), "已思考");
+        assert_eq!(thought_label(Some(0)), "已思考");
+        assert_eq!(thought_label(Some(1)), "已思考 1 秒");
+        assert_eq!(thought_label(Some(75)), "已思考 1 分 15 秒");
+    }
 }

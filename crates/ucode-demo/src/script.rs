@@ -121,7 +121,19 @@ impl ScriptBuilder {
         self
     }
 
+    /// 流式思考文本,并把总耗时拉长到约 `ms` 毫秒(演示「已思考 N 秒」)。
+    pub fn think_for(&mut self, text: &str, ms: u64) -> &mut Self {
+        let id = self.next_id("think");
+        let chunks = text.chars().count().div_ceil(24).max(1) as u64;
+        self.stream_paced(&id, text, true, (ms / chunks).max(18));
+        self
+    }
+
     fn stream(&mut self, id: &str, text: &str, thinking: bool) {
+        self.stream_paced(id, text, thinking, 18);
+    }
+
+    fn stream_paced(&mut self, id: &str, text: &str, thinking: bool, pace_ms: u64) {
         let chars: Vec<char> = text.chars().collect();
         for chunk in chars.chunks(24) {
             let delta: String = chunk.iter().collect();
@@ -132,7 +144,7 @@ impl ScriptBuilder {
             } else {
                 AgentEvent::TextDelta { parent, id: id_s, delta }
             });
-            self.steps.push(Step::Sleep(18));
+            self.steps.push(Step::Sleep(pace_ms));
         }
         self.emit(AgentEvent::ItemDone { parent: self.parent.clone(), id: id.into() });
     }

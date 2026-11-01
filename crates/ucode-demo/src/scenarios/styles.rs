@@ -13,6 +13,7 @@ pub fn scenarios() -> Vec<Scenario> {
         Scenario { id: "mermaid", title: "Mermaid 图表:架构文档", group: "会话流样式", kind: Kind::Auto, prompt: "画出整体架构", build: mermaid },
         Scenario { id: "chart", title: "内联图表:折线与 K 线", group: "会话流样式", kind: Kind::Auto, prompt: "画一下近 30 天的访问量", build: chart },
         Scenario { id: "tool-runs", title: "工具调用折叠:读 / 搜 / 改 / 跑混合的一轮", group: "会话流样式", kind: Kind::Auto, prompt: "帮我把 router 里的大小写匹配问题修一下", build: tool_runs },
+        Scenario { id: "thinking-time", title: "思考用时:已思考 N 秒与回复操作条", group: "会话流样式", kind: Kind::Auto, prompt: "分析一下这个方案的利弊", build: thinking_time },
         Scenario { id: "tool-runs-live", title: "工具调用折叠:有失败与未结束(默认展开)", group: "会话流样式", kind: Kind::Frozen, prompt: "跑一下完整的检查", build: tool_runs_live },
         Scenario { id: "working-state", title: "处理中:工具跑完后等模型继续", group: "会话流样式", kind: Kind::Frozen, prompt: "继续", build: working_state },
         Scenario { id: "user-variants", title: "用户消息:图片、@文件与长文折叠", group: "会话流样式", kind: Kind::Auto, prompt: "展示各种用户消息", build: user_variants },
@@ -103,5 +104,15 @@ fn working_state() -> Script {
     b.tool("Read", "读取 settings.json", json!({}), vec![ToolContent::Text("{}".into())]);
     b.tool("Read", "读取 Cargo.toml", json!({}), vec![ToolContent::Text("[package]".into())]);
     b.hold();
+    b.build()
+}
+
+/// 实时思考:两段思考分别约 3 秒和 7 秒,结束后回复下面有操作条。
+fn thinking_time() -> Script {
+    let mut b = ScriptBuilder::new();
+    b.think_for("先把方案拆成几个维度:成本、风险、可维护性,再逐个权衡。", 3000);
+    b.say("先说结论:**值得做**,但要分两步走。");
+    b.think_for("再想想落地顺序:先做可回滚的小步改动,验证没问题再扩大范围,最后清理旧实现。", 7000);
+    b.say("具体建议:\n\n1. 先灰度一周\n2. 观察错误率\n3. 再全量切换");
     b.build()
 }

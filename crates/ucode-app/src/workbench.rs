@@ -496,7 +496,7 @@ impl Workbench {
         self.page = Page::Chat;
         if !self.views.contains_key(id) {
             let cwd = self.projects[project_ix].path.clone();
-            let live = id == "showcase-tour";
+            let live = id == "showcase-tour" || id == "thinking-time";
             let is_new = self.new_sessions.contains(id);
             // 分叉会话:恢复源会话并分叉,界面先回放源会话的历史
             let fork_src = self.forks.get(id).cloned();
