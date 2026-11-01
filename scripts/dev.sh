@@ -1,7 +1,9 @@
 #!/bin/sh
 # 重启开发版:先编译,成功后杀掉所有旧的开发版实例,再启动唯一的新实例。
 # 开发版带 LOOM_DEV=1,界面左下角会显示「开发版」徽章(演示模式下显示「演示模式」)。
-# 用法:scripts/dev.sh [--demo]     日志:target/dev.log
+# 用法:scripts/dev.sh [--demo|--real]     日志:target/dev.log
+# 不带开关时沿用上次在应用里「切换演示 / 真实」的选择(记在 ~/.loomcode/dev-mode),没有记忆就是真实模式。
+# 应用内切换会自己重启并更新 target/dev.pid,始终只留一个实例。
 #
 # @author ixxxxoooo
 set -e

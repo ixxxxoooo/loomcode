@@ -102,12 +102,15 @@ pub fn dev_badge(cx: &App) -> Option<Div> {
 /// 放在左下角设置按钮的右侧。
 ///
 /// 参数:`demo` 是否演示模式。
-pub fn env_badges(demo: bool, cx: &App) -> Option<Div> {
+pub fn env_badges(demo: bool, cx: &App) -> Option<Stateful<Div>> {
     let t = cx.theme();
-    if demo {
-        return Some(pill("演示模式", t.primary_foreground, t.primary));
-    }
-    dev_badge(cx)
+    let badge = if demo { Some(pill("演示模式", t.primary_foreground, t.primary)) } else { dev_badge(cx) }?;
+    // 点击徽章 = 一键切换演示 / 真实(确认后重启)
+    Some(
+        div().id("env-badge").cursor_pointer().child(badge)
+            .tooltip(move |window, cx| gpui_kit::component::tooltip::Tooltip::new(if demo { "点击切换到真实模式" } else { "点击切换到演示模式" }).build(window, cx))
+            .on_click(|_, window, cx| window.dispatch_action(Box::new(crate::workbench::SwitchMode), cx)),
+    )
 }
 
 /// 标题栏里的可点击控件包装:吞掉鼠标按下,避免在按钮上双击触发窗口最大化或拖动窗口。

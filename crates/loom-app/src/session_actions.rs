@@ -110,6 +110,10 @@ impl Workbench {
 
     /// 调试用:按 `LOOM_DIALOG` 打开对话框。`rename` 重命名当前会话,`workspace` 新建工作区。
     pub fn debug_open_dialog(&mut self, kind: &str, window: &mut Window, cx: &mut Context<Self>) {
+        if kind == "switch-mode" {
+            self.request_switch_mode(window, cx);
+            return;
+        }
         if kind == "workspace" {
             return self.new_workspace_dialog(window, cx);
         }

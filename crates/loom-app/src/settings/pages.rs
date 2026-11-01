@@ -181,7 +181,10 @@ pub fn about(wb: &Workbench, cx: &mut Context<Workbench>) -> AnyElement {
         .child(group("版本", rows![
             row("LoomCode", "只支持 Claude Code,直连本机 claude 的 stream-json 控制协议", div().font_family(MONO).text_size(px(12.5)).child(format!("v{}", env!("CARGO_PKG_VERSION"))), cx),
             row("Claude Code", "本机 claude 命令行", div().font_family(MONO).text_size(px(12.5)).child(claude), cx),
-            row("运行模式", "演示模式用脚本化后端与沙盒项目", pill(if wb.demo { "演示" } else { "真实" }, if wb.demo { t.warning } else { t.success }, t.muted), cx),
+            row("运行模式", "演示模式用脚本化后端与沙盒项目;切换会重启应用", h_flex().gap_2().items_center()
+                .child(pill(if wb.demo { "演示" } else { "真实" }, if wb.demo { t.warning } else { t.success }, t.muted))
+                .child(Button::new("about-switch-mode").small().label(wb.switch_mode_label())
+                    .on_click(|_, window, cx| window.dispatch_action(Box::new(crate::workbench::SwitchMode), cx))), cx),
             row("系统", "", div().font_family(MONO).text_size(px(12.5)).child(format!("{} · {}", std::env::consts::OS, std::env::consts::ARCH)), cx),
         ], cx))
         .child(group("更新", rows![

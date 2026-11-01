@@ -33,7 +33,7 @@ pub struct ViewAgentRun {
     pub id: String,
 }
 
-actions!(loomcode, [TogglePalette, ToggleLeft, ToggleRight, OpenSettings, CycleMode, NewSession, Escape, SaveFile, ToggleIde]);
+actions!(loomcode, [TogglePalette, ToggleLeft, ToggleRight, OpenSettings, CycleMode, NewSession, Escape, SaveFile, ToggleIde, SwitchMode]);
 
 /// 主区域当前页面。
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -371,6 +371,14 @@ impl Workbench {
             })
             .detach();
         }
+        // 调试用:LOOM_DIALOG=switch-mode 打开切换确认框(截图用);LOOM_AUTOSWITCH=1 启动 3 秒后直接切换并重启(验证重启链路用,重启时会清掉)
+        if std::env::var("LOOM_AUTOSWITCH").is_ok_and(|v| v == "1") {
+            cx.spawn_in(window, async move |this, cx| {
+                cx.background_executor().timer(std::time::Duration::from_secs(3)).await;
+                let _ = this.update(cx, |this, cx| { let to = !this.demo; this.switch_mode_now(to, cx) });
+            })
+            .detach();
+        }
         if let Ok(q) = std::env::var("LOOM_PALETTE") {
             wb.toggle_palette(window, cx);
             if let Some(p) = wb.palette.clone() {
@@ -508,6 +516,7 @@ impl Workbench {
         cmd("自定义:规则与记忆 CLAUDE.md", "", IconName::Brain, PaletteAction::OpenCustomize("rules"));
         cmd("自定义:钩子", "", IconName::Webhook, PaletteAction::OpenCustomize("hooks"));
         cmd("切换权限模式", "⇧Tab", IconName::Shield, PaletteAction::CycleMode);
+        cmd(&format!("{}(重启)", self.switch_mode_label()), "演示 ↔ 真实", IconName::Repeat, PaletteAction::SwitchMode);
         cmd("切换 IDE 模式", "⇧⌘E", IconName::Code, PaletteAction::ToggleIde);
         cmd("显示 / 隐藏左侧栏", "⌘B", IconName::PanelLeft, PaletteAction::ToggleLeft);
         cmd("显示 / 隐藏右侧面板", "⌥⌘B", IconName::PanelRight, PaletteAction::ToggleRight);
@@ -572,6 +581,7 @@ impl Workbench {
             PaletteAction::OpenProject(pi) => self.open_project_from_palette(pi, window, cx),
             PaletteAction::OpenFile(path) => self.open_file(path, window, cx),
             PaletteAction::RunScenario(id) => self.open_scenario(&id, window, cx),
+            PaletteAction::SwitchMode => self.request_switch_mode(window, cx),
         }
     }
 
@@ -1276,6 +1286,7 @@ impl Render for Workbench {
             .on_action(cx.listener(|this, _: &NewSession, window, cx| this.new_session(this.target_project(), window, cx)))
             .on_action(cx.listener(|this, _: &SaveFile, _, cx| this.save_ide(cx)))
             .on_action(cx.listener(|this, _: &ToggleIde, window, cx| this.toggle_ide(window, cx)))
+            .on_action(cx.listener(|this, _: &SwitchMode, window, cx| this.request_switch_mode(window, cx)))
             .on_action(cx.listener(|this, _: &CycleMode, _, cx| {
                 if let Some(m) = this.active_model().cloned() {
                     m.update(cx, |m, cx| { let next = m.state.mode.next(); m.set_mode(next, cx); });

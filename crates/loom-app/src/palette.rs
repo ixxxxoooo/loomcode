@@ -29,6 +29,8 @@ pub enum PaletteAction {
     OpenFile(String),
     /// 演示场景 id
     RunScenario(String),
+    /// 演示 ↔ 真实一键切换(确认后重启)
+    SwitchMode,
 }
 
 /// 条目分组。

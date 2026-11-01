@@ -1,7 +1,7 @@
 //! LoomCode:Rust + gpui-kit 的 Claude Code 工作台。
 //!
 //! 启动参数:
-//! - `--demo`(或环境变量 `LOOM_DEMO=1`):演示模式,脚本化后端、沙盒项目;
+//! - `--demo`(或环境变量 `LOOM_DEMO=1`):演示模式,脚本化后端、沙盒项目;`--real` / `LOOM_DEMO=0` 强制真实;开发版不带开关时沿用上次在应用里切换的模式;
 //! - 其余情况使用真实 `claude`:读取 `~/.claude/projects` 的历史会话,按需惰性启动子进程。
 
 // 主题的语法配色用大段 json! 构造,默认递归上限不够
@@ -11,6 +11,7 @@ mod ansi;
 mod ask_cards;
 mod dock_cards;
 mod agent_group;
+mod mode_switch;
 mod subagent_card;
 mod task_ui;
 mod tasks_tab;
@@ -168,7 +169,10 @@ pub fn prefs(cx: &App) -> loom_config::AppSettings {
 
 fn main() {
     let args: Vec<String> = std::env::args().collect();
-    let demo = args.iter().any(|a| a == "--demo") || std::env::var("LOOM_DEMO").is_ok_and(|v| v == "1");
+    // 启动模式:显式指定 > 开发版记住的上次选择 > 真实(见 `mode_switch`)
+    let is_dev = std::env::var("LOOM_DEV").is_ok_and(|v| v == "1");
+    let memory = std::env::var_os("HOME").and_then(|h| mode_switch::read_memory(std::path::Path::new(&h)));
+    let demo = mode_switch::resolve_demo(&args, std::env::var("LOOM_DEMO").ok().as_deref(), is_dev, memory);
     let session_arg = std::env::var("LOOM_SESSION").ok();
     // 更名前的数据目录 ~/.ucode 搬到 ~/.loomcode(只做一次)
     loom_config::legacy::migrate_home();
