@@ -421,6 +421,12 @@ impl SessionState {
             return;
         }
         // 只有任务此前已是终态时才去重;恢复运行后的再次完成应当再出一条通知
+        // 子 Agent 的状态已经在它自己的卡片上,不再重复插一行通知(否则会把并行派发的卡片拆开)
+        let tool_use = self.task(&task_id).and_then(|t| t.tool_use_id.clone());
+        let has_card = matches!(note_kind, TaskKind::Agent) && tool_use.is_some_and(|tu| matches!(self.find_mut(&tu), Some(TimelineItem::Subagent(_))));
+        if has_card {
+            return;
+        }
         let dup = was_finished && self.items.iter().rev().take(6).any(|i| matches!(i, TimelineItem::TaskNote { task_id: t, status: s, .. } if *t == task_id && *s == status));
         if visible && !dup {
             let id = format!("tasknote-{task_id}-{}", self.items.len());
@@ -601,8 +607,18 @@ mod tests {
         assert_eq!(c.status, SubagentStatus::Completed);
         assert!(c.ended_ms.is_some());
         assert_eq!(s.running_task_count(), 0);
-        // 完成时在时间线追加一条通知,重复通知不重复追加
-        s.apply(AgentEvent::TaskNotification { task_id: "t1".into(), status: TaskStatus::Completed, summary: "调研完成".into(), output_file: None });
+        assert_eq!(c.summary, "调研完成");
+        // 有卡片的子 Agent 不再重复插通知行
+        assert_eq!(s.items.iter().filter(|i| matches!(i, TimelineItem::TaskNote { .. })).count(), 0);
+    }
+
+    #[test]
+    fn 后台命令完成追加通知且重复通知不重复() {
+        let mut s = SessionState::default();
+        s.apply(AgentEvent::TaskStarted(BackgroundTask::new("sh1", TaskKind::Shell, "构建")));
+        let done = || AgentEvent::TaskNotification { task_id: "sh1".into(), status: TaskStatus::Completed, summary: "构建完成".into(), output_file: None };
+        s.apply(done());
+        s.apply(done());
         assert_eq!(s.items.iter().filter(|i| matches!(i, TimelineItem::TaskNote { .. })).count(), 1);
     }
 

@@ -1216,7 +1216,7 @@ mod tests {
     }
 
     #[test]
-    fn 后台任务通知收尾并追加通知行() {
+    fn 后台子代理通知收尾并写入卡片摘要() {
         let mut t = Translator::new("/w");
         let s = run(
             &mut t,
@@ -1232,7 +1232,9 @@ mod tests {
         let TimelineItem::Subagent(card) = &s.items[0] else { panic!() };
         assert_eq!(card.status, SubagentStatus::Completed);
         assert_eq!(s.running_task_count(), 0);
-        assert!(matches!(&s.items[1], TimelineItem::TaskNote { status: TaskStatus::Completed, text, .. } if text == "盘点完成,共 12 页"));
+        // 子 Agent 的结果写在自己的卡片上,不再额外插通知行
+        assert_eq!(card.summary, "盘点完成,共 12 页");
+        assert!(!s.items.iter().any(|i| matches!(i, TimelineItem::TaskNote { .. })));
     }
 
     #[test]

@@ -196,9 +196,10 @@ fn 恢复运行复用任务编号() {
     run_drain(&h, &mut s);
     assert_eq!(s.tasks.iter().filter(|t| t.task_id == "t-res").count(), 1);
     assert_eq!(find_task(&s, "t-res").status, TaskStatus::Completed);
-    // 两次完成各出现一条通知
+    // 子 Agent 的状态在自己的卡片上,不再重复插通知行
     let notes = s.items.iter().filter(|i| matches!(i, TimelineItem::TaskNote { task_id, .. } if task_id == "t-res")).count();
-    assert_eq!(notes, 2);
+    assert_eq!(notes, 0);
+    assert!(s.items.iter().any(|i| matches!(i, TimelineItem::Subagent(c) if c.id == "res-1" && c.status == SubagentStatus::Completed)));
     h.send(AgentCommand::Shutdown);
 }
 
@@ -218,4 +219,28 @@ fn 全场景会话覆盖所有展示() {
     assert!(s.tasks.iter().any(|t| t.kind == TaskKind::Monitor));
     assert!(s.tasks.iter().any(|t| t.kind == TaskKind::Workflow));
     assert!(s.running_task_count() >= 3);
+}
+
+#[test]
+fn 后台子代理的用时按真实时间计算() {
+    // 速度 0.02:脚本偏移被压缩,但各事件之间仍有真实间隔
+    let backend = DemoBackend { speed: 1.0 };
+    let h = backend.start(BackendConfig::default()).unwrap();
+    h.send(AgentCommand::Prompt { text: "/demo-bg-agent".into(), images: vec![], files: vec![], steer: false });
+    let mut s = SessionState::default();
+    let deadline = std::time::Instant::now() + Duration::from_secs(12);
+    while std::time::Instant::now() < deadline {
+        match h.events.try_recv() {
+            Ok(ev) => s.apply(ev),
+            Err(_) => std::thread::sleep(Duration::from_millis(5)),
+        }
+        if s.task("t-ag-a").is_some_and(|t| t.status.is_finished()) {
+            break;
+        }
+    }
+    h.send(AgentCommand::Shutdown);
+    let card = s.items.iter().find_map(|i| match i { TimelineItem::Subagent(c) if c.id == "ag-a" => Some(c.clone()), _ => None }).unwrap();
+    assert_eq!(card.status, SubagentStatus::Completed);
+    let ms = card.elapsed_ms(now_ms()).expect("应有用时");
+    assert!(ms >= 3000, "用时应来自真实时间,实际 {ms}ms");
 }

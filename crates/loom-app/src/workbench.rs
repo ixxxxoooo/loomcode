@@ -595,7 +595,8 @@ impl Workbench {
         self.page = Page::Chat;
         if !self.views.contains_key(id) {
             let cwd = self.projects[project_ix].path.clone();
-            let live = id == "showcase-tour" || id == "thinking-time";
+            // 后台任务相关场景与全场景会话也要真实节奏,才能看到任务一边运行一边变化
+            let live = id == "showcase-tour" || id == "thinking-time" || id == "showcase-all" || id.starts_with("bg-");
             let is_new = self.new_sessions.contains(id);
             // 分叉会话:恢复源会话并分叉,界面先回放源会话的历史
             let fork_src = self.forks.get(id).cloned();
