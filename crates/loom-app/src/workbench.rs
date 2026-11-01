@@ -593,6 +593,10 @@ impl Workbench {
             let model = cx.new(|cx| SessionModel::new(handle, cx));
             let composer = cx.new(|cx| Composer::new(model.clone(), self.demo, window, cx));
             self.push_extensions(&composer, &self.work_root(&cwd), cx);
+            if !self.demo {
+                let ctx = crate::composer_send::RewriteCtx { claude_path: self.settings.claude_path.clone(), cwd: cwd.clone().into(), env: self.session_extra_env() };
+                composer.update(cx, |c, _| c.set_rewrite_ctx(ctx));
+            }
             // 调试用:预填输入框,方便截图检查补全
             if let Ok(text) = std::env::var("LOOM_PREFILL") {
                 composer.update(cx, |c, cx| c.set_text(&text, window, cx));

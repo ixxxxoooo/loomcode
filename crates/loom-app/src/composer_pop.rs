@@ -56,6 +56,7 @@ pub fn model_popup(models: &[ModelInfo], current: &str, effort: Effort, this: En
             .hover(|d| d.bg(t.list_hover))
             .on_click(move |_, _, cx| { let id = id.clone(); this.update(cx, |c, cx| c.choose_model(&id, cx)); })
             .child(div().w(px(14.)).child(if on { icon(IconName::Check, 12., t.primary).into_any_element() } else { div().into_any_element() }))
+            .child(crate::brand_icons::brand_icon(&m.id, &m.name, 14., if on { t.foreground } else { t.muted_foreground }))
             .child(div().text_size(px(13.)).child(m.name.clone()))
             .child(div().flex_1())
             .child(div().text_size(px(11.)).text_color(t.muted_foreground).child(m.description.clone()))

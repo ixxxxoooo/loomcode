@@ -3,9 +3,8 @@
 use crate::model::SessionModel;
 use crate::ui::{icon, pill};
 use gpui_kit::assets::IconName;
-use gpui_kit::component::button::{Button, ButtonVariants};
 use gpui_kit::component::input::{Indent, InputEvent, MoveDown, MoveUp, Textarea, TextareaState};
-use gpui_kit::component::{ActiveTheme, Sizable, h_flex, v_flex};
+use gpui_kit::component::{ActiveTheme, h_flex, v_flex};
 use gpui_kit::prelude::FluentBuilder as _;
 use gpui_kit::*;
 use loom_core::*;
@@ -61,8 +60,8 @@ struct Attachment {
 }
 
 pub struct Composer {
-    session: Entity<SessionModel>,
-    input: Entity<TextareaState>,
+    pub(crate) session: Entity<SessionModel>,
+    pub(crate) input: Entity<TextareaState>,
     open: Option<Pick>,
     /// 刚被「点击外部」关闭的时间,用来避免点触发按钮时又立刻重新打开
     outside_closed: Option<std::time::Instant>,
@@ -71,7 +70,13 @@ pub struct Composer {
     sel: usize,
     attachments: Vec<Attachment>,
     attach_counter: usize,
-    demo: bool,
+    pub(crate) demo: bool,
+    /// 优化提示词的运行环境(真实模式由工作台注入)
+    pub(crate) rewrite: Option<crate::composer_send::RewriteCtx>,
+    /// 正在优化提示词
+    pub(crate) optimizing: bool,
+    /// 最近一次优化失败的原因,下次输入变化时清除
+    pub(crate) optimize_error: Option<String>,
     /// 自定义斜杠命令与 Skills:(`/名称`, 描述),由工作台扫描 `.claude` 后注入
     custom_commands: Vec<(String, String)>,
     /// 自定义子 Agent 名称(`@` 补全用)
@@ -111,7 +116,10 @@ impl Composer {
                     this.accept_suggestion(this.sel, window, cx)
                 }
             }
-            InputEvent::Change => this.refresh_suggestions(cx),
+            InputEvent::Change => {
+                this.optimize_error = None;
+                this.refresh_suggestions(cx)
+            }
             _ => {}
         });
         // 调试用:LOOM_POPUP=model|context 启动即打开对应弹层(只用于截图验证)
@@ -120,7 +128,7 @@ impl Composer {
             Ok("context") => Some(Pick::Context),
             _ => None,
         };
-        Self { session, input, open, outside_closed: None, suggestions: Vec::new(), sel: 0, attachments: Vec::new(), attach_counter: 0, demo, custom_commands: Vec::new(), custom_agents: Vec::new(), _sub: sub }
+        Self { session, input, open, outside_closed: None, suggestions: Vec::new(), sel: 0, attachments: Vec::new(), attach_counter: 0, demo, rewrite: None, optimizing: false, optimize_error: None, custom_commands: Vec::new(), custom_agents: Vec::new(), _sub: sub }
     }
 
     /// 输入框里有没有未发送的内容(文字或附件);淘汰会话视图前要保护草稿。
@@ -250,7 +258,7 @@ impl Composer {
         cx.notify();
     }
 
-    fn submit(&mut self, window: &mut Window, cx: &mut Context<Self>) {
+    pub(crate) fn submit(&mut self, window: &mut Window, cx: &mut Context<Self>) {
         let text = self.input.read(cx).value().trim().to_string();
         if text.is_empty() && self.attachments.is_empty() {
             return;
@@ -341,10 +349,10 @@ impl Composer {
 impl Render for Composer {
     fn render(&mut self, _window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
         let t = cx.theme().clone();
-        let (phase, mode, model_name, effort, queued, usage) = {
+        let (phase, mode, model_id, model_name, effort, queued, usage) = {
             let m = self.session.read(cx);
             let name = m.state.models.iter().find(|x| x.id == m.state.model).map(|x| x.name.clone()).unwrap_or_else(|| m.state.model.clone());
-            (m.state.phase, m.state.mode, name, m.state.effort, m.queued.len(), m.state.usage.clone())
+            (m.state.phase, m.state.mode, m.state.model.clone(), name, m.state.effort, m.queued.len(), m.state.usage.clone())
         };
         let running = phase == Phase::Running;
         let mode_color = match mode {
@@ -356,10 +364,11 @@ impl Render for Composer {
         };
         let this = cx.entity();
 
-        let chip = |id: &'static str, label: String, color: Hsla, kind: Pick, this: Entity<Self>| {
+        let chip = |id: &'static str, label: String, color: Hsla, kind: Pick, lead: Option<AnyElement>, this: Entity<Self>| {
             h_flex().id(id).h(px(24.)).px_2().gap_1().items_center().rounded(px(6.)).cursor_pointer().text_size(px(12.))
                 .text_color(color).hover(|d| d.bg(t.list_hover))
                 .on_click(move |_, _, cx| { this.update(cx, |c, cx| c.toggle(kind, cx)); })
+                .when_some(lead, |d, l| d.child(l))
                 .child(label)
                 .child(icon(IconName::ChevronDown, 10., color))
         };
@@ -405,12 +414,16 @@ impl Render for Composer {
                 }))
         });
 
-        let send_btn = if running {
-            let s = self.session.clone();
-            Button::new("stop").small().danger().icon(IconName::Square).on_click(move |_, _, cx| { s.update(cx, |m, cx| m.cancel(cx)); })
-        } else {
+        let has_text = !self.input.read(cx).value().trim().is_empty();
+        let send_btn = {
+            let (s, this) = (self.session.clone(), this.clone());
+            crate::composer_send::send_button(running, has_text || !self.attachments.is_empty(), move |window, cx| {
+                if running { s.update(cx, |m, cx| m.cancel(cx)); } else { this.update(cx, |c, cx| c.submit(window, cx)); }
+            }, cx)
+        };
+        let optimize_btn = {
             let this = this.clone();
-            Button::new("send").small().primary().icon(IconName::ArrowUp).on_click(move |_, window, cx| { this.update(cx, |c, cx| c.submit(window, cx)); })
+            crate::composer_send::optimize_button(has_text, self.optimizing, move |window, cx| { this.update(cx, |c, cx| c.optimize(window, cx)); }, cx)
         };
 
         let paste_weak = cx.entity().downgrade();
@@ -475,14 +488,16 @@ impl Render for Composer {
                         })))
                         .child(
                             h_flex().h(px(36.)).px_2().gap_1().items_center()
-                                .child(chip("chip-mode", mode.label().to_string(), mode_color, Pick::Mode, this.clone()))
-                                .child(chip("chip-model", format!("{model_name} · {}", effort.label()), t.foreground, Pick::Model, this.clone()))
+                                .child(chip("chip-mode", mode.label().to_string(), mode_color, Pick::Mode, None, this.clone()))
+                                .child(chip("chip-model", format!("{model_name} · {}", effort.label()), t.foreground, Pick::Model, Some(crate::brand_icons::brand_icon(&model_id, &model_name, 13., t.foreground)), this.clone()))
                                 .when(queued > 0, |d| d.child(pill(format!("排队 {queued}"), t.warning, t.muted)))
                                 .child(div().flex_1())
                                 .when(usage.context_size > 0, |d| {
                                     let this = this.clone();
                                     d.child(crate::composer_pop::context_ring(&usage, move |cx| { this.update(cx, |c, cx| c.toggle(Pick::Context, cx)); }, cx))
                                 })
+                                .when_some(self.optimize_error.clone(), |d, e| d.child(div().text_size(px(11.)).text_color(t.danger).truncate().child(e)))
+                                .child(optimize_btn)
                                 .child(send_btn),
                         ),
                 )

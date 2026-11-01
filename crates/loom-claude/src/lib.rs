@@ -15,6 +15,7 @@ pub mod lazy;
 pub mod options;
 pub mod usage;
 pub mod protocol;
+pub mod rewrite;
 pub mod translate;
 
 pub use backend::ClaudeBackend;
