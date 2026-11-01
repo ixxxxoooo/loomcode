@@ -388,7 +388,7 @@ mod tests {
     #[::core::prelude::v1::test]
     fn 菜单标题截断() {
         assert_eq!(menu_title("短标题"), "短标题");
-        assert_eq!(menu_title("这是一个非常非常非常非常长的会话标题"), "这是一个非常非常非常非常长的会…");
+        assert_eq!(menu_title("这是一个非常非常非常非常长的会话标题"), "这是一个非常非常非常非常长的…");
     }
 
     #[::core::prelude::v1::test]
