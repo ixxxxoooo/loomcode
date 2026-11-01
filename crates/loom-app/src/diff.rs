@@ -41,10 +41,20 @@ pub fn compute(old: &str, new: &str) -> (Vec<DiffLine>, usize, usize) {
 
 /// 渲染 Diff;`max_lines` 限制渲染行数(超长 Diff 先显示前 N 行)。
 pub fn render(lines: &[DiffLine], max_lines: usize, cx: &App) -> Div {
+    render_with(lines, max_lines, true, cx)
+}
+
+/// 无外框版本(嵌在已有卡片里时用,避免框中框):整行底色直接铺到卡片边缘。
+pub fn render_flat(lines: &[DiffLine], max_lines: usize, cx: &App) -> Div {
+    render_with(lines, max_lines, false, cx)
+}
+
+fn render_with(lines: &[DiffLine], max_lines: usize, bordered: bool, cx: &App) -> Div {
     let t = cx.theme();
     let (add_bg, del_bg) = diff_colors(cx);
     let shown = lines.len().min(max_lines);
-    let mut col = v_flex().w_full().rounded(px(8.)).overflow_hidden().border_1().border_color(t.border).font_family(MONO).text_size(px(12.));
+    let mut col = v_flex().w_full().overflow_hidden().font_family(MONO).text_size(px(12.))
+        .when(bordered, |d| d.rounded(px(8.)).border_1().border_color(t.border));
     for line in &lines[..shown] {
         let (bg, mark, fg) = match line.tag {
             ChangeTag::Insert => (Some(add_bg), "+", t.success),
