@@ -95,12 +95,14 @@ pub struct IdeView {
     pub(crate) blame_ui: std::rc::Rc<crate::ide_blame::BlameUi>,
     /// 已启动诊断监听
     pub(crate) lsp_listening: bool,
+    /// 悬停卡片的收起计时与鼠标靠近判断
+    pub(crate) hover_ui: crate::ide_hover::HoverUi,
 }
 
 impl IdeView {
     /// 创建空的编辑器视图。
     pub fn new() -> Self {
-        Self { root: String::new(), docs: HashMap::new(), tabs: TabModel::default(), note: None, images: Default::default(), minimap_ui: Default::default(), applied: None, edit_gen: 0, nav: Default::default(), nav_quiet: false, fresh_open: false, recent: Vec::new(), pending_restore: None, md: HashMap::new(), blame_gutter: false, blame_ui: Default::default(), lsp_listening: false }
+        Self { root: String::new(), docs: HashMap::new(), tabs: TabModel::default(), note: None, images: Default::default(), minimap_ui: Default::default(), applied: None, edit_gen: 0, nav: Default::default(), nav_quiet: false, fresh_open: false, recent: Vec::new(), pending_restore: None, md: HashMap::new(), blame_gutter: false, blame_ui: Default::default(), lsp_listening: false, hover_ui: Default::default() }
     }
 
     /// 设置项目根目录(会话切换时由宿主调用)。

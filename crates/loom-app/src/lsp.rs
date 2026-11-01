@@ -128,6 +128,7 @@ impl HoverProvider for LspProvider {
         let (full, rope) = (text.to_string(), text.clone());
         let (view, path) = (self.view.clone(), self.path.clone());
         cx.spawn(async move |cx| {
+            let started = std::time::Instant::now();
             // 当前卡片已经覆盖这个位置:不重复请求
             if view.update(cx, |this, _| this.hover_covers(&path, offset)).unwrap_or(false) {
                 return Ok(None);
@@ -152,6 +153,12 @@ impl HoverProvider for LspProvider {
                     Ok(Some(hover))
                 })
                 .await;
+            // 照 Zed:总延迟 300ms,编辑器已等过一半,请求耗时算在剩下的一半里,先到也要等够
+            let spent = started.elapsed();
+            let half = crate::ide_hover::SHOW_DELAY / 2;
+            if spent < half {
+                cx.background_executor().timer(half - spent).await;
+            }
             let card = match res {
                 Ok(Some(h)) => crate::ide_hover::hover_markdown(&h).map(|md| {
                     let range = match h.range {

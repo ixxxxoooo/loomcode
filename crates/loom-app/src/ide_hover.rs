@@ -18,6 +18,21 @@ use std::path::Path;
 const MAX_W: f32 = 520.;
 /// 卡片最大高度。
 const MAX_H: f32 = 320.;
+/// 悬停内容字节上限(与 Zed 的 `MAX_HOVER_BYTES` 一致),超出截断。
+pub const MAX_HOVER_BYTES: usize = 100_000;
+/// 卡片与符号之间的间距(与 Zed 的 `HOVER_POPOVER_GAP` 一致)。
+const GAP: f32 = 10.;
+/// 鼠标离开后多久收起(与 Zed 的 `hover_popover_hiding_delay` 一致)。
+const HIDING_DELAY: std::time::Duration = std::time::Duration::from_millis(300);
+/// 从鼠标停住到卡片出现的总延迟(与 Zed 的 `hover_popover_delay` 一致);请求在其前半发出,耗时藏在延迟里。
+pub const SHOW_DELAY: std::time::Duration = std::time::Duration::from_millis(300);
+
+/// 悬停卡片的界面状态:收起计时、鼠标到卡片的最近距离(判断是否在靠近卡片)。
+#[derive(Default)]
+pub struct HoverUi {
+    hide_task: Option<Task<()>>,
+    closest: Option<Pixels>,
+}
 
 /// 一张悬停卡片:触发的符号范围(字节偏移)与 Markdown 内容。
 #[derive(Clone, Debug, PartialEq)]
@@ -40,16 +55,71 @@ pub fn hover_markdown(hover: &lsp_types::Hover) -> Option<String> {
         HoverContents::Array(items) => items.iter().map(one).collect::<Vec<_>>().join("\n\n"),
         HoverContents::Markup(m) => m.value.clone(),
     };
-    (!text.trim().is_empty()).then_some(text)
+    (!text.trim().is_empty()).then(|| truncate(text))
+}
+
+/// 超过 `MAX_HOVER_BYTES` 时在字符边界截断并补「…」;截断后代码围栏不成对就补一个,免得吞掉后面的排版。
+fn truncate(mut s: String) -> String {
+    if s.len() <= MAX_HOVER_BYTES {
+        return s;
+    }
+    let mut end = MAX_HOVER_BYTES - '…'.len_utf8();
+    while !s.is_char_boundary(end) {
+        end -= 1;
+    }
+    s.truncate(end);
+    s.push('…');
+    if s.matches("```").count() % 2 == 1 {
+        s.push_str("\n```");
+    }
+    s
+}
+
+/// 点到矩形的距离(在矩形内为 0)。
+fn distance_to(b: Bounds<Pixels>, p: Point<Pixels>) -> Pixels {
+    let dx = (b.left() - p.x).max(p.x - b.right()).max(px(0.));
+    let dy = (b.top() - p.y).max(p.y - b.bottom()).max(px(0.));
+    px(f32::from(dx).hypot(f32::from(dy)))
 }
 
 impl IdeView {
     /// 写入 / 清除某文档的悬停卡片。
     pub(crate) fn set_hover_card(&mut self, path: &Path, card: Option<HoverCard>, cx: &mut Context<Self>) {
+        if card.is_some() {
+            self.hover_ui.hide_task = None;
+            self.hover_ui.closest = None;
+        }
         if let Some(doc) = self.docs.get_mut(path).filter(|d| d.hover != card) {
             doc.hover = card;
             cx.notify();
         }
+    }
+
+    /// 鼠标移动时的粘性收起判断(照 Zed):在符号或卡片上就取消计时;离开后等 300ms 再收起,
+    /// 但鼠标在朝卡片靠近时不收起(重新计时),远离且计时已在走就让它走完。
+    pub(crate) fn hover_mouse_moved(&mut self, path: &Path, pos: Point<Pixels>, symbol: Bounds<Pixels>, card: Bounds<Pixels>, cx: &mut Context<Self>) {
+        let ui = &mut self.hover_ui;
+        if card.contains(&pos) || symbol.contains(&pos) {
+            ui.hide_task = None;
+            ui.closest = None;
+            return;
+        }
+        let d = distance_to(card, pos);
+        let closer = !ui.closest.is_some_and(|c| d > c + px(4.));
+        if closer {
+            ui.closest = Some(d.min(ui.closest.unwrap_or(d)));
+        }
+        if !closer && ui.hide_task.is_some() {
+            return;
+        }
+        let path = path.to_path_buf();
+        ui.hide_task = Some(cx.spawn(async move |this, cx| {
+            cx.background_executor().timer(HIDING_DELAY).await;
+            let _ = this.update(cx, |this, cx| {
+                this.hover_ui.hide_task.take().map(Task::detach);
+                this.set_hover_card(&path, None, cx);
+            });
+        }));
     }
 
     /// 当前卡片是否已经覆盖这个偏移(覆盖就不必重复向语言服务器请求)。
@@ -68,26 +138,36 @@ pub fn hover_card(doc: &IdeDoc, path: &Path, view: WeakEntity<IdeView>, window: 
     let t = cx.theme();
     let above = at.origin.y > window.bounds().size.height * 0.35;
     let (pos, anchor) = if above {
-        (point(at.origin.x, at.origin.y - px(4.)), Anchor::BottomLeft)
+        (point(at.origin.x, at.origin.y - px(GAP)), Anchor::BottomLeft)
     } else {
-        (point(at.origin.x, at.origin.y + at.size.height + px(4.)), Anchor::TopLeft)
+        (point(at.origin.x, at.origin.y + at.size.height + px(GAP)), Anchor::TopLeft)
     };
     let (view, path) = (view, path.to_path_buf());
     let guard = canvas(
         |b, _, _| b,
         move |card_bounds, _, window, _| {
-            // 与触发符号合并成一块「保持展开」的区域(两者之间的缝隙也算在里面)
-            let keep = card_bounds.union(&at);
             let (v1, p1) = (view.clone(), path.clone());
             window.on_mouse_event(move |e: &MouseMoveEvent, _, _, cx| {
-                if !keep.contains(&e.position) {
-                    let _ = v1.update(cx, |this, cx| this.set_hover_card(&p1, None, cx));
-                }
+                let pos = e.position;
+                let _ = v1.update(cx, |this, cx| this.hover_mouse_moved(&p1, pos, at, card_bounds, cx));
             });
+            // 点击卡片外、在卡片外滚动、按 Esc:立即收起(Zed 在选区变化 / 滚动时同样收起)
             let (v2, p2) = (view.clone(), path.clone());
             window.on_mouse_event(move |e: &MouseDownEvent, _, _, cx| {
                 if !card_bounds.contains(&e.position) {
                     let _ = v2.update(cx, |this, cx| this.set_hover_card(&p2, None, cx));
+                }
+            });
+            let (v3, p3) = (view.clone(), path.clone());
+            window.on_mouse_event(move |e: &ScrollWheelEvent, _, _, cx| {
+                if !card_bounds.contains(&e.position) {
+                    let _ = v3.update(cx, |this, cx| this.set_hover_card(&p3, None, cx));
+                }
+            });
+            let (v4, p4) = (view.clone(), path.clone());
+            window.on_key_event(move |e: &KeyDownEvent, _, _, cx| {
+                if e.keystroke.key == "escape" {
+                    let _ = v4.update(cx, |this, cx| this.set_hover_card(&p4, None, cx));
                 }
             });
         },
@@ -98,7 +178,7 @@ pub fn hover_card(doc: &IdeDoc, path: &Path, view: WeakEntity<IdeView>, window: 
         StyleRefinement::default().bg(t.muted.opacity(0.55)).border_0().rounded(px(6.)).px_2().py_1p5().text_size(px(12.)),
     );
     // 给代码块一个空的「操作区」,库就不会在右上角画语言标签
-    let body = TextView::markdown("ide-hover-md", card.markdown.clone()).style(style).selectable(true).code_block_actions(|_, _, _| div());
+    let body = TextView::markdown(SharedString::from(format!("ide-hover-md-{}", card.range.start)), card.markdown.clone()).style(style).selectable(true).code_block_actions(|_, _, _| div());
     Some(
         deferred(
             anchored().position(pos).anchor(anchor).snap_to_window_with_margin(px(8.)).child(
@@ -132,6 +212,21 @@ mod tests {
     fn 语言片段包成代码块() {
         let m = HoverContents::Scalar(MarkedString::LanguageString(LanguageString { language: "rust".into(), value: "fn a()".into() }));
         assert_eq!(hover_markdown(&h(m)).unwrap(), "```rust\nfn a()\n```");
+    }
+
+    #[::core::prelude::v1::test]
+    fn 超长内容在字符边界截断并补齐围栏() {
+        let s = format!("```rust\n{}", "汉".repeat(MAX_HOVER_BYTES));
+        let out = truncate(s);
+        assert!(out.len() <= MAX_HOVER_BYTES + 5 && out.contains('…') && out.ends_with("\n```"));
+        assert_eq!(truncate("短".into()), "短");
+    }
+
+    #[::core::prelude::v1::test]
+    fn 距离在内为零_在外按直线() {
+        let b = Bounds::new(point(px(10.), px(10.)), size(px(10.), px(10.)));
+        assert_eq!(distance_to(b, point(px(15.), px(15.))), px(0.));
+        assert_eq!(distance_to(b, point(px(23.), px(24.))), px(5.));
     }
 
     #[::core::prelude::v1::test]
