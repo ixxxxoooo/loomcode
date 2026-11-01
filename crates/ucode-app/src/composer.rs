@@ -64,6 +64,8 @@ pub struct Composer {
     session: Entity<SessionModel>,
     input: Entity<TextareaState>,
     open: Option<Pick>,
+    /// 刚被「点击外部」关闭的时间,用来避免点触发按钮时又立刻重新打开
+    outside_closed: Option<std::time::Instant>,
     suggestions: Vec<Suggestion>,
     /// 补全列表当前高亮项
     sel: usize,
@@ -110,7 +112,7 @@ impl Composer {
             Ok("context") => Some(Pick::Context),
             _ => None,
         };
-        Self { session, input, open, suggestions: Vec::new(), sel: 0, attachments: Vec::new(), attach_counter: 0, demo, _sub: sub }
+        Self { session, input, open, outside_closed: None, suggestions: Vec::new(), sel: 0, attachments: Vec::new(), attach_counter: 0, demo, _sub: sub }
     }
 
     /// 输入框里有没有未发送的内容(文字或附件);淘汰会话视图前要保护草稿。
@@ -266,8 +268,23 @@ impl Composer {
         cx.notify();
     }
 
-    /// 设置思考强度;弹层保持打开,方便连续比较各档说明。
+    /// 点击弹层外部:关闭弹层并记下时间。
+    fn dismiss_outside(&mut self, cx: &mut Context<Self>) {
+        self.open = None;
+        self.outside_closed = Some(std::time::Instant::now());
+        cx.notify();
+    }
+
+    /// 点触发按钮:已打开则关闭,否则打开(刚被外部点击关闭的同一次点击不再重开)。
+    fn toggle(&mut self, kind: Pick, cx: &mut Context<Self>) {
+        let just_closed = self.outside_closed.take().is_some_and(|t| t.elapsed() < std::time::Duration::from_millis(250));
+        self.open = if self.open == Some(kind) || just_closed { None } else { Some(kind) };
+        cx.notify();
+    }
+
+    /// 设置思考强度并关闭弹层。
     pub(crate) fn choose_effort(&mut self, effort: Effort, cx: &mut Context<Self>) {
+        self.open = None;
         self.session.update(cx, |m, cx| m.set_effort(effort, cx));
         cx.notify();
     }
@@ -314,7 +331,7 @@ impl Render for Composer {
         let chip = |id: &'static str, label: String, color: Hsla, kind: Pick, this: Entity<Self>| {
             h_flex().id(id).h(px(24.)).px_2().gap_1().items_center().rounded(px(6.)).cursor_pointer().text_size(px(12.))
                 .text_color(color).hover(|d| d.bg(t.list_hover))
-                .on_click(move |_, _, cx| { this.update(cx, |c, cx| { c.open = if c.open == Some(kind) { None } else { Some(kind) }; cx.notify(); }); })
+                .on_click(move |_, _, cx| { this.update(cx, |c, cx| c.toggle(kind, cx)); })
                 .child(label)
                 .child(icon(IconName::ChevronDown, 10., color))
         };
@@ -432,12 +449,15 @@ impl Render for Composer {
                                 .child(div().flex_1())
                                 .when(usage.context_size > 0, |d| {
                                     let this = this.clone();
-                                    d.child(crate::composer_pop::context_ring(&usage, move |cx| { this.update(cx, |c, cx| { c.open = if c.open == Some(Pick::Context) { None } else { Some(Pick::Context) }; cx.notify(); }); }, cx))
+                                    d.child(crate::composer_pop::context_ring(&usage, move |cx| { this.update(cx, |c, cx| c.toggle(Pick::Context, cx)); }, cx))
                                 })
                                 .child(send_btn),
                         ),
                 )
-                .when_some(popup, |d, p| d.child(p)),
+                .when_some(popup, |d, p| {
+                    let me = this.clone();
+                    d.child(p.on_mouse_down_out(move |_, _, cx| { me.update(cx, |c, cx| c.dismiss_outside(cx)); }))
+                }),
         )
     }
 }
