@@ -97,6 +97,8 @@ pub enum PanelEvent {
     OpenFile(std::path::PathBuf),
     /// 用户在文件树里双击了一个文件(IDE 里固定为正式标签)
     OpenFilePinned(std::path::PathBuf),
+    /// 「文件」标签的占位上点了「切到 IDE 窗口」
+    OpenIdeWindow,
     /// 面板的标签 / 预览文件 / 树收起状态变了(工作台据此记住,下次启动恢复)
     StateChanged,
 }
@@ -107,13 +109,12 @@ pub struct RightPanel {
     pub tab: RightTab,
     /// 已打开的标签(顺序即标签条顺序);为空时显示入口列表
     pub open: Vec<RightTab>,
-    /// 「文件」标签左侧正在预览的文件、← → 导航栈(文件路径 + 当前位置)、右侧树是否收起
-    pub current: Option<crate::file_preview::FilePreview>,
-    pub nav: Vec<std::path::PathBuf>,
-    pub nav_ix: usize,
+    /// 「文件」标签左侧嵌入的编辑器(全工作台唯一的 `IdeView`,与 IDE 共用);IDE 里的文件面板没有它
+    pub editor: Option<Entity<crate::ide::IdeView>>,
+    /// 独立 IDE 窗口开着:编辑器显示在那边,这里只放占位
+    pub editor_elsewhere: bool,
+    /// 右侧文件树是否收起
     pub tree_collapsed: bool,
-    /// 启动时要恢复的预览文件:第一次切换会话时(项目目录确定后)才打开
-    pub restore_file: Option<String>,
     /// 「终端」标签里为单条 Claude 命令打开的只读标签(工具调用 id),以及当前选中的一个
     pub run_tabs: Vec<String>,
     pub active_run: Option<String>,
@@ -130,8 +131,6 @@ pub struct RightPanel {
     /// 「改动」里已展开 Diff 的文件
     open_changes: HashSet<String>,
     pub files: FileTree,
-    /// 等待在渲染时打开的文件(没有 window 的调用方使用)
-    pending_open: Option<String>,
     /// 当前项目根目录(终端的工作目录)
     pub(crate) root: String,
     /// 终端集合变化时重绘面板
@@ -141,17 +140,15 @@ pub struct RightPanel {
 }
 
 impl RightPanel {
-    pub fn new(root: String, _demo: bool, _window: &mut Window, cx: &mut Context<Self>) -> Self {
+    pub fn new(root: String, _demo: bool, editor: Option<Entity<crate::ide::IdeView>>, _window: &mut Window, cx: &mut Context<Self>) -> Self {
         let hub = crate::term_store::ProjectTerminals::hub(cx);
         let sub = cx.observe(&hub, |_, _, cx| cx.notify());
         Self {
             tab: RightTab::Changes,
             open: crate::right_tabs::DEFAULT_TABS.to_vec(),
-            current: None,
-            nav: Vec::new(),
-            nav_ix: 0,
+            editor,
+            editor_elsewhere: false,
             tree_collapsed: false,
-            restore_file: None,
             run_tabs: Vec::new(),
             active_run: None,
             show_tabs: true,
@@ -160,7 +157,6 @@ impl RightPanel {
             _sub: None,
             open_changes: HashSet::new(),
             files: FileTree::new(root.clone()),
-            pending_open: None,
             subagent: None,
             task_sel: None,
             root,
@@ -179,16 +175,11 @@ impl RightPanel {
         self._sub = model.as_ref().map(|m| cx.observe(m, |_, _, cx| cx.notify()));
         self.model = model;
         self.open_changes.clear();
-        self.clear_files_workspace();
         self.run_tabs.clear();
         self.active_run = None;
         self.git.reset();
         self.root = root.clone();
         self.files.set_root(root.clone());
-        // 启动恢复:上次预览的文件还在这个项目里就重新打开
-        if let Some(f) = self.restore_file.take().filter(|f| std::path::Path::new(f).starts_with(&root) && std::path::Path::new(f).is_file()) {
-            self.pending_open = Some(f);
-        }
         self.reload_files(cx);
         cx.notify();
     }
@@ -197,10 +188,9 @@ impl RightPanel {
         self.open_tab(tab, cx);
     }
 
-    /// 请求在「文件」里打开某个路径(相对或绝对)。
-    pub fn request_open(&mut self, path: String, cx: &mut Context<Self>) {
+    /// 切到「文件」标签(文件本身由工作台在共享编辑器里打开)。
+    pub fn show_files_tab(&mut self, cx: &mut Context<Self>) {
         self.open_tab(RightTab::Files, cx);
-        self.pending_open = Some(path);
         cx.notify();
     }
 
@@ -333,10 +323,6 @@ pub(crate) fn split_path(path: &str) -> (String, String) {
 impl Render for RightPanel {
     fn render(&mut self, window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
         let t = cx.theme().clone();
-        if let Some(path) = self.pending_open.take() {
-            let full = self.files.open(&path);
-            self.open_in_place(full, window, cx);
-        }
         let items = self.items(cx);
         if self.tab == RightTab::Changes && self.git.mode == crate::git_changes::ChangesMode::Git {
             self.git_auto_refresh(items.len(), cx);

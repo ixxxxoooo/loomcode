@@ -194,6 +194,16 @@ pub struct Workbench {
     pub forks: HashMap<String, String>,
     /// 历史加载完成后要打开的会话(调试用 `LOOM_SESSION`)
     pending_open: Option<String>,
+    /// 全工作台唯一的编辑器:Agent 的「文件」标签、融合 IDE、独立 IDE 窗口都嵌入它,标签与文档只有一份
+    pub editor: Entity<crate::ide::IdeView>,
+    /// 编辑器记忆保存的防抖序号
+    editor_mem_gen: u64,
+    /// 融合 / 独立 IDE 里的文件面板(取展开目录用);没有 IDE 时用 Agent 的面板
+    pub ide_tree: Option<Entity<RightPanel>>,
+    /// 切换项目时从记忆里取出的展开目录,各个文件面板按需套用
+    pub restore_expanded: Vec<String>,
+    /// 等待在渲染时(有窗口)打开的文件:(路径, 是否固定为正式标签)
+    pending_editor_open: Option<(PathBuf, bool)>,
 }
 
 impl Workbench {
@@ -224,7 +234,9 @@ impl Workbench {
         let claude_cfg = loom_config::claude::load(&claude_home, None);
         let focus = cx.focus_handle();
         let panel_root = if demo { demo_root.to_string_lossy().to_string() } else { std::env::var("HOME").unwrap_or_default() };
-        let panel = cx.new(|cx| RightPanel::new(panel_root, demo, window, cx));
+        let editor = cx.new(|_| crate::ide::IdeView::new());
+        editor.update(cx, |v, cx| v.start_watch(window, cx));
+        let panel = cx.new(|cx| RightPanel::new(panel_root, demo, Some(editor.clone()), window, cx));
         // 右面板标签行末尾放「面板开关 + IDE 入口」(没有整条标题栏后它们跟着右栏走)
         {
             let weak = cx.entity().downgrade();
@@ -307,7 +319,15 @@ impl Workbench {
             new_sessions: HashSet::new(),
             forks: HashMap::new(),
             pending_open: None,
+            editor: editor.clone(),
+            editor_mem_gen: 0,
+            ide_tree: None,
+            restore_expanded: Vec::new(),
+            pending_editor_open: None,
         };
+        // 编辑器状态变化(开关标签、光标移动)→ 防抖保存标签记忆
+        let editor_sub = cx.observe(&editor, |this, _, cx| this.schedule_editor_memory(cx));
+        wb._subs.push(editor_sub);
         wb.apply_ui_state();
         let panel_sub = cx.subscribe_in(&wb.panel, window, |this, _, ev: &PanelEvent, window, cx| this.on_panel_event(ev, window, cx));
         wb._subs.push(panel_sub);
@@ -845,9 +865,89 @@ impl Workbench {
     fn sync_panel(&mut self, cx: &mut Context<Self>) {
         let model = self.active_model().cloned();
         if let Some(root) = self.active_project_path() {
-            self.panel.update(cx, |p, cx| p.set_session(model, root, cx));
+            self.panel.update(cx, |p, cx| p.set_session(model, root.clone(), cx));
+            self.sync_editor_root(&root, cx);
+            // 文件树换根后会清掉展开状态,按记忆重新展开
+            let dirs = self.restore_expanded.clone();
+            self.panel.update(cx, |p, _| p.files.expand_dirs(&dirs));
         }
         self.remember(cx);
+    }
+
+    // ---------- 编辑器(全工作台唯一) ----------
+
+    /// 编辑器切到另一个项目:先保存旧项目的标签记忆,清空,再挂起新项目的记忆等渲染时恢复。
+    /// 重复调用无害(根目录没变就什么也不做)。IDE 窗口与 Agent 都从这里切换,所以编辑器的项目永远与当前会话一致。
+    pub fn sync_editor_root(&mut self, root: &str, cx: &mut Context<Self>) {
+        let old = self.editor.read(cx).root.clone();
+        if old == root {
+            return;
+        }
+        if !old.is_empty() {
+            self.save_editor_memory(&old, cx);
+        }
+        let mem = self.ui_state.ide.get(root).cloned().map(|mut m| {
+            m.prune(|p| std::path::Path::new(p).exists());
+            m
+        });
+        self.restore_expanded = mem.as_ref().map(|m| m.expanded.clone()).unwrap_or_default();
+        let root = root.to_string();
+        self.editor.update(cx, |v, cx| {
+            v.clear();
+            v.set_root(root, cx);
+            v.pending_restore = mem;
+        });
+    }
+
+    /// 取当前该读展开目录的文件面板:有 IDE(融合或独立窗口)时用 IDE 里的,否则用 Agent 的。
+    fn tree_panel(&self, cx: &App) -> Entity<RightPanel> {
+        let ide_open = self.ide || self.ide_window.is_some_and(|h| cx.windows().contains(&h));
+        match &self.ide_tree {
+            Some(t) if ide_open => t.clone(),
+            _ => self.panel.clone(),
+        }
+    }
+
+    /// 把某个项目当前的标签、最近文件与展开目录写进 `state.json`(内容没变就不写)。
+    pub fn save_editor_memory(&mut self, root: &str, cx: &mut Context<Self>) {
+        // 记忆还没恢复完时不能存:这时编辑器是空的,存下去会覆盖掉真正的记忆
+        if self.editor.read(cx).pending_restore.is_some() || self.editor.read(cx).root != root {
+            return;
+        }
+        let mut mem = self.editor.read(cx).snapshot();
+        mem.expanded = self.tree_panel(cx).read(cx).files.expanded_dirs();
+        let root = root.to_string();
+        if mem.tabs.is_empty() && mem.recent.is_empty() {
+            if self.ui_state.ide.remove(&root).is_some() {
+                self.persist_ui_state();
+            }
+        } else if self.ui_state.ide.get(&root) != Some(&mem) {
+            self.ui_state.ide.insert(root, mem);
+            self.persist_ui_state();
+        }
+    }
+
+    /// 编辑器状态变化后 0.8 秒保存一次记忆(防抖,光标移动等高频变化只会落一次盘)。
+    fn schedule_editor_memory(&mut self, cx: &mut Context<Self>) {
+        self.editor_mem_gen += 1;
+        let gen_at = self.editor_mem_gen;
+        cx.spawn(async move |this, cx| {
+            cx.background_executor().timer(std::time::Duration::from_millis(800)).await;
+            let _ = this.update(cx, |this, cx| {
+                if this.editor_mem_gen == gen_at {
+                    let root = this.editor.read(cx).root.clone();
+                    if !root.is_empty() {
+                        this.save_editor_memory(&root, cx);
+                    }
+                }
+            });
+        })
+        .detach();
+    }
+
+    /// 独立 IDE 窗口是否开着(开着时编辑器显示在那边,Agent 的「文件」标签只放占位)。
+    pub fn editor_elsewhere(&self, cx: &App) -> bool {
+        !self.settings.fused_ide && self.ide_window.is_some_and(|h| cx.windows().contains(&h))
     }
 
     /// 新会话默认落在哪个项目:当前会话所在项目,否则第一个。
@@ -1017,8 +1117,9 @@ impl Workbench {
             }
             UiRequest::OpenFile(path) => {
                 self.right_open = true;
-                let path = path.clone();
-                self.panel.update(cx, |p, cx| p.request_open(path, cx));
+                // 没有窗口句柄:挂起,Workbench 下一次渲染时打开
+                self.pending_editor_open = Some((self.resolve_path(path), true));
+                self.panel.update(cx, |p, cx| p.show_files_tab(cx));
             }
             UiRequest::OpenCanvas(id) => {
                 self.page = Page::Canvas;
@@ -1058,10 +1159,9 @@ impl Workbench {
     fn on_panel_event(&mut self, ev: &PanelEvent, window: &mut Window, cx: &mut Context<Self>) {
         match ev {
             PanelEvent::StateChanged => self.remember(cx),
-            PanelEvent::OpenFile(path) | PanelEvent::OpenFilePinned(path) => {
-                let path = path.clone();
-                self.panel.update(cx, |p, cx| p.open_in_place(path, window, cx));
-            }
+            PanelEvent::OpenFile(path) => self.open_in_editor(path.clone(), false, window, cx),
+            PanelEvent::OpenFilePinned(path) => self.open_in_editor(path.clone(), true, window, cx),
+            PanelEvent::OpenIdeWindow => self.open_ide_window(window, cx),
         }
     }
 
@@ -1145,7 +1245,8 @@ impl Workbench {
                 let root = self.active_project_path().unwrap_or_default();
                 let demo = self.demo;
                 let tabs = self.ui_state.last.chat_tabs.clone();
-                self.ide_shell = Some(cx.new(|cx| IdeWindow::new(wb, demo, root, tabs, window, cx)));
+                let editor = self.editor.clone();
+                self.ide_shell = Some(cx.new(|cx| IdeWindow::new(wb, editor, demo, root, tabs, window, cx)));
             }
         } else {
             window.focus(&self.focus, cx);
@@ -1165,6 +1266,7 @@ impl Workbench {
         let demo = self.demo;
         let root = self.active_project_path().unwrap_or_default();
         let tabs = self.ui_state.last.chat_tabs.clone();
+        let editor = self.editor.clone();
         // 新窗口首帧会回读本工作台,必须等当前更新结束后再创建
         cx.defer(move |cx| {
             let mut options = TitleBar::window_options();
@@ -1175,7 +1277,7 @@ impl Workbench {
             let owner = wb.clone();
             match open_window(options, cx, move |window, cx| {
                 let base = root.clone();
-                let ide = cx.new(|cx| IdeWindow::new(wb, demo, root, tabs, window, cx));
+                let ide = cx.new(|cx| IdeWindow::new(wb, editor, demo, root, tabs, window, cx));
                 // 调试用:LOOM_FILE 在独立 IDE 窗口里直接打开该文件(相对路径按项目根补全)
                 if let Ok(f) = std::env::var("LOOM_FILE") {
                     let p = PathBuf::from(&f);
@@ -1209,24 +1311,48 @@ impl Workbench {
         if p.is_absolute() { p } else { PathBuf::from(self.active_project_path().unwrap_or_default()).join(p) }
     }
 
-    /// 统一的「打开文件」入口:融合 IDE 视图开编辑器,否则在右侧面板预览。
+    /// 统一的「打开文件」入口(对话里的路径、命令面板、文件树都走这里):文件在全工作台唯一的编辑器里打开。
+    ///
+    /// 参数:`path` 绝对或相对项目根的路径。显示位置:融合 IDE 里直接可见;独立 IDE 窗口开着就聚焦它;
+    /// 否则切到 Agent 右侧「文件」标签。
     pub fn open_file(&mut self, path: String, window: &mut Window, cx: &mut Context<Self>) {
         loom_diag::crumb!("打开文件 {path}");
+        let full = self.resolve_path(&path);
+        self.open_in_editor(full, true, window, cx);
+    }
+
+    /// 在编辑器里打开文件并让它可见。
+    ///
+    /// 参数:`pinned` 为真时固定为正式标签(对话里的路径、双击),否则是预览标签(树里单击)。
+    fn open_in_editor(&mut self, path: PathBuf, pinned: bool, window: &mut Window, cx: &mut Context<Self>) {
         self.page = Page::Chat;
-        self.right_open = true;
-        if let Some(shell) = self.ide_shell.clone().filter(|_| self.ide) {
-            let full = self.resolve_path(&path);
-            shell.update(cx, |w, cx| w.open_file(full, window, cx));
-        } else {
-            self.panel.update(cx, |p, cx| p.request_open(path, cx));
+        self.sync_panel_root_if_needed(cx);
+        let tree = self.tree_panel(cx);
+        tree.update(cx, |p, _| p.files.reveal(&path));
+        self.editor.update(cx, |v, cx| v.open(path, !pinned, window, cx));
+        if self.editor_elsewhere(cx) {
+            self.open_ide_window(window, cx);
+        } else if !(self.ide && self.ide_shell.is_some()) {
+            self.right_open = true;
+            self.panel.update(cx, |p, cx| p.show_files_tab(cx));
         }
         cx.notify();
     }
 
-    /// 保存融合 IDE 里的当前文件。
+    /// 打开文件前确认编辑器的项目与当前会话一致(否则之后的换根会清掉刚打开的标签)。
+    fn sync_panel_root_if_needed(&mut self, cx: &mut Context<Self>) {
+        if let Some(root) = self.active_project_path() {
+            self.sync_editor_root(&root, cx);
+        }
+    }
+
+    /// 保存编辑器里的当前文件(融合 IDE 或 Agent 的「文件」标签)。
     pub fn save_ide(&mut self, cx: &mut Context<Self>) {
         if let Some(shell) = self.ide_shell.clone().filter(|_| self.ide) {
             shell.update(cx, |w, cx| w.save(cx));
+        } else {
+            self.editor.update(cx, |v, cx| v.save(cx));
+            self.panel.update(cx, |p, cx| p.reload_files(cx));
         }
     }
 
@@ -1311,6 +1437,18 @@ impl Workbench {
     }
 
     fn render_inner(&mut self, window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
+        // 没有窗口句柄时挂起的打开请求(UiRequest)在这里执行
+        if let Some((path, pinned)) = self.pending_editor_open.take() {
+            self.open_in_editor(path, pinned, window, cx);
+        }
+        // 独立 IDE 窗口开着时,Agent 的「文件」标签只放占位,避免同一个编辑器在两个窗口里同时渲染
+        let elsewhere = self.editor_elsewhere(cx);
+        self.panel.update(cx, |p, cx| {
+            if p.editor_elsewhere != elsewhere {
+                p.editor_elsewhere = elsewhere;
+                cx.notify();
+            }
+        });
         let t = cx.theme().clone();
         // 托盘跟着会话状态走(内容没变不会重建菜单)
         crate::tray::set_snapshot(self.tray_snapshot(cx));

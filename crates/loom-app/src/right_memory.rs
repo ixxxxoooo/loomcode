@@ -18,11 +18,12 @@ impl RightPanel {
     pub fn write_last(&self, last: &mut LastState) {
         last.right_tabs = Some(self.open.iter().map(|t| t.key().to_string()).collect());
         last.right_tab = Some(self.tab.key().to_string());
-        last.files_current = self.current.as_ref().map(|c| c.path.to_string_lossy().to_string());
+        // 预览的文件现在由编辑器的标签记忆(`state.json` 的 `ide`)保存
+        last.files_current = None;
         last.tree_collapsed = self.tree_collapsed;
     }
 
-    /// 按上次的状态恢复标签与树的收起状态;预览文件要等项目目录确定后才能打开(见 `set_session`)。
+    /// 按上次的状态恢复标签与树的收起状态;打开的文件由编辑器的标签记忆恢复。
     pub fn restore_last(&mut self, last: &LastState) {
         if let Some(keys) = &last.right_tabs {
             self.open = keys.iter().filter_map(|k| RightTab::from_key(k)).collect();
@@ -32,7 +33,6 @@ impl RightPanel {
             self.tab = t;
         }
         self.tree_collapsed = last.tree_collapsed;
-        self.restore_file = last.files_current.clone();
     }
 }
 

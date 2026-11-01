@@ -41,8 +41,8 @@ pub struct IdeWindow {
     pub(crate) chat_before: bool,
     /// 面板已同步到的 (会话 id, 项目根目录);没有会话时项目由侧栏点选决定
     pub(crate) synced: Option<(Option<String>, Option<String>)>,
-    /// IDE 记忆保存的防抖序号
-    pub(crate) mem_gen: u64,
+    /// 文件面板当前所在的项目根(变了就按记忆重新展开目录)
+    panel_root: String,
     pub(crate) _subs: Vec<Subscription>,
     /// 快速打开(⌘P / ⌘K)面板
     /// 项目内搜索面板与是否在左栏显示它
@@ -65,20 +65,15 @@ pub struct IdeWindow {
 impl IdeWindow {
     /// 创建窗口视图。`demo`、`root`、`wb_tabs` 由调用方传入:创建发生在工作台的更新期间,这里不能再回读它(会重复借用而崩溃)。
     ///
-    /// 参数:`wb_tabs` 上次关闭时对话栏的会话标签。
-    pub fn new(wb: Entity<Workbench>, demo: bool, root: String, wb_tabs: Vec<String>, window: &mut Window, cx: &mut Context<Self>) -> Self {
+    /// 参数:`ide` 工作台里唯一的编辑器(与 Agent 的「文件」标签共用);`wb_tabs` 上次关闭时对话栏的会话标签。
+    pub fn new(wb: Entity<Workbench>, ide: Entity<IdeView>, demo: bool, _root: String, wb_tabs: Vec<String>, window: &mut Window, cx: &mut Context<Self>) -> Self {
         bind_ide_keys(cx);
         crate::window_memory::track("ide", window, cx);
-        let panel = cx.new(|cx| RightPanel::new(root.clone(), demo, window, cx));
+        let panel = cx.new(|cx| RightPanel::new(_root.clone(), demo, None, window, cx));
         panel.update(cx, |p, cx| {
             p.show_tabs = false;
             p.set_tab(RightTab::Files, cx);
             p.reload_files(cx);
-        });
-        let ide = cx.new(|_| IdeView::new());
-        ide.update(cx, |v, cx| {
-            v.set_root(root, cx);
-            v.start_watch(window, cx);
         });
         let search = cx.new(|cx| crate::ide_search::SearchPanel::new(String::new(), window, cx));
         let mut subs = Vec::new();
@@ -91,22 +86,19 @@ impl IdeWindow {
             PanelEvent::OpenFile(path) => this.open_file(path.clone(), window, cx),
             PanelEvent::OpenFilePinned(path) => this.open_path(&path.to_string_lossy(), window, cx),
             // IDE 窗口的左栏不记右栏标签状态
-            PanelEvent::StateChanged => {}
+            PanelEvent::StateChanged | PanelEvent::OpenIdeWindow => {}
         }));
         // 工作台变化(切换会话等)→ 同步面板与根目录
         subs.push(cx.observe(&wb, |this, _, cx| this.sync(cx)));
-        // 编辑器光标移动 → 刷新状态栏
-        subs.push(cx.observe(&ide, |this, _, cx| {
-            this.schedule_memory_save(cx);
-            cx.notify();
-        }));
+        // 编辑器光标移动 → 刷新状态栏(标签记忆由工作台统一保存)
+        subs.push(cx.observe(&ide, |_, _, cx| cx.notify()));
         let focus = cx.focus_handle();
         window.focus(&focus, cx);
         let term = cx.new(|cx| crate::ide_terminal::BottomTerminal::new(panel.clone(), cx));
         // 调试用:LOOM_IDE_TERM=1 启动时就展开底部终端面板,方便截图
         let term_open = std::env::var("LOOM_IDE_TERM").is_ok_and(|v| v == "1");
         // 此时工作台可能正处于更新中,不在这里回读它;首次渲染时再同步
-        Self { wb, panel, ide, focus, left_open: true, chat_open: true, left_narrow: false, left_before: true, chat_narrow: false, chat_before: true, synced: None, mem_gen: 0, _subs: subs, search, search_open: false, quick: None, _quick_sub: None, term_open, term, chat_tabs: wb_tabs, chat_last_active: None, chat_empty: false, chat_wide: std::env::var("LOOM_CHAT_WIDE").is_ok() }
+        Self { wb, panel, ide, panel_root: String::new(), focus, left_open: true, chat_open: true, left_narrow: false, left_before: true, chat_narrow: false, chat_before: true, synced: None, _subs: subs, search, search_open: false, quick: None, _quick_sub: None, term_open, term, chat_tabs: wb_tabs, chat_last_active: None, chat_empty: false, chat_wide: std::env::var("LOOM_CHAT_WIDE").is_ok() }
     }
 
     /// 让面板与根目录跟随工作台当前会话。
@@ -128,76 +120,22 @@ impl IdeWindow {
         }
         self.synced = Some(key);
         if let Some(root) = root {
-            let old = self.ide.read(cx).root.clone();
-            let switched = old != root;
-            if switched {
-                self.switch_project(&old, &root, cx);
-            }
+            // 编辑器的项目切换与标签记忆由工作台统一处理(Agent 与 IDE 共用同一个编辑器);这里只同步自己的面板
+            let panel = self.panel.clone();
+            self.wb.update(cx, |wb, cx| {
+                wb.ide_tree = Some(panel);
+                wb.sync_editor_root(&root, cx);
+            });
             self.search.update(cx, |s, cx| s.set_root(root.clone(), cx));
             self.panel.update(cx, |p, cx| p.set_session(model, root.clone(), cx));
-            if switched {
+            if self.panel_root != root {
+                self.panel_root = root.clone();
                 // 文件树换根后会清掉展开状态,按记忆重新展开
-                let dirs = self.ide.read(cx).pending_restore.as_ref().map(|m| m.expanded.clone()).unwrap_or_default();
+                let dirs = self.wb.read(cx).restore_expanded.clone();
                 self.panel.update(cx, |p, _| p.files.expand_dirs(&dirs));
             }
         }
         true
-    }
-
-    /// 切换项目:先保存旧项目的标签记忆,清空编辑器,再挂起新项目的记忆等渲染时恢复。
-    fn switch_project(&mut self, old: &str, new: &str, cx: &mut Context<Self>) {
-        if !old.is_empty() {
-            self.save_memory_now(old, cx);
-        }
-        let mem = self.wb.read(cx).ui_state.ide.get(new).cloned().map(|mut m| {
-            m.prune(|p| std::path::Path::new(p).exists());
-            m
-        });
-        let new = new.to_string();
-        self.ide.update(cx, |v, cx| {
-            v.clear();
-            v.set_root(new, cx);
-            v.pending_restore = mem;
-        });
-    }
-
-    /// 把某个项目当前的标签、最近文件与展开目录写进 `state.json`(内容没变就不写)。
-    fn save_memory_now(&mut self, root: &str, cx: &mut Context<Self>) {
-        // 记忆还没恢复完时不能存:这时编辑器是空的,存下去会覆盖掉真正的记忆
-        if self.ide.read(cx).pending_restore.is_some() || self.ide.read(cx).root != root {
-            return;
-        }
-        let mut mem = self.ide.read(cx).snapshot();
-        mem.expanded = self.panel.read(cx).files.expanded_dirs();
-        let root = root.to_string();
-        self.wb.update(cx, |wb, _| {
-            if mem.tabs.is_empty() && mem.recent.is_empty() {
-                if wb.ui_state.ide.remove(&root).is_some() {
-                    wb.persist_ui_state();
-                }
-            } else if wb.ui_state.ide.get(&root) != Some(&mem) {
-                wb.ui_state.ide.insert(root, mem);
-                wb.persist_ui_state();
-            }
-        });
-    }
-
-    /// 编辑器状态变化后 0.8 秒保存一次记忆(防抖,光标移动等高频变化只会落一次盘)。
-    fn schedule_memory_save(&mut self, cx: &mut Context<Self>) {
-        self.mem_gen += 1;
-        let gen_at = self.mem_gen;
-        cx.spawn(async move |this, cx| {
-            cx.background_executor().timer(std::time::Duration::from_millis(800)).await;
-            let _ = this.update(cx, |this, cx| {
-                if this.mem_gen == gen_at {
-                    let root = this.ide.read(cx).root.clone();
-                    if !root.is_empty() {
-                        this.save_memory_now(&root, cx);
-                    }
-                }
-            });
-        })
-        .detach();
     }
 
     /// 按文件 / 行位置历史后退或前进,并在文件树里定位。
@@ -210,15 +148,12 @@ impl IdeWindow {
 
     /// 在编辑器里打开文件(文件树点选,或融合模式下由工作台转发)。
     pub fn open_file(&mut self, path: std::path::PathBuf, window: &mut Window, cx: &mut Context<Self>) {
-        // 先对齐项目:否则首次渲染时的换根会清掉刚打开的标签
-        self.sync_state(cx);
         self.panel.update(cx, |p, _| p.files.reveal(&path));
         self.ide.update(cx, |v, cx| v.open(path, true, window, cx));
     }
 
     /// 打开对话里点击的文件(固定标签,不是预览)。
     pub(crate) fn open_path(&mut self, path: &str, window: &mut Window, cx: &mut Context<Self>) {
-        self.sync_state(cx);
         let p = std::path::PathBuf::from(path);
         let full = if p.is_absolute() { p } else { std::path::PathBuf::from(self.wb.read(cx).active_project_path().unwrap_or_default()).join(p) };
         self.panel.update(cx, |p, _| p.files.reveal(&full));

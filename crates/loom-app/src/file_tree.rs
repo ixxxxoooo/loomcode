@@ -1,4 +1,4 @@
-//! 「文件」面板(资源管理器):项目文件树。单击文件在右栏开预览标签、双击固定(见 `file_preview.rs`),支持拖放(`file_dnd.rs`)。
+//! 「文件」面板(资源管理器):项目文件树。单击文件在编辑器里开预览标签、双击固定,支持拖放(`file_dnd.rs`)。
 
 use crate::git_status::{GitMark, GitStatus};
 use std::collections::{HashMap, HashSet};
@@ -109,14 +109,6 @@ impl FileTree {
             self.expanded.insert(dir.to_path_buf());
             self.children.insert(dir.to_path_buf(), read_dir_sorted(dir));
         }
-    }
-
-    /// 展开到某个文件并选中它(`path` 可以是相对项目根的路径),返回绝对路径。
-    pub fn open(&mut self, path: &str) -> PathBuf {
-        let p = PathBuf::from(path);
-        let full = if p.is_absolute() { p } else { self.root.join(p) };
-        self.reveal(&full);
-        full
     }
 
     /// 在树里选中并展开到某个文件。

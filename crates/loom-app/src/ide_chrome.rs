@@ -170,15 +170,15 @@ pub fn breadcrumbs(path: &Path, root: &str, saved: bool, note: Option<String>, c
         .items_center()
         .text_size(px(12.))
         .text_color(t.muted_foreground)
-        .children(segs.into_iter().enumerate().flat_map(|(i, s)| {
+        // 路径段放进可收缩、裁切的容器:窗口窄时只裁路径,右侧的提示与刷新按钮始终可见
+        .child(h_flex().flex_1().min_w_0().overflow_hidden().gap_1().items_center().children(segs.into_iter().enumerate().flat_map(|(i, s)| {
             let mut parts = Vec::new();
             if i > 0 {
                 parts.push(icon(IconName::ChevronRight, 11., t.muted_foreground).into_any_element());
             }
-            parts.push(div().when(i == last, |d| d.text_color(t.foreground)).child(s).into_any_element());
+            parts.push(div().flex_none().whitespace_nowrap().when(i == last, |d| d.text_color(t.foreground)).child(s).into_any_element());
             parts
-        }))
-        .child(div().flex_1())
+        })))
         .when_some(note, |d, n| d.child(div().text_color(t.warning).child(n)))
         .when(!saved, |d| d.child(div().text_color(t.muted_foreground).child("未保存 · ⌘S")))
         .child(
@@ -197,11 +197,13 @@ pub fn welcome(cx: &App) -> impl IntoElement {
     let hints = [("显示 / 隐藏侧栏", "⌘B"), ("显示 / 隐藏对话栏", "⌥⌘B"), ("查找 / 替换", "⌘F"), ("保存文件", "⌘S"), ("关闭标签", "⌘W"), ("切换标签", "⌥⌘← / →"), ("切换到 Agent", "⇧⌘E")];
     v_flex()
         .size_full()
+        .overflow_hidden()
         .items_center()
         .justify_center()
         .gap_4()
         .child(icon(IconName::Code, 40., t.muted_foreground))
-        .child(v_flex().gap_1().w(px(280.)).children(hints.into_iter().map(|(label, key)| {
-            h_flex().text_size(px(12.)).text_color(t.muted_foreground).child(div().flex_1().child(label)).child(div().child(key))
+        // 嵌在 Agent 右栏时很窄:宽度随容器收缩(最宽 280),不再固定撑出去
+        .child(v_flex().gap_1().w_full().max_w(px(280.)).px_3().children(hints.into_iter().map(|(label, key)| {
+            h_flex().gap_2().text_size(px(12.)).text_color(t.muted_foreground).child(div().flex_1().min_w_0().truncate().child(label)).child(div().flex_none().child(key))
         })))
 }

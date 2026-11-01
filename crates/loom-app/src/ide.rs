@@ -97,6 +97,10 @@ impl IdeView {
 
     /// 打开文件的实现;`focus` 为假时不抢焦点(恢复标签时用)。
     pub(crate) fn open_inner(&mut self, path: PathBuf, preview: bool, focus: bool, window: &mut Window, cx: &mut Context<Self>) {
+        // 用户主动打开时,先把切换项目后挂起的标签记忆恢复好(否则稍后的恢复会把当前标签挤掉)
+        if focus {
+            self.restore_pending(window, cx);
+        }
         self.note = None;
         if is_image(&path) {
             self.images.insert(path.clone());

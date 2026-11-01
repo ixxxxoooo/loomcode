@@ -43,7 +43,6 @@ mod objc_exc;
 mod file_icons;
 mod file_ops;
 mod file_lang;
-mod file_preview;
 mod file_tree;
 mod file_tree_view;
 mod git_status;
