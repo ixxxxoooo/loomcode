@@ -7,7 +7,7 @@ use crate::ui::icon;
 use gpui_kit::assets::IconName;
 use gpui_kit::component::button::{Button, ButtonVariants};
 use gpui_kit::component::menu::{ContextMenuExt as _, PopupMenu, PopupMenuItem};
-use gpui_kit::component::{ActiveTheme, Sizable, h_flex, v_flex};
+use gpui_kit::component::{ActiveTheme, Selectable as _, Sizable, h_flex, v_flex};
 use gpui_kit::prelude::FluentBuilder as _;
 use gpui_kit::*;
 use std::path::{Path, PathBuf};
@@ -121,7 +121,7 @@ fn tab_menu(view: WeakEntity<IdeView>, path: PathBuf, pinned: bool) -> impl Fn(P
 }
 
 /// 面包屑:项目内的相对路径,最后一段为文件名;保存失败等提示显示在右侧。
-pub fn breadcrumbs(path: &Path, root: &str, saved: bool, note: Option<String>, cx: &mut Context<IdeView>) -> impl IntoElement {
+pub fn breadcrumbs(path: &Path, root: &str, saved: bool, note: Option<String>, blame: Option<bool>, cx: &mut Context<IdeView>) -> impl IntoElement {
     let t = cx.theme().clone();
     let home = std::env::var_os("HOME").map(PathBuf::from);
     let tilde;
@@ -158,6 +158,17 @@ pub fn breadcrumbs(path: &Path, root: &str, saved: bool, note: Option<String>, c
         })))
         .when_some(note, |d, n| d.child(div().text_color(t.warning).child(n)))
         .when(!saved, |d| d.child(div().text_color(t.muted_foreground).child("未保存 · ⌘S")))
+        .when_some(blame, |d, on| {
+            d.child(
+                Button::new("ide-blame")
+                    .xsmall()
+                    .ghost()
+                    .icon(IconName::GitCommitHorizontal)
+                    .selected(on)
+                    .tooltip(if on { "隐藏 Git 追溯栏" } else { "显示 Git 追溯栏(逐行作者与时间)" })
+                    .on_click(cx.listener(|this, _, _, cx| this.toggle_blame_gutter(cx))),
+            )
+        })
         .child(
             Button::new("ide-reload")
                 .xsmall()

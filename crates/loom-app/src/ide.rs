@@ -42,6 +42,12 @@ pub struct IdeDoc {
     /// 括号配对高亮:上次的配对位置与装饰集合
     pub(crate) bracket_pair: Option<(usize, usize)>,
     pub(crate) bracket_marks: Option<gpui_kit::component::input::RangeDecorationCollection>,
+    /// Git 追溯:每行最后一次修改的提交(下标 = 行号 - 1);没有仓库 / 未跟踪时为空
+    pub(crate) blame: std::sync::Arc<Vec<loom_core::git_blame::BlameLine>>,
+    /// 追溯刷新的防抖序号(也用来丢弃过期结果)
+    pub(crate) blame_gen: u64,
+    /// 追溯与当前内容一致(编辑后到刷新完成之间为假)
+    pub(crate) blame_fresh: bool,
     _subs: Vec<Subscription>,
 }
 
@@ -73,12 +79,16 @@ pub struct IdeView {
     pub(crate) pending_restore: Option<loom_config::IdeMemory>,
     /// Markdown 文件的预览 / 源码模式与就地编辑状态
     pub(crate) md: HashMap<PathBuf, Entity<crate::ide_markdown::MdDocView>>,
+    /// 显示追溯栏(初值取自偏好,面包屑按钮 / 命令面板可临时切换)
+    pub(crate) blame_gutter: bool,
+    /// 追溯栏的界面状态
+    pub(crate) blame_ui: std::rc::Rc<crate::ide_blame::BlameUi>,
 }
 
 impl IdeView {
     /// 创建空的编辑器视图。
     pub fn new() -> Self {
-        Self { root: String::new(), docs: HashMap::new(), tabs: TabModel::default(), note: None, images: Default::default(), minimap_ui: Default::default(), applied: None, edit_gen: 0, nav: Default::default(), nav_quiet: false, fresh_open: false, recent: Vec::new(), pending_restore: None, md: HashMap::new() }
+        Self { root: String::new(), docs: HashMap::new(), tabs: TabModel::default(), note: None, images: Default::default(), minimap_ui: Default::default(), applied: None, edit_gen: 0, nav: Default::default(), nav_quiet: false, fresh_open: false, recent: Vec::new(), pending_restore: None, md: HashMap::new(), blame_gutter: false, blame_ui: Default::default() }
     }
 
     /// 设置项目根目录(会话切换时由宿主调用)。
@@ -125,6 +135,7 @@ impl IdeView {
             self.focus_active(window, cx);
         }
         self.refresh_marks(&path, cx);
+        self.refresh_blame(&path, cx);
         let line = self.cursor_line(&path, cx);
         self.record_open(&path, line);
         cx.notify();
@@ -224,6 +235,10 @@ impl IdeView {
         for doc in self.docs.values() {
             doc.editor.update(cx, |ed, cx| crate::ide_prefs::apply(ed, &p, window, cx));
         }
+        // 追溯栏偏好变了才覆盖面包屑按钮的临时状态
+        if self.applied.as_ref().is_none_or(|a| a.blame_gutter != p.blame_gutter) {
+            self.blame_gutter = p.blame_gutter;
+        }
         self.applied = Some(p);
     }
 
@@ -271,6 +286,7 @@ impl IdeView {
             }
         }
         self.refresh_marks(&path, cx);
+        self.refresh_blame(&path, cx);
         cx.notify();
         true
     }
@@ -348,6 +364,7 @@ fn load(path: &Path, window: &mut Window, cx: &mut Context<IdeView>) -> Result<I
                     doc.saved = false;
                 }
                 this.schedule_minimap(&key, cx);
+                this.schedule_blame(&key, cx);
                 this.schedule_autosave(&key, cx);
             }
             // 失焦自动保存:编辑器失去焦点(切标签 / 点到别处 / 窗口失焦)时写盘
@@ -370,7 +387,7 @@ fn load(path: &Path, window: &mut Window, cx: &mut Context<IdeView>) -> Result<I
     });
     let marks = None;
     let mtime = meta.modified().ok();
-    Ok(IdeDoc { editor, saved: true, crlf, mtime, stale: false, marks, minimap, mm_key: (theme, prefs.syntax_highlight), mm_gen: 0, hunks: Default::default(), bracket_pair: None, bracket_marks: None, _subs: vec![sub, sub2] })
+    Ok(IdeDoc { editor, saved: true, crlf, mtime, stale: false, marks, minimap, mm_key: (theme, prefs.syntax_highlight), mm_gen: 0, hunks: Default::default(), bracket_pair: None, bracket_marks: None, blame: Default::default(), blame_gen: 0, blame_fresh: false, _subs: vec![sub, sub2] })
 }
 
 impl Render for IdeView {
@@ -387,7 +404,7 @@ impl Render for IdeView {
             .on_action(cx.listener(|this, _: &PrevTab, window, cx| this.cycle(-1, window, cx)));
         let active = self.tabs.active().map(Path::to_path_buf);
         if let Some(img_path) = active.clone().filter(|p| self.images.contains(p)) {
-            return root.child(tab_bar(self.tab_items(&img_path), cx)).child(breadcrumbs(&img_path, &self.root, true, None, cx)).child(
+            return root.child(tab_bar(self.tab_items(&img_path), cx)).child(breadcrumbs(&img_path, &self.root, true, None, None, cx)).child(
                 div().flex_1().min_h_0().flex().items_center().justify_center().p_4().child(img(img_path).max_w_full().max_h_full()),
             ).into_any_element();
         }
@@ -409,16 +426,19 @@ impl Render for IdeView {
         let doc = &self.docs[&path];
         let editor = doc.editor.clone();
         root.child(tab_bar(self.tab_items(&path), cx))
-            .child(breadcrumbs(&path, &self.root, doc.saved, self.note.clone().or_else(|| doc.stale.then(|| "磁盘上的文件已被修改,点右侧刷新按钮载入(会丢弃你的修改)".to_string())), cx))
+            .child(breadcrumbs(&path, &self.root, doc.saved, self.note.clone().or_else(|| doc.stale.then(|| "磁盘上的文件已被修改,点右侧刷新按钮载入(会丢弃你的修改)".to_string())), Some(self.blame_gutter), cx))
             .children(md_view.as_ref().map(|v| crate::ide_markdown::mode_bar(v, md_mode, cx)))
             .child({
                 let prefs = crate::prefs(cx).editor;
+                let gutter = self.blame_gutter.then(|| crate::ide_blame::gutter(doc, &self.blame_ui, cx)).flatten();
+                let inline = crate::ide_blame::inline_blame(doc, cx);
                 let ui = self.minimap_ui.clone();
                 // 编辑区太窄时自动隐藏迷你地图(宽度取自上一帧的测量)
                 let wide = ui.row_width.get() == 0. || ui.row_width.get() >= crate::ide_minimap::MIN_EDITOR_W;
                 let mm = (prefs.minimap && wide).then(|| crate::ide_minimap::minimap(&editor, doc.minimap.clone(), doc.hunks.clone(), ui.clone(), crate::ide_minimap::MinimapOpts::from_prefs(&prefs), cx));
                 let source = h_flex().relative().flex_1().min_w_0().min_h_0().w_full().h_full()
                     .child(canvas(move |b, _, _| ui.row_width.set(f32::from(b.size.width)), |_, _, _, _| {}).absolute().size_full())
+                    .children(gutter)
                     // 迷你地图兼作滚动条:把编辑器多撑出 16px 并裁掉,盖住它自带的纵向滚动条(自动换行时保留,否则折行会被裁)
                     .child({
                         let hide = mm.is_some() && !prefs.soft_wrap;
@@ -426,7 +446,8 @@ impl Render for IdeView {
                             .child(div().absolute().top_0().left_0().bottom_0().right(px(if hide { -16. } else { 0. }))
                                 .child(Editor::new(&editor).bordered(false).appearance(false).size_full()))
                     })
-                    .children(mm);
+                    .children(mm)
+                    .children(inline);
                 match md_mode {
                     crate::ide_markdown::MdMode::Source => h_flex().flex_1().min_h_0().w_full().child(source).into_any_element(),
                     crate::ide_markdown::MdMode::Preview => h_flex().flex_1().min_h_0().w_full().child(md_view.clone().unwrap()).into_any_element(),

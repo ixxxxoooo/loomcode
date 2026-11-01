@@ -28,6 +28,10 @@ pub fn render(wb: &Workbench, cx: &mut Context<Workbench>) -> AnyElement {
             switch_row("ed-bracket", "括号配对高亮", "光标贴近括号时高亮与它配对的括号", e.bracket_match, cx, |this, v, cx| this.update_settings(cx, |s| s.editor.bracket_match = v)),
             switch_row("ed-syntax", "语法高亮", "之后新打开的文件生效;关闭可以让超大文件更流畅", e.syntax_highlight, cx, |this, v, cx| this.update_settings(cx, |s| s.editor.syntax_highlight = v)),
         ], cx))
+        .child(group("Git 追溯", rows![
+            switch_row("ed-blame-inline", "行内追溯", "光标所在行的末尾淡淡地显示「作者, 时间 • 提交说明」,悬停看完整信息,点击复制提交哈希", e.blame_inline, cx, |this, v, cx| this.update_settings(cx, |s| s.editor.blame_inline = v)),
+            switch_row("ed-blame-gutter", "追溯栏", "在编辑器左侧逐行显示最后修改该行的作者与时间(也可在编辑器面包屑栏的按钮里临时开关);自动换行时不显示", e.blame_gutter, cx, |this, v, cx| this.update_settings(cx, |s| s.editor.blame_gutter = v)),
+        ], cx))
         .child(group("编辑", rows![
             row("缩进宽度", "Tab 键缩进使用的列数", segmented("ed-tab", vec![(2u8, "2"), (4u8, "4"), (8u8, "8")], e.tab_size, cx,
                 |this, v, cx| this.update_settings(cx, |s| s.editor.tab_size = v)), cx),

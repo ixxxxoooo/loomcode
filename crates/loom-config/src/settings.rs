@@ -70,11 +70,15 @@ pub struct EditorPrefs {
     pub max_file_kb: u32,
     /// 语法高亮(之后新打开的文件生效)
     pub syntax_highlight: bool,
+    /// 行内 Git 追溯:光标所在行末尾显示「作者, 时间 • 提交说明」(对标 Zed 的 inline blame / GitLens 的当前行追溯)
+    pub blame_inline: bool,
+    /// 行号左侧的 Git 追溯栏(逐行显示作者与时间,同一提交的连续行只在首行显示)
+    pub blame_gutter: bool,
 }
 
 impl Default for EditorPrefs {
     fn default() -> Self {
-        Self { minimap: true, minimap_slider_always: false, minimap_width: 100, minimap_git: true, line_numbers: true, folding: true, soft_wrap: false, tab_size: 4, bracket_match: true, auto_save: AutoSave::Off, max_file_kb: 1024, syntax_highlight: true }
+        Self { minimap: true, minimap_slider_always: false, minimap_width: 100, minimap_git: true, line_numbers: true, folding: true, soft_wrap: false, tab_size: 4, bracket_match: true, auto_save: AutoSave::Off, max_file_kb: 1024, syntax_highlight: true, blame_inline: true, blame_gutter: false }
     }
 }
 
