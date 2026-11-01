@@ -66,14 +66,13 @@ pub fn model_popup(models: &[ModelInfo], current: &str, effort: Effort, this: En
             .when(on, |d| d.bg(t.background).text_color(t.foreground).shadow_sm())
             .when(!on, |d| d.text_color(t.muted_foreground).hover(|d| d.bg(t.list_hover)))
             .on_click(move |_, _, cx| { this.update(cx, |c, cx| c.choose_effort(e, cx)); })
-            .child(e.label())
+            .child(e.cli_value())
     }));
     v_flex().absolute().bottom(px(44.)).left(px(8.)).w(px(300.)).p_1().rounded(px(10.)).border_1().border_color(t.border).bg(t.popover).shadow_lg()
         .children(list)
         .child(div().h(px(1.)).my_1().bg(t.border))
         .child(div().px_2().pt_1().pb_0p5().text_size(px(11.)).text_color(t.muted_foreground).child("思考强度"))
         .child(div().px_1().child(segments))
-        .child(div().px_2().py_1p5().text_size(px(11.)).text_color(t.muted_foreground).child(effort.hint()))
 }
 
 /// 上下文弹层。
