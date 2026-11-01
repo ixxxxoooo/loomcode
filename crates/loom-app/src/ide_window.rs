@@ -5,7 +5,7 @@
 //! @author ixxxxoooo
 
 use crate::ide_status;
-use crate::ide::{CloseTab, FindInProject, GoToLine, IdeView, NavBack, NavForward, NextTab, PrevTab, QuickOpen, ShowScm, TogglePanel};
+use crate::ide::{CloseTab, FormatDocument, FindInProject, GoToLine, IdeView, NavBack, NavForward, NextTab, PrevTab, QuickOpen, ShowScm, TogglePanel};
 use crate::right_panel::{PanelEvent, RightPanel};
 use crate::ui::{icon, no_drag};
 use gpui_kit::component::Disableable as _;
@@ -315,6 +315,7 @@ pub(crate) fn bind_ide_keys(cx: &mut App) {
     ONCE.call_once(|| {
         cx.bind_keys([
             KeyBinding::new("cmd-w", CloseTab, Some("IdeView")),
+            KeyBinding::new("shift-alt-f", FormatDocument, Some("IdeView")),
             KeyBinding::new("cmd-p", QuickOpen, Some("IdeWindow")),
             KeyBinding::new("cmd-k", QuickOpen, Some("IdeWindow")),
             KeyBinding::new("ctrl-g", GoToLine, Some("IdeWindow")),

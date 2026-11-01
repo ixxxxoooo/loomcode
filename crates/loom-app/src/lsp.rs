@@ -81,25 +81,25 @@ impl Drop for DocSync {
 }
 
 /// 把整篇文本按行切开(去掉行尾的 `\r`)。
-fn split_lines(text: &str) -> Vec<&str> {
+pub(crate) fn split_lines(text: &str) -> Vec<&str> {
     text.split('\n').map(|l| l.strip_suffix('\r').unwrap_or(l)).collect()
 }
 
 /// 编辑器偏移 → LSP 位置(UTF-16 列)。
-fn to_lsp_pos(rope: &Rope, offset: usize, lines: &[&str]) -> Value {
+pub(crate) fn to_lsp_pos(rope: &Rope, offset: usize, lines: &[&str]) -> Value {
     let p = rope.offset_to_position(offset);
     let col = lines.get(p.line as usize).map_or(p.character as usize, |l| chars_to_utf16(l, p.character as usize));
     json!({ "line": p.line, "character": col })
 }
 
 /// LSP 位置(UTF-16 列)→ 字符列,就地换算。
-fn fix_pos(p: &mut lsp_types::Position, lines: &[&str]) {
+pub(crate) fn fix_pos(p: &mut lsp_types::Position, lines: &[&str]) {
     if let Some(l) = lines.get(p.line as usize) {
         p.character = utf16_to_chars(l, p.character as usize) as u32;
     }
 }
 
-fn fix_range(r: &mut lsp_types::Range, lines: &[&str]) {
+pub(crate) fn fix_range(r: &mut lsp_types::Range, lines: &[&str]) {
     fix_pos(&mut r.start, lines);
     fix_pos(&mut r.end, lines);
 }
@@ -213,7 +213,7 @@ impl DefinitionProvider for LspProvider {
 }
 
 /// 把三种定义应答统一成 `LocationLink` 列表。
-fn definition_links(resp: lsp_types::GotoDefinitionResponse) -> Vec<lsp_types::LocationLink> {
+pub(crate) fn definition_links(resp: lsp_types::GotoDefinitionResponse) -> Vec<lsp_types::LocationLink> {
     use lsp_types::GotoDefinitionResponse as R;
     let from_loc = |l: lsp_types::Location| lsp_types::LocationLink { origin_selection_range: None, target_uri: l.uri, target_range: l.range, target_selection_range: l.range };
     match resp {

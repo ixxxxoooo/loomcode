@@ -14,7 +14,7 @@ use gpui_kit::*;
 use std::collections::HashMap;
 use std::path::{Path, PathBuf};
 
-actions!(ide, [CloseTab, NextTab, PrevTab, QuickOpen, GoToLine, FindInProject, NavBack, NavForward, ShowScm, TogglePanel]);
+actions!(ide, [GoToTypeDefinition, FormatDocument, CloseTab, NextTab, PrevTab, QuickOpen, GoToLine, FindInProject, NavBack, NavForward, ShowScm, TogglePanel]);
 
 /// 超过这个大小的文件不在编辑器里打开。
 
@@ -434,6 +434,8 @@ impl Render for IdeView {
             .size_full()
             .bg(t.background)
             .on_action(cx.listener(|this, _: &CloseTab, window, cx| this.close_active(window, cx)))
+            .on_action(cx.listener(|this, _: &GoToTypeDefinition, window, cx| this.go_to_type_definition(window, cx)))
+            .on_action(cx.listener(|this, _: &FormatDocument, window, cx| this.format_document(window, cx)))
             .on_action(cx.listener(|this, _: &NextTab, window, cx| this.cycle(1, window, cx)))
             .on_action(cx.listener(|this, _: &PrevTab, window, cx| this.cycle(-1, window, cx)));
         let active = self.tabs.active().map(Path::to_path_buf);
@@ -471,6 +473,7 @@ impl Render for IdeView {
                 let gutter = self.blame_gutter.then(|| crate::ide_blame::gutter(doc, &self.blame_ui, cx)).flatten();
                 let inline = crate::ide_blame::inline_blame(doc, cx);
                 let hover = crate::ide_hover::hover_card(doc, &path, cx.weak_entity(), window, cx);
+                let ctx_menu = crate::ide_menu::editor_menu(&editor, cx.weak_entity());
                 let ui = self.minimap_ui.clone();
                 // 编辑区太窄时自动隐藏迷你地图(宽度取自上一帧的测量)
                 let wide = ui.row_width.get() == 0. || ui.row_width.get() >= crate::ide_minimap::MIN_EDITOR_W;
@@ -483,7 +486,7 @@ impl Render for IdeView {
                         let hide = mm.is_some() && !prefs.soft_wrap;
                         div().flex_1().min_w_0().h_full().relative().overflow_hidden()
                             .child(div().absolute().top_0().left_0().bottom_0().right(px(if hide { -16. } else { 0. }))
-                                .child(Editor::new(&editor).bordered(false).appearance(false).size_full()))
+                                .child(Editor::new(&editor).bordered(false).appearance(false).size_full().context_menu(ctx_menu)))
                     })
                     .children(mm)
                     .children(inline)
