@@ -1043,7 +1043,7 @@ impl Render for Workbench {
                             })
                             .child(resizable_panel().size(px(self.left_w)).size_range(px(LEFT_MIN)..px(LEFT_MAX)).flex_none().visible(self.left_visible())
                                 .child(sidebar::render(self, cx)))
-                            .child(resizable_panel().size_range(px(CENTER_MIN)..Pixels::MAX).child(div().size_full().child(v_flex().size_full().child(self.center_header(cx)).child(div().flex_1().min_h_0().w_full().child(center)))))
+                            .child(resizable_panel().size_range(px(CENTER_MIN)..Pixels::MAX).child(div().size_full().child(v_flex().size_full().when(!full_settings, |d| d.child(self.center_header(cx))).child(div().flex_1().min_h_0().w_full().child(center)))))
                             .child(resizable_panel().size(px(self.right_w)).size_range(px(RIGHT_MIN)..px(RIGHT_MAX)).flex_none().visible(self.right_visible())
                                 .child(div().size_full().child(self.panel.clone()))),
                     ),

@@ -105,7 +105,8 @@ impl Workbench {
         let left_hidden = !self.left_visible();
         let title = match self.page {
             Page::Chat => self.active_model().map(|m| m.read(cx).state.title.clone()),
-            Page::Settings => Some("设置".to_string()),
+            // 设置是整窗页面,不显示顶部行(见 settings::render)
+            Page::Settings => None,
             Page::Canvas => Some("Canvas".to_string()),
             Page::Automation => Some("自动化".to_string()),
             Page::Browser => Some("浏览器".to_string()),

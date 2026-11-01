@@ -22,7 +22,8 @@ mod widgets;
 pub use forms::Forms;
 
 use crate::ui::icon;
-use crate::workbench::Workbench;
+use crate::window_header::{HEADER_H, draggable};
+use crate::workbench::{Page, Workbench};
 use gpui_kit::assets::IconName;
 use gpui_kit::component::{ActiveTheme, h_flex, v_flex};
 use gpui_kit::prelude::FluentBuilder as _;
@@ -117,10 +118,18 @@ pub fn render(wb: &mut Workbench, window: &mut Window, cx: &mut Context<Workbenc
         SettingsTab::Shortcuts => pages::shortcuts(cx),
         SettingsTab::About => pages::about(wb, cx),
     };
+    // 整窗页面,没有顶部行:导航栏顶部留出红绿灯位置(可拖动窗口),下面是「返回」,内容区顶部同高的空白也可拖动
     h_flex().size_full().bg(t.background)
         .child(
-            v_flex().w(px(200.)).h_full().flex_none().p_2().gap_0p5().border_r_1().border_color(t.border).bg(t.sidebar)
-                .child(div().px_2().py_2().text_size(px(13.)).font_weight(FontWeight::SEMIBOLD).child("设置"))
+            v_flex().w(px(200.)).h_full().flex_none().px_2().pb_2().gap_0p5().border_r_1().border_color(t.border).bg(t.sidebar)
+                .child(draggable(div().id("st-drag-nav").w_full().h(px(HEADER_H)).flex_none()))
+                .child(
+                    h_flex().id("st-back").h(px(30.)).px_2().mb_2().gap_2().items_center().rounded(px(6.)).cursor_pointer().text_size(px(13.))
+                        .hover(|d| d.bg(t.sidebar_accent))
+                        .on_click(cx.listener(|this, _, _, cx| this.set_page(Page::Chat, cx)))
+                        .child(icon(IconName::ArrowLeft, 14., t.muted_foreground))
+                        .child("返回"),
+                )
                 .children(SettingsTab::ALL.into_iter().map(|st| {
                     let on = st == tab;
                     h_flex().id(SharedString::from(format!("st-{}", st.label()))).h(px(30.)).px_2().gap_2().items_center().rounded(px(6.)).cursor_pointer().text_size(px(13.))
@@ -132,8 +141,12 @@ pub fn render(wb: &mut Workbench, window: &mut Window, cx: &mut Context<Workbenc
                 })),
         )
         .child(
-            div().id("settings-scroll").flex_1().min_w_0().h_full().overflow_y_scroll().flex().justify_center().px_6().pb_10()
-                .child(v_flex().w_full().max_w(px(680.)).pt_6().child(body)),
+            v_flex().flex_1().min_w_0().h_full()
+                .child(draggable(div().id("st-drag-body").w_full().h(px(HEADER_H)).flex_none()))
+                .child(
+                    div().id("settings-scroll").flex_1().min_h_0().w_full().overflow_y_scroll().flex().justify_center().px_6().pb_10()
+                        .child(v_flex().w_full().max_w(px(680.)).child(body)),
+                ),
         )
         .into_any_element()
 }
