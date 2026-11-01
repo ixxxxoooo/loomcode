@@ -12,5 +12,5 @@ pub mod settings;
 pub mod ui_state;
 
 pub use claude::{ClaudeConfig, HookEntry, LayerSettings, McpServer, McpSpec, PermissionRules, Rule, Scope};
-pub use settings::{AppSettings, ProxyMode, ThemeChoice};
+pub use settings::{AppSettings, AutoSave, BrowserPrefs, CursorShape, EditorPrefs, IntelPrefs, ProxyMode, ScmPrefs, TerminalPrefs, ThemeChoice};
 pub use ui_state::UiState;

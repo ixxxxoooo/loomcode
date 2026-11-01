@@ -45,9 +45,11 @@ impl BrowserPage {
         self.error = None;
         self.input.update(cx, |i, cx| i.set_value(url.clone(), window, cx));
         cx.notify();
+        let bp = crate::prefs(cx).browser;
+        let opts = loom_browser::FetchOptions { timeout_secs: bp.timeout_secs as u64, user_agent: bp.user_agent };
         cx.spawn_in(window, async move |this, cx| {
             let target = url.clone();
-            let result = cx.background_spawn(async move { loom_browser::load(&target) }).await;
+            let result = cx.background_spawn(async move { loom_browser::load_with(&target, &opts) }).await;
             let _ = this.update_in(cx, |this, window, cx| {
                 // 期间用户又导航到别处时,丢弃过期结果
                 if this.history.current() != Some(url.as_str()) {

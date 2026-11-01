@@ -4,6 +4,9 @@
 //! - `--demo`(或环境变量 `LOOM_DEMO=1`):演示模式,脚本化后端、沙盒项目;
 //! - 其余情况使用真实 `claude`:读取 `~/.claude/projects` 的历史会话,按需惰性启动子进程。
 
+// 主题的语法配色用大段 json! 构造,默认递归上限不够
+#![recursion_limit = "512"]
+
 mod ansi;
 mod app_icon;
 mod automation_page;
@@ -33,6 +36,7 @@ mod ide_terminal;
 mod ide_watch;
 mod ide_chat_header;
 mod ide_gutter;
+mod ide_prefs;
 mod ide_brackets;
 mod ide_chrome;
 mod ide_close;
@@ -89,6 +93,16 @@ pub struct UiPrefs {
     pub cmd_enter_send: bool,
 }
 impl Global for UiPrefs {}
+
+/// 客户端偏好的完整全局副本:编辑器、终端、浏览器、文件检索等不持有工作台引用的地方读取。
+#[derive(Clone, Default)]
+pub struct Prefs(pub loom_config::AppSettings);
+impl Global for Prefs {}
+
+/// 当前偏好(尚未初始化时为默认值)。
+pub fn prefs(cx: &App) -> loom_config::AppSettings {
+    cx.try_global::<Prefs>().map(|p| p.0.clone()).unwrap_or_default()
+}
 
 fn main() {
     let args: Vec<String> = std::env::args().collect();

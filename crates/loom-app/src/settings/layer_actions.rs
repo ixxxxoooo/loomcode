@@ -17,7 +17,69 @@ pub enum Target {
     Env(&'static str, bool),
 }
 
+/// 写入 Claude 配置层的文本字段(失焦 / 回车自动提交)。
+pub const CLAUDE_FIELDS: &[(&str, Target)] = &[
+    ("model", Target::Json(&["model"])),
+    ("thinking", Target::Env("MAX_THINKING_TOKENS", true)),
+    ("compact", Target::Env("CLAUDE_AUTOCOMPACT_PCT_OVERRIDE", true)),
+    ("output_style", Target::Json(&["outputStyle"])),
+    ("key_helper", Target::Json(&["apiKeyHelper"])),
+    ("mcp_timeout", Target::Env("MCP_TIMEOUT", true)),
+    ("mcp_tool_timeout", Target::Env("MCP_TOOL_TIMEOUT", true)),
+    ("mcp_output", Target::Env("MAX_MCP_OUTPUT_TOKENS", true)),
+];
+
+/// 写入客户端偏好(settings.json)的文本字段(失焦 / 回车自动提交)。
+pub const CLIENT_FIELDS: &[&str] = &["proxy", "timeout", "no_proxy", "claude_path", "accent", "term_shell", "browser_ua", "ignore"];
+
 impl Workbench {
+    /// 输入框失焦或回车时提交:内容没变就什么都不做;客户端偏好走 `update_settings`,Claude 配置写当前层。
+    ///
+    /// 参数:`key` 字段键。
+    pub fn commit_field(&mut self, key: &str, cx: &mut Context<Self>) {
+        let text = self.field_value(key, cx);
+        if self.forms().fields.baseline.get(key).is_some_and(|b| *b == text) {
+            return;
+        }
+        if let Some((_, target)) = CLAUDE_FIELDS.iter().find(|(k, _)| *k == key) {
+            self.save_field(key, *target, cx);
+        } else {
+            match key {
+                "proxy" => self.update_settings(cx, |s| s.proxy_address = text.clone()),
+                "no_proxy" => self.update_settings(cx, |s| s.no_proxy = text.clone()),
+                "timeout" => match text.parse::<u64>() {
+                    _ if text.is_empty() => self.update_settings(cx, |s| s.request_timeout = None),
+                    Ok(n) if n > 0 => self.update_settings(cx, |s| s.request_timeout = Some(n)),
+                    _ => {
+                        self.forms_mut().error = Some("超时需要是正整数(秒)".into());
+                        cx.notify();
+                        return;
+                    }
+                },
+                "claude_path" => self.save_claude_path(cx),
+                "term_shell" => self.update_settings(cx, |s| s.terminal.shell = text.trim().to_string()),
+                "browser_ua" => self.update_settings(cx, |s| s.browser.user_agent = text.trim().to_string()),
+                "ignore" => {
+                    let lines = text.split([',', '\n']).map(str::trim).filter(|l| !l.is_empty()).collect::<Vec<_>>().join("\n");
+                    self.update_settings(cx, |s| s.intel.ignore = lines.clone());
+                }
+                "accent" => {
+                    if text.is_empty() || crate::theme::parse_hex(&text).is_some() {
+                        self.update_settings(cx, |s| s.accent = (!text.is_empty()).then(|| text.trim_start_matches('#').to_uppercase()));
+                    } else {
+                        self.forms_mut().error = Some("强调色需要是 6 位十六进制,例如 2563EB".into());
+                        cx.notify();
+                        return;
+                    }
+                }
+                _ => return,
+            }
+        }
+        if self.forms().error.is_none() {
+            self.forms_mut().fields.baseline.insert(key.to_string(), text);
+        }
+    }
+
     /// 保存一个文本字段到当前层;空值表示删除该键(继承其它层)。
     ///
     /// 参数:`field` 字段键;`target` 写入位置。

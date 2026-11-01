@@ -24,7 +24,12 @@ pub const FIELDS: &[(&str, &str)] = &[
     ("claude_path", "留空自动查找"),
     ("proxy", "例如 127.0.0.1:7890"),
     ("timeout", "秒,例如 600"),
+    ("no_proxy", "逗号分隔,例如 localhost,127.0.0.1,.internal.example.com"),
     ("accent", "RRGGBB"),
+    ("settings_search", "搜索设置"),
+    ("term_shell", "留空使用 $SHELL,例如 /bin/zsh"),
+    ("browser_ua", "留空使用默认"),
+    ("ignore", "逗号分隔,例如 target, node_modules, *.log"),
     ("p_name", "显示名称"),
     ("p_url", "Base URL,例如 https://api.deepseek.com/anthropic"),
     ("p_key", "API Key(保存后不再显示,留空保持原值)"),
@@ -41,6 +46,8 @@ pub struct Fields {
     pub prompt: Entity<TextareaState>,
     /// 上次预填时的(分类, 层, 项目);变化后重新预填
     synced: Option<(SettingsTab, Scope, Option<String>)>,
+    /// 各字段上次预填 / 提交时的文本;失焦或回车时只有和它不同才提交,避免无谓写盘
+    pub baseline: HashMap<String, String>,
 }
 
 impl Fields {
@@ -48,7 +55,7 @@ impl Fields {
     pub fn new(window: &mut Window, cx: &mut App) -> Self {
         let inputs = FIELDS.iter().map(|(k, p)| (*k, cx.new(|cx| InputState::new(window, cx).placeholder(*p)))).collect();
         let prompt = cx.new(|cx| TextareaState::new(window, cx).placeholder("每个新会话都会追加到 Claude Code 系统提示词末尾,例如:始终用中文回答"));
-        Self { inputs, prompt, synced: None }
+        Self { inputs, prompt, synced: None, baseline: HashMap::new() }
     }
 
     /// 取字段。键不存在属于编程错误。
@@ -105,10 +112,15 @@ impl Workbench {
             ("claude_path", s.claude_path.clone().unwrap_or_default()),
             ("proxy", s.proxy_address.clone()),
             ("timeout", s.request_timeout.map(|t| t.to_string()).unwrap_or_default()),
+            ("no_proxy", s.no_proxy.clone()),
             ("accent", s.accent.clone().unwrap_or_default()),
+            ("term_shell", s.terminal.shell.clone()),
+            ("browser_ua", s.browser.user_agent.clone()),
+            ("ignore", s.intel.ignore.lines().map(str::trim).filter(|l| !l.is_empty()).collect::<Vec<_>>().join(", ")),
         ];
         for (k, v) in values {
-            self.set_field(k, v, window, cx);
+            self.set_field(k, v.clone(), window, cx);
+            self.forms_mut().fields.baseline.insert(k.to_string(), v);
         }
         // 服务商页:当前选中服务商的名称与地址(密钥从不回填)
         let ui = &self.forms().providers;

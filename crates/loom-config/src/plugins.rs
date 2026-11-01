@@ -34,6 +34,43 @@ pub struct Marketplace {
     pub updated: String,
 }
 
+/// 市场里可安装的一个插件(来自市场的 `marketplace.json`)。
+#[derive(Debug, Clone, PartialEq)]
+pub struct MarketPlugin {
+    pub name: String,
+    pub market: String,
+    pub description: String,
+}
+
+impl MarketPlugin {
+    /// 安装用的 id:`名称@市场`。
+    pub fn id(&self) -> String {
+        format!("{}@{}", self.name, self.market)
+    }
+}
+
+/// 解析一个市场的 `marketplace.json`。
+///
+/// 参数:`dir_name` 市场目录名(清单里没有 `name` 时用它);`json` 文件文本。返回:该市场提供的插件。
+pub fn parse_market_plugins(dir_name: &str, json: &str) -> Vec<MarketPlugin> {
+    let Ok(v) = serde_json::from_str::<Value>(json) else { return Vec::new() };
+    let market = v["name"].as_str().filter(|n| !n.is_empty()).unwrap_or(dir_name).to_string();
+    v["plugins"]
+        .as_array()
+        .into_iter()
+        .flatten()
+        .filter_map(|p| Some(MarketPlugin { name: p["name"].as_str()?.to_string(), market: market.clone(), description: p["description"].as_str().unwrap_or("").to_string() }))
+        .collect()
+}
+
+/// 读取所有已添加市场里可安装的插件(`~/.claude/plugins/marketplaces/*/.claude-plugin/marketplace.json`)。
+pub fn list_market_plugins(home: &Path) -> Vec<MarketPlugin> {
+    let Ok(rd) = std::fs::read_dir(plugins_dir(home).join("marketplaces")) else { return Vec::new() };
+    let mut dirs: Vec<_> = rd.flatten().filter(|e| e.path().is_dir()).collect();
+    dirs.sort_by_key(|e| e.file_name());
+    dirs.into_iter().flat_map(|e| parse_market_plugins(&e.file_name().to_string_lossy(), &read(&e.path().join(".claude-plugin/marketplace.json")))).collect()
+}
+
 fn read(path: &Path) -> String {
     std::fs::read_to_string(path).unwrap_or_default()
 }

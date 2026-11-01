@@ -45,8 +45,26 @@ impl Workbench {
         match tab {
             Usage if self.forms().ops.usage.is_none() && !self.forms().ops.usage_busy => self.refresh_usage(cx),
             Diagnostics if self.forms().ops.procs.is_empty() && self.forms().ops.log.is_empty() => self.refresh_diag(cx),
+            Trust => self.refresh_trust(cx),
             _ => {}
         }
+    }
+
+    /// 重新读取每个项目的信任状态(`~/.claude.json`)。
+    pub fn refresh_trust(&mut self, cx: &mut Context<Self>) {
+        let paths: Vec<String> = self.projects.iter().map(|p| p.path.clone()).collect();
+        let flags = loom_config::claude::read_trust(&self.claude_home, &paths);
+        self.forms_mut().ops.trust = self.projects.iter().zip(flags).map(|(p, t)| (p.name.clone(), p.path.clone(), t)).collect();
+        cx.notify();
+    }
+
+    /// 切换某个项目的信任状态并写回 `~/.claude.json`。
+    pub fn set_project_trust(&mut self, path: &str, trusted: bool, cx: &mut Context<Self>) {
+        match loom_config::claude::set_trust(&self.claude_home, std::path::Path::new(path), trusted) {
+            Ok(()) => self.forms_mut().error = None,
+            Err(e) => self.forms_mut().error = Some(format!("写入 ~/.claude.json 失败:{e}")),
+        }
+        self.refresh_trust(cx);
     }
 
     /// 当前设置下 curl 应使用的代理。

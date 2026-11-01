@@ -24,7 +24,7 @@ impl IdeWindow {
             return;
         }
         let root = self.wb.read(cx).active_project_path().unwrap_or_default();
-        let mut items: Vec<PaletteItem> = collect_files(std::path::Path::new(&root), 5000)
+        let mut items: Vec<PaletteItem> = collect_files(std::path::Path::new(&root), 5000, &crate::prefs(cx).intel)
             .into_iter()
             .map(|f| PaletteItem { title: f.rsplit('/').next().unwrap_or(&f).to_string(), subtitle: f.clone(), group: Group::File, icon: IconName::FileText, action: PaletteAction::OpenFile(f) })
             .collect();

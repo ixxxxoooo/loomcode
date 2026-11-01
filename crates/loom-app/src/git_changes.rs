@@ -17,7 +17,6 @@ use loom_core::TimelineItem;
 use loom_core::git::{self, StatusEntry};
 
 /// 超过这个大小的文件不算 diff(只显示在列表里)。
-const MAX_DIFF_BYTES: u64 = 1024 * 1024;
 
 /// 「改动」分段的两种内容。
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
@@ -157,13 +156,14 @@ impl RightPanel {
     /// 后台计算某个文件相对 HEAD 的 diff。
     fn load_git_diff(&mut self, rel: String, cx: &mut Context<Self>) {
         let Some(top) = self.git.top.clone() else { return };
+        let max_bytes = u64::from(crate::prefs(cx).scm.diff_max_kb) * 1024;
         self.git.open.insert(rel.clone(), None);
         cx.spawn(async move |this, cx| {
             let r = rel.clone();
             let diff = cx
                 .background_spawn(async move {
                     let abs = PathBuf::from(&top).join(&r);
-                    if std::fs::metadata(&abs).is_ok_and(|m| m.len() > MAX_DIFF_BYTES) {
+                    if std::fs::metadata(&abs).is_ok_and(|m| m.len() > max_bytes) {
                         return (Vec::new(), 0, 0);
                     }
                     let old = git::file_at_head(&top, &r).unwrap_or_default();

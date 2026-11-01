@@ -3,6 +3,7 @@
 //!
 //! @author ixxxxoooo
 
+use super::widgets::chips;
 use super::{claude_pages, hooks_page, items_page, mcp_page, plugins_page};
 use crate::ui::icon;
 use crate::workbench::Workbench;
@@ -10,7 +11,6 @@ use gpui_kit::assets::IconName;
 use gpui_kit::component::button::{Button, ButtonVariants};
 use gpui_kit::component::input::Input;
 use gpui_kit::component::{ActiveTheme, Sizable, h_flex, v_flex};
-use gpui_kit::prelude::FluentBuilder as _;
 use gpui_kit::*;
 use loom_config::items::ItemKind;
 
@@ -42,9 +42,9 @@ impl CustomizeTab {
         }
     }
 
-    /// 按小写名查找(调试用环境变量 `LOOM_CUSTOMIZE`)。
-    pub fn from_name(name: &str) -> Option<Self> {
-        let key = |t: &Self| match t {
+    /// 稳定的小写名(`LOOM_CUSTOMIZE`、记住上次标签用)。
+    pub fn key(self) -> &'static str {
+        match self {
             Self::Plugins => "plugins",
             Self::Mcp => "mcp",
             Self::Skills => "skills",
@@ -52,8 +52,12 @@ impl CustomizeTab {
             Self::Agents => "agents",
             Self::Rules => "rules",
             Self::Hooks => "hooks",
-        };
-        Self::ALL.into_iter().find(|t| key(t) == name)
+        }
+    }
+
+    /// 按小写名查找。
+    pub fn from_name(name: &str) -> Option<Self> {
+        Self::ALL.into_iter().find(|t| t.key() == name)
     }
 }
 
@@ -81,14 +85,10 @@ pub fn render(wb: &mut Workbench, window: &mut Window, cx: &mut Context<Workbenc
                 .child(div().flex_1().child(Input::new(wb.field("search")).small().prefix(icon(IconName::Search, 14., t.muted_foreground))))
                 .child(Button::new("customize-refresh").small().ghost().icon(IconName::RefreshCw).tooltip("重新读取")
                     .on_click(cx.listener(|this, _, _, cx| { this.reload_claude_cfg(); this.refresh_plugins(); cx.notify(); }))))
-            .child(h_flex().gap_1p5().flex_wrap().children(CustomizeTab::ALL.into_iter().map(|c| {
-                let on = c == tab;
-                h_flex().id(SharedString::from(format!("cz-{}", c.label()))).h(px(28.)).px_3().items_center().rounded(px(6.)).border_1().cursor_pointer().text_size(px(13.))
-                    .when(on, |d| d.bg(t.primary.opacity(0.12)).border_color(t.primary.opacity(0.35)).text_color(t.primary).font_weight(FontWeight::MEDIUM))
-                    .when(!on, |d| d.bg(t.muted).border_color(t.border).hover(|d| d.bg(t.list_hover)))
-                    .on_click(cx.listener(move |this, _, _, cx| { this.customize_tab = c; cx.notify(); }))
-                    .child(c.label())
-            }))))
+            .child(chips("cz", CustomizeTab::ALL.into_iter().map(|c| (c, c.label().to_string())).collect(), tab, cx, |this, c, cx| {
+                this.customize_tab = c;
+                this.update_settings(cx, |s| s.last_customize_tab = c.key().to_string());
+            })))
         .child(div().w_full().h(px(1.)).bg(t.border))
         .child(body)
         .into_any_element()

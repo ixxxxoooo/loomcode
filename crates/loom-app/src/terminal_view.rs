@@ -10,10 +10,9 @@ use gpui_kit::prelude::FluentBuilder as _;
 use gpui_kit::*;
 use std::ops::Range;
 use std::sync::Arc;
+use loom_config::CursorShape;
 use loom_term::{Mods, Run, SelectKind, SpawnOptions, TermColor, Terminal, encode_key};
 
-const FONT_SIZE: f32 = 12.;
-const LINE_H: f32 = 16.;
 /// 终端内容距边框的留白
 const PAD: f32 = 6.;
 
@@ -21,6 +20,8 @@ const PAD: f32 = 6.;
 pub struct TerminalView {
     term: Arc<Terminal>,
     focus: FocusHandle,
+    /// 当前字号与行高(随设置变化,变了就重新量字宽)
+    metrics: (f32, f32),
     /// 等宽字体一个字符的宽度(第一次渲染时量出来)
     cell_w: Option<Pixels>,
     /// 当前终端的 (列, 行)
@@ -44,7 +45,18 @@ impl TerminalView {
     pub fn start(cwd: &str, command: Option<Vec<String>>, cx: &mut App) -> Result<Entity<Self>, String> {
         // 读线程只发一个「请重绘」信号,容量 1 自然合并连续输出
         let (tx, rx) = async_channel::bounded::<()>(1);
-        let term = Terminal::spawn(SpawnOptions { cwd: Some(cwd.to_string()), command, cols: 80, rows: 24 }, move || {
+        let tp = crate::prefs(cx).terminal;
+        let cwd = if tp.start_in_project { cwd.to_string() } else { std::env::var("HOME").unwrap_or_else(|_| cwd.to_string()) };
+        let opts = SpawnOptions {
+            cwd: Some(cwd),
+            command,
+            cols: 80,
+            rows: 24,
+            shell: Some(tp.shell.clone()),
+            no_login: !tp.login_shell,
+            scrollback: Some(tp.scrollback as usize),
+        };
+        let term = Terminal::spawn(opts, move || {
             let _ = tx.try_send(());
         })?;
         Ok(cx.new(|cx| {
@@ -67,7 +79,7 @@ impl TerminalView {
                 })
                 .detach();
             }
-            Self { term, focus: cx.focus_handle(), cell_w: None, grid: (80, 24), bounds: None, selecting: false, dragged: false, wheel_acc: 0., _pump: pump }
+            Self { term, focus: cx.focus_handle(), metrics: metrics_of(tp.font_size), cell_w: None, grid: (80, 24), bounds: None, selecting: false, dragged: false, wheel_acc: 0., _pump: pump }
         }))
     }
 
@@ -91,7 +103,7 @@ impl TerminalView {
         self.bounds = Some(bounds);
         let Some(cell_w) = self.cell_w else { return };
         let cols = (((bounds.size.width - px(2. * PAD)) / cell_w).floor().max(2.)) as u16;
-        let rows = (((bounds.size.height - px(2. * PAD)) / px(LINE_H)).floor().max(1.)) as u16;
+        let rows = (((bounds.size.height - px(2. * PAD)) / px(self.metrics.1)).floor().max(1.)) as u16;
         if (cols, rows) != self.grid {
             self.grid = (cols, rows);
             self.term.resize(cols, rows);
@@ -144,7 +156,7 @@ impl TerminalView {
     fn cell_under(&self, pos: Point<Pixels>) -> Option<crate::term_geom::CellPos> {
         let (b, cell_w) = (self.bounds?, self.cell_w?);
         let (x, y) = (f32::from(pos.x - b.origin.x), f32::from(pos.y - b.origin.y));
-        Some(cell_at(x, y, f32::from(cell_w), LINE_H, PAD, self.grid.0 as usize, self.grid.1 as usize))
+        Some(cell_at(x, y, f32::from(cell_w), self.metrics.1, PAD, self.grid.0 as usize, self.grid.1 as usize))
     }
 
     /// 按下左键:单击拖动选字符,双击选单词,三击选整行。
@@ -186,15 +198,22 @@ impl TerminalView {
     ///
     /// 参数:`ev` 滚轮事件;`cx` 视图上下文。
     fn on_wheel(&mut self, ev: &ScrollWheelEvent, cx: &mut Context<Self>) {
-        self.wheel_acc += f32::from(ev.delta.pixel_delta(px(LINE_H)).y);
-        let lines = (self.wheel_acc / LINE_H).trunc();
+        let line_h = self.metrics.1;
+        self.wheel_acc += f32::from(ev.delta.pixel_delta(px(line_h)).y);
+        let lines = (self.wheel_acc / line_h).trunc();
         cx.stop_propagation();
         if lines != 0. {
-            self.wheel_acc -= lines * LINE_H;
+            self.wheel_acc -= lines * line_h;
             self.term.scroll(lines as i32);
             cx.notify();
         }
     }
+}
+
+/// 字号 → (字号, 行高);行高取字号的 4/3 并取整,保证行与行之间不出现亚像素缝。
+fn metrics_of(font_size: u8) -> (f32, f32) {
+    let fs = f32::from(font_size.clamp(8, 28));
+    (fs, (fs * 4. / 3.).round())
 }
 
 /// 终端颜色 → 界面颜色;`Default` 用调用方给的默认色。
@@ -250,10 +269,18 @@ impl Render for TerminalView {
     fn render(&mut self, window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
         let t = cx.theme().clone();
         let dark = t.is_dark();
+        let tp = crate::prefs(cx).terminal;
+        let m = metrics_of(tp.font_size);
+        if m != self.metrics {
+            // 字号变了:字宽作废,下面重新量,容器尺寸由测量层在本帧重新换算行列数
+            self.metrics = m;
+            self.cell_w = None;
+        }
+        let (font_size, line_h) = m;
         if self.cell_w.is_none() {
             let font = Font { family: MONO.into(), features: FontFeatures::default(), fallbacks: None, weight: FontWeight::NORMAL, style: FontStyle::Normal };
             let id = window.text_system().resolve_font(&font);
-            self.cell_w = window.text_system().advance(id, px(FONT_SIZE), 'm').ok().map(|s| s.width);
+            self.cell_w = window.text_system().advance(id, px(font_size), 'm').ok().map(|s| s.width);
         }
         let cell_w = self.cell_w.unwrap_or(px(7.));
         let snap = self.term.snapshot();
@@ -261,7 +288,7 @@ impl Render for TerminalView {
         let view = cx.entity();
         let lines = snap.lines.iter().map(|runs| {
             let (text, hl) = line_text(runs, t.foreground, t.background, dark);
-            let row = div().h(px(LINE_H)).whitespace_nowrap();
+            let row = div().h(px(line_h)).whitespace_nowrap();
             if text.is_empty() { row } else { row.child(StyledText::new(text).with_highlights(hl)) }
         });
         div().id("terminal").key_context("Terminal").track_focus(&self.focus)
@@ -274,16 +301,27 @@ impl Render for TerminalView {
             .on_mouse_up(MouseButton::Left, cx.listener(|this, ev: &MouseUpEvent, _, cx| this.end_select(ev, cx)))
             .on_scroll_wheel(cx.listener(|this, ev: &ScrollWheelEvent, _, cx| this.on_wheel(ev, cx)))
             .relative().size_full().overflow_hidden().bg(t.background).text_color(t.foreground)
-            .font_family(MONO).text_size(px(FONT_SIZE)).line_height(px(LINE_H))
+            .font_family(MONO).text_size(px(font_size)).line_height(px(line_h))
             .child(div().absolute().top(px(PAD)).left(px(PAD)).flex().flex_col().children(lines))
             // 选区高亮:半透明色块盖在文字上
             .children(snap.selection.into_iter().flat_map(|sel| selection_spans(sel, snap.cols)).map(|(row, from, to)| {
-                div().absolute().left(px(PAD) + cell_w * from as f32).top(px(PAD + LINE_H * row as f32))
-                    .w(cell_w * (to - from + 1) as f32).h(px(LINE_H)).bg(t.primary.opacity(0.28))
+                div().absolute().left(px(PAD) + cell_w * from as f32).top(px(PAD + line_h * row as f32))
+                    .w(cell_w * (to - from + 1) as f32).h(px(line_h)).bg(t.primary.opacity(0.28))
             }))
             .when_some(snap.cursor, |d, (row, col)| {
-                let cursor = div().absolute().left(px(PAD) + cell_w * col as f32).top(px(PAD + LINE_H * row as f32)).w(cell_w).h(px(LINE_H));
-                d.child(if focused { cursor.bg(t.primary.opacity(0.6)) } else { cursor.border_1().border_color(t.primary) })
+                let (x, y) = (px(PAD) + cell_w * col as f32, px(PAD + line_h * row as f32));
+                // 失焦时统一画成空心块;聚焦时按光标形状画
+                let cursor = if !focused {
+                    div().absolute().left(x).top(y).w(cell_w).h(px(line_h)).border_1().border_color(t.primary)
+                } else {
+                    let c = div().absolute().bg(t.primary.opacity(0.7));
+                    match tp.cursor {
+                        CursorShape::Block => c.left(x).top(y).w(cell_w).h(px(line_h)).bg(t.primary.opacity(0.6)),
+                        CursorShape::Bar => c.left(x).top(y).w(px(2.)).h(px(line_h)),
+                        CursorShape::Underline => c.left(x).top(y + px(line_h - 2.)).w(cell_w).h(px(2.)),
+                    }
+                };
+                d.child(cursor)
             })
             .when_some(snap.exit_code, |d, code| d.child(
                 div().absolute().bottom_0().left_0().right_0().px_2().py_1().bg(t.muted).text_color(t.muted_foreground)

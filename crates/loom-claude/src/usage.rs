@@ -212,6 +212,44 @@ fn collect(dir: &Path, out: &mut Vec<std::path::PathBuf>) {
     }
 }
 
+/// 每百万 token 的公开参考价(美元):(输入, 输出)。缓存读取按输入价 0.1 倍、缓存写入按 1.25 倍估算。
+///
+/// 参数:`model` 模型 id(按名称里的系列判断)。返回:未知模型(如第三方服务商的模型)返回 `None`。
+pub fn price_per_mtok(model: &str) -> Option<(f64, f64)> {
+    let m = model.to_lowercase();
+    if m.contains("opus") {
+        Some((15., 75.))
+    } else if m.contains("sonnet") {
+        Some((3., 15.))
+    } else if m.contains("haiku") {
+        Some(if m.contains("3-5") || m.contains("3.5") { (0.8, 4.) } else { (1., 5.) })
+    } else {
+        None
+    }
+}
+
+/// 估算一组 token 的费用(美元);模型价格未知时返回 `None`。
+pub fn estimate_cost(model: &str, input: u64, output: u64, cache_read: u64, cache_write: u64) -> Option<f64> {
+    let (pi, po) = price_per_mtok(model)?;
+    let tok = |n: u64| n as f64 / 1e6;
+    Some(tok(input) * pi + tok(output) * po + tok(cache_read) * pi * 0.1 + tok(cache_write) * pi * 1.25)
+}
+
+impl UsageReport {
+    /// 累计估算费用:只计入价格已知的模型;返回 (美元, 是否有模型因价格未知被略过)。
+    pub fn estimated_cost(&self) -> (f64, bool) {
+        let mut skipped = false;
+        let mut sum = 0.;
+        for (model, input, output, cr, cw, _) in &self.by_model {
+            match estimate_cost(model, *input, *output, *cr, *cw) {
+                Some(c) => sum += c,
+                None => skipped = true,
+            }
+        }
+        (sum, skipped)
+    }
+}
+
 /// 扫描并生成报告,同时更新缓存。耗时操作,请在后台线程调用。
 ///
 /// 参数:`projects_dir` 通常是 `~/.claude/projects`;`cache_path` 缓存文件。返回:报告。

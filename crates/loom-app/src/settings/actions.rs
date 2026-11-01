@@ -12,11 +12,31 @@ use std::path::{Path, PathBuf};
 impl Workbench {
     /// 首次进入设置页时创建表单输入框。
     pub fn ensure_forms(&mut self, window: &mut Window, cx: &mut Context<Self>) {
+        self.watch_error(cx);
         if self.settings_forms.is_none() {
             self.settings_forms = Some(Forms::new(window, cx));
             self.refresh_items();
             self.load_providers();
             self.refresh_plugins();
+            // 设置类文本框:失焦或回车即提交,不再需要「保存」按钮
+            use gpui_kit::component::input::InputEvent;
+            for key in super::layer_actions::CLAUDE_FIELDS.iter().map(|(k, _)| *k).chain(super::layer_actions::CLIENT_FIELDS.iter().copied()) {
+                let field = self.field(key).clone();
+                cx.subscribe(&field, move |this, _, ev: &InputEvent, cx| {
+                    if matches!(ev, InputEvent::Blur | InputEvent::PressEnter { .. }) {
+                        this.commit_field(key, cx);
+                    }
+                })
+                .detach();
+            }
+            // 设置导航搜索框:输入时重绘导航
+            let nav_search = self.field("settings_search").clone();
+            cx.subscribe(&nav_search, |_, _, ev: &InputEvent, cx| {
+                if matches!(ev, InputEvent::Change) {
+                    cx.notify();
+                }
+            })
+            .detach();
             // 搜索框每次输入都要重绘列表
             let search = self.field("search").clone();
             cx.subscribe(&search, |_, _, ev: &gpui_kit::component::input::InputEvent, cx| {
@@ -26,6 +46,30 @@ impl Workbench {
             })
             .detach();
         }
+    }
+
+    /// 提示条 4 秒后自动消失:每次渲染调用,发现新的一条就排一个定时清除(只清同一条,不误伤后来的)。
+    pub fn watch_error(&mut self, cx: &mut Context<Self>) {
+        let Some(forms) = self.settings_forms.as_mut() else { return };
+        let Some(err) = forms.error.clone() else {
+            forms.error_seen = None;
+            return;
+        };
+        if forms.error_seen.as_ref() == Some(&err) {
+            return;
+        }
+        forms.error_seen = Some(err.clone());
+        cx.spawn(async move |this, cx| {
+            cx.background_executor().timer(std::time::Duration::from_secs(4)).await;
+            let _ = this.update(cx, |this, cx| {
+                if let Some(f) = this.settings_forms.as_mut().filter(|f| f.error.as_ref() == Some(&err)) {
+                    f.error = None;
+                    f.error_seen = None;
+                    cx.notify();
+                }
+            });
+        })
+        .detach();
     }
 
     /// 表单状态(调用前已由 `render` 创建)。

@@ -17,7 +17,6 @@ use std::path::{Path, PathBuf};
 actions!(ide, [CloseTab, NextTab, PrevTab, QuickOpen, GoToLine, FindInProject]);
 
 /// 超过这个大小的文件不在编辑器里打开。
-const MAX_EDIT_BYTES: u64 = 1024 * 1024;
 
 /// 一个已打开的文档。
 pub struct IdeDoc {
@@ -52,12 +51,16 @@ pub struct IdeView {
     pub(crate) images: std::collections::HashSet<PathBuf>,
     /// 缩略图上次绘制的区域(鼠标位置换算用)
     pub(crate) minimap_bounds: std::rc::Rc<std::cell::Cell<Bounds<Pixels>>>,
+    /// 已套用到所有文档的编辑器偏好(与全局不同就重新套用)
+    applied: Option<loom_config::EditorPrefs>,
+    /// 编辑计数:延迟自动保存靠它判断「这之后还有没有新的编辑」
+    edit_gen: u64,
 }
 
 impl IdeView {
     /// 创建空的编辑器视图。
     pub fn new() -> Self {
-        Self { root: String::new(), docs: HashMap::new(), tabs: TabModel::default(), note: None, images: Default::default(), minimap_bounds: Default::default() }
+        Self { root: String::new(), docs: HashMap::new(), tabs: TabModel::default(), note: None, images: Default::default(), minimap_bounds: Default::default(), applied: None, edit_gen: 0 }
     }
 
     /// 设置项目根目录(会话切换时由宿主调用)。
@@ -135,6 +138,37 @@ impl IdeView {
         if let Some(doc) = self.tabs.active().and_then(|p| self.docs.get(p)) {
             doc.editor.update(cx, |e, cx| e.focus(window, cx));
         }
+    }
+
+    /// 「延迟」自动保存:停止输入 1 秒后写盘;期间又有编辑就放弃这次(由最后一次编辑触发)。
+    fn schedule_autosave(&mut self, path: &Path, cx: &mut Context<Self>) {
+        self.edit_gen += 1;
+        if crate::prefs(cx).editor.auto_save != loom_config::AutoSave::Delay {
+            return;
+        }
+        let (path, gen_at) = (path.to_path_buf(), self.edit_gen);
+        cx.spawn(async move |this, cx| {
+            cx.background_executor().timer(std::time::Duration::from_secs(1)).await;
+            let _ = this.update(cx, |this, cx| {
+                if this.edit_gen == gen_at && this.docs.get(&path).is_some_and(|d| !d.saved) {
+                    this.save_path(&path, cx);
+                }
+            });
+        })
+        .detach();
+    }
+
+    /// 偏好变了就套到所有已打开的文档(渲染时调用,代价只是一次相等比较)。
+    fn sync_prefs(&mut self, window: &mut Window, cx: &mut Context<Self>) {
+        let p = crate::prefs(cx).editor;
+        if self.applied.as_ref() == Some(&p) {
+            return;
+        }
+        // 语法高亮开关只影响之后打开的文件;其余偏好即时生效
+        for doc in self.docs.values() {
+            doc.editor.update(cx, |ed, cx| crate::ide_prefs::apply(ed, &p, window, cx));
+        }
+        self.applied = Some(p);
     }
 
     /// 在后台线程重新计算某文件的 Git 行标记,完成后铺到编辑器上。
@@ -233,30 +267,42 @@ pub fn is_image(path: &Path) -> bool {
 /// 读取文本文件并建立编辑器;二进制或过大的文件返回说明。
 fn load(path: &Path, window: &mut Window, cx: &mut Context<IdeView>) -> Result<IdeDoc, String> {
     let meta = std::fs::metadata(path).map_err(|e| format!("无法读取 {}:{e}", path.display()))?;
-    if meta.len() > MAX_EDIT_BYTES {
+    let prefs = crate::prefs(cx).editor;
+    if meta.len() > u64::from(prefs.max_file_kb) * 1024 {
         return Err(format!("文件较大({} KB),不在编辑器中打开", meta.len() / 1024));
     }
     let bytes = std::fs::read(path).map_err(|e| format!("无法读取 {}:{e}", path.display()))?;
     let text = String::from_utf8(bytes).map_err(|_| "二进制文件,不在编辑器中打开".to_string())?;
     let crlf = text.contains("\r\n");
     let shape = std::rc::Rc::new(crate::ide_minimap::shape_of(&text));
-    let editor = cx.new(|cx| EditorState::new(window, cx).language(language_for(path)).searchable(true).default_value(text));
+    let editor = cx.new(|cx| EditorState::new(window, cx).language(crate::ide_prefs::language(language_for(path), &prefs)).searchable(true).default_value(text));
+    editor.update(cx, |ed, cx| crate::ide_prefs::apply(ed, &prefs, window, cx));
     // 编辑后标记未保存并固定预览标签;光标移动时刷新状态条
     let key = path.to_path_buf();
     let sub = cx.subscribe(&editor, move |this: &mut IdeView, _, ev: &InputEvent, cx| {
-        if matches!(ev, InputEvent::Change) {
-            this.tabs.pin(&key);
-            if let Some(doc) = this.docs.get_mut(&key) {
-                doc.saved = false;
-                doc.shape = std::rc::Rc::new(crate::ide_minimap::shape_of(&doc.editor.read(cx).value()));
+        match ev {
+            InputEvent::Change => {
+                this.tabs.pin(&key);
+                if let Some(doc) = this.docs.get_mut(&key) {
+                    doc.saved = false;
+                    doc.shape = std::rc::Rc::new(crate::ide_minimap::shape_of(&doc.editor.read(cx).value()));
+                }
+                this.schedule_autosave(&key, cx);
             }
+            // 失焦自动保存:编辑器失去焦点(切标签 / 点到别处 / 窗口失焦)时写盘
+            InputEvent::Blur if crate::prefs(cx).editor.auto_save == loom_config::AutoSave::Blur => {
+                if this.docs.get(&key).is_some_and(|d| !d.saved) {
+                    this.save_path(&key, cx);
+                }
+            }
+            _ => {}
         }
         cx.notify();
     });
     // 光标移动 / 滚动时编辑器只会 notify(没有事件):刷新括号配对高亮与缩略图视口
     let key2 = path.to_path_buf();
     let sub2 = cx.observe(&editor, move |this: &mut IdeView, ed, cx| {
-        if let Some(doc) = this.docs.get_mut(&key2) {
+        if let Some(doc) = this.docs.get_mut(&key2).filter(|_| crate::prefs(cx).editor.bracket_match) {
             crate::ide_brackets::refresh(&ed, &mut doc.bracket_marks, &mut doc.bracket_pair, cx);
         }
         cx.notify();
@@ -267,7 +313,8 @@ fn load(path: &Path, window: &mut Window, cx: &mut Context<IdeView>) -> Result<I
 }
 
 impl Render for IdeView {
-    fn render(&mut self, _window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
+    fn render(&mut self, window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
+        self.sync_prefs(window, cx);
         let t = cx.theme().clone();
         let root = v_flex()
             .key_context("IdeView")
@@ -295,7 +342,7 @@ impl Render for IdeView {
             .child(
                 h_flex().flex_1().min_h_0().w_full()
                     .child(div().flex_1().min_w_0().h_full().child(Editor::new(&editor).bordered(false).appearance(false).size_full()))
-                    .child(crate::ide_minimap::minimap(&editor, doc.shape.clone(), self.minimap_bounds.clone(), cx)),
+                    .children(crate::prefs(cx).editor.minimap.then(|| crate::ide_minimap::minimap(&editor, doc.shape.clone(), self.minimap_bounds.clone(), cx))),
             )
             .into_any_element()
     }

@@ -53,7 +53,7 @@ fn 调整大小后程序看到新尺寸() {
 #[test]
 fn 工作目录与颜色输出() {
     let dir = std::env::temp_dir().canonicalize().unwrap();
-    let t = Terminal::spawn(SpawnOptions { cwd: Some(dir.to_string_lossy().to_string()), command: Some(vec!["/bin/sh".into(), "-c".into(), "pwd; printf '\\033[31mred\\033[0m\\n'".into()]), cols: 80, rows: 24 }, || {}).unwrap();
+    let t = Terminal::spawn(SpawnOptions { cwd: Some(dir.to_string_lossy().to_string()), command: Some(vec!["/bin/sh".into(), "-c".into(), "pwd; printf '\\033[31mred\\033[0m\\n'".into()]), cols: 80, rows: 24, ..Default::default() }, || {}).unwrap();
     let s = wait_for(&t, |s| s.exit_code.is_some());
     assert!(s.text().contains(dir.to_string_lossy().as_ref()), "画面:{:?}", s.text());
     let red = s.lines.iter().flatten().find(|r| r.text == "red").expect("应有红色文字段");

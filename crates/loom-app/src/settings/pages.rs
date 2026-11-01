@@ -2,7 +2,7 @@
 //!
 //! @author ixxxxoooo
 
-use super::widgets::{page_title, row, section_title, segmented};
+use super::widgets::{block_row, group, page_header, row, rows, segmented};
 use crate::ui::{MONO, pill};
 use crate::workbench::Workbench;
 use gpui_kit::component::button::{Button, ButtonVariants};
@@ -11,7 +11,6 @@ use gpui_kit::component::switch::Switch;
 use gpui_kit::component::{ActiveTheme, Sizable, h_flex, v_flex};
 use gpui_kit::prelude::FluentBuilder as _;
 use gpui_kit::*;
-use loom_config::ThemeChoice;
 use loom_core::*;
 
 /// 快捷键清单,按窗口分组(与 `main.rs`、`composer.rs`、`ide_window.rs` 里的绑定保持一致)。
@@ -46,32 +45,64 @@ pub const SHORTCUTS: &[(&str, &[(&str, &str)])] = &[
     ]),
 ];
 
-/// 通用页:外观、融合模式、语言。
+/// 通用页:窗口行为、输入、通知与菜单栏、语言。
 pub fn general(wb: &Workbench, cx: &mut Context<Workbench>) -> AnyElement {
-    let theme = wb.settings.theme;
     let right_open = wb.settings.right_open;
     let fused = wb.settings.fused_ide;
     v_flex().w_full()
-        .child(page_title("通用"))
-        .child(section_title("外观", cx))
-        .child(row("主题", "纸感浅色 / 深色,或跟随系统", segmented("theme", vec![(ThemeChoice::PaperLight, "浅色"), (ThemeChoice::PaperDark, "深色"), (ThemeChoice::System, "跟随系统")], theme, cx,
-            |this, v, cx| this.update_settings(cx, |s| s.theme = v)), cx))
-        .child(row("右侧面板默认打开", "启动时是否显示改动 / 文件 / 终端面板", Switch::new("sw-right").checked(right_open)
-            .on_click(cx.listener(move |this, checked: &bool, _, cx| { let v = *checked; this.update_settings(cx, |s| s.right_open = v) })), cx))
-        .child(row("融合模式", "关闭时 IDE 是独立窗口(⇧⌘E 打开或回到 Agent);开启后在同一窗口原地切换", Switch::new("sw-fused").checked(fused)
-            .on_click(cx.listener(move |this, checked: &bool, _, cx| { let v = *checked; this.update_settings(cx, |s| s.fused_ide = v); this.on_fused_changed(cx) })), cx))
-        .child(row("强调色", "按钮、选中态等使用的主题色", accent_picker(wb, cx), cx))
-        .child(section_title("输入", cx))
-        .child(row("发送键", "另一个键用于换行(Shift+Enter 始终换行)", segmented("send-key", vec![(false, "Enter 发送"), (true, "⌘Enter 发送")], wb.settings.send_with_cmd_enter, cx,
-            |this, v, cx| this.update_settings(cx, |s| s.send_with_cmd_enter = v)), cx))
-        .child(section_title("通知与菜单栏", cx))
-        .child(row("任务完成时通知", "回合结束且 LoomCode 不在前台时发送系统通知", Switch::new("sw-notify").checked(wb.settings.notify_on_finish)
-            .on_click(cx.listener(|this, c: &bool, _, cx| { let v = *c; this.update_settings(cx, |s| s.notify_on_finish = v) })), cx))
-        .child(row("菜单栏图标", "在系统菜单栏显示 LoomCode 图标", Switch::new("sw-tray").checked(wb.settings.tray_icon)
-            .on_click(cx.listener(|this, c: &bool, _, cx| { let v = *c; this.update_settings(cx, |s| s.tray_icon = v); crate::app_icon::set_tray_visible(v) })), cx))
-        .child(section_title("语言", cx))
-        .child(row("界面语言", "目前仅提供简体中文", pill("简体中文", cx.theme().foreground, cx.theme().muted), cx))
+        .child(page_header("通用", "窗口行为、输入习惯与系统集成", div(), cx))
+        .child(group("窗口", rows![
+            row("右侧面板默认打开", "启动时是否显示改动 / 文件 / 终端面板", Switch::new("sw-right").checked(right_open)
+                .on_click(cx.listener(move |this, checked: &bool, _, cx| { let v = *checked; this.update_settings(cx, |s| s.right_open = v) })), cx),
+            row("融合模式", "关闭时 IDE 是独立窗口(⇧⌘E 打开或回到 Agent);开启后在同一窗口原地切换", Switch::new("sw-fused").checked(fused)
+                .on_click(cx.listener(move |this, checked: &bool, _, cx| { let v = *checked; this.update_settings(cx, |s| s.fused_ide = v); this.on_fused_changed(cx) })), cx),
+        ], cx))
+        .child(group("输入", rows![
+            row("发送键", "另一个键用于换行(Shift+Enter 始终换行)", segmented("send-key", vec![(false, "Enter 发送"), (true, "⌘Enter 发送")], wb.settings.send_with_cmd_enter, cx,
+                |this, v, cx| this.update_settings(cx, |s| s.send_with_cmd_enter = v)), cx),
+        ], cx))
+        .child(group("通知与菜单栏", rows![
+            row("任务完成时通知", "回合结束且 LoomCode 不在前台时发送系统通知", Switch::new("sw-notify").checked(wb.settings.notify_on_finish)
+                .on_click(cx.listener(|this, c: &bool, _, cx| { let v = *c; this.update_settings(cx, |s| s.notify_on_finish = v) })), cx),
+            row("菜单栏图标", "在系统菜单栏显示 LoomCode 图标", Switch::new("sw-tray").checked(wb.settings.tray_icon)
+                .on_click(cx.listener(|this, c: &bool, _, cx| { let v = *c; this.update_settings(cx, |s| s.tray_icon = v); crate::app_icon::set_tray_visible(v) })), cx),
+        ], cx))
+        .child(group("语言", rows![
+            row("界面语言", "目前仅提供简体中文", pill("简体中文", cx.theme().foreground, cx.theme().muted), cx),
+        ], cx))
         .into_any_element()
+}
+
+/// 外观页:主题与强调色。
+pub fn appearance(wb: &Workbench, cx: &mut Context<Workbench>) -> AnyElement {
+    v_flex().w_full()
+        .child(page_header("外观", "主题与强调色", div(), cx))
+        .child(group("主题", rows![
+            block_row("配色方案", "纸感为默认;One 是中性灰蓝风格;也可以跟随系统明暗", theme_picker(wb, cx), cx),
+        ], cx))
+        .child(group("强调色", rows![
+            row("强调色", "按钮、选中态、链接等使用的主题色", accent_picker(wb, cx), cx),
+        ], cx))
+        .into_any_element()
+}
+
+/// 主题选择:每个主题一张带色块预览的卡片。
+fn theme_picker(wb: &Workbench, cx: &mut Context<Workbench>) -> Div {
+    let t = cx.theme().clone();
+    let cur = wb.settings.theme;
+    h_flex().w_full().flex_wrap().gap_3().children(crate::theme::PREVIEWS.iter().enumerate().map(|(i, (choice, name, bg, fg, accent))| {
+        let choice = *choice;
+        let on = cur == choice;
+        let (bg, fg, accent): (Hsla, Hsla, Hsla) = (rgb(*bg).into(), rgb(*fg).into(), rgb(*accent).into());
+        v_flex().id(SharedString::from(format!("theme-{i}"))).w(px(120.)).gap_1p5().cursor_pointer()
+            .on_click(cx.listener(move |this, _, _, cx| this.update_settings(cx, |s| s.theme = choice)))
+            .child(v_flex().h(px(68.)).p_2().gap_1().rounded(px(crate::theme::R_MD)).border_2().bg(bg)
+                .border_color(if on { t.primary } else { t.border })
+                .child(div().w(px(36.)).h(px(5.)).rounded_full().bg(accent))
+                .child(div().w(px(70.)).h(px(4.)).rounded_full().bg(fg.opacity(0.55)))
+                .child(div().w(px(54.)).h(px(4.)).rounded_full().bg(fg.opacity(0.3))))
+            .child(div().text_size(px(12.)).text_color(if on { t.foreground } else { t.muted_foreground }).when(on, |d| d.font_weight(FontWeight::MEDIUM)).child(name.to_string()))
+    }))
 }
 
 /// 强调色预设:(名称, RRGGBB);`None` 为主题默认。
@@ -105,21 +136,23 @@ pub fn chat(wb: &Workbench, cx: &mut Context<Workbench>) -> AnyElement {
     let models: Vec<(String, String)> = default_models().into_iter().map(|m| (m.id, m.name)).collect();
     let cur_model = s.default_model.clone();
     v_flex().w_full()
-        .child(page_title("对话"))
-        .child(section_title("新会话默认值", cx))
-        .child(row("默认模型", "新建会话时使用", h_flex().gap_1().children(models.into_iter().enumerate().map(|(i, (id, name))| {
-            let active = id == cur_model;
-            let id2 = id.clone();
-            Button::new(SharedString::from(format!("dm-{i}"))).small().when(active, |b| b.primary()).when(!active, |b| b.ghost()).label(name)
-                .on_click(cx.listener(move |this, _, _, cx| { let v = id2.clone(); this.update_settings(cx, |s| s.default_model = v) }))
-        })), cx))
-        .child(row("默认权限模式", "也可以在输入框随时切换(⇧Tab)", segmented("dmode", PermissionMode::ALL.iter().map(|m| (*m, m.label())).collect(), s.default_mode, cx,
-            |this, v, cx| this.update_settings(cx, |s| s.default_mode = v)), cx))
-        .child(row("默认思考强度", "也可以在输入框随时切换(⌥T)", segmented("deff", Effort::ALL.iter().map(|e| (*e, e.label())).collect(), s.default_effort, cx,
-            |this, v, cx| this.update_settings(cx, |s| s.default_effort = v)), cx))
-        .child(section_title("显示", cx))
-        .child(row("默认展开思考内容", "关闭时思考折叠为「已思考」一行", Switch::new("sw-think").checked(s.expand_thinking)
-            .on_click(cx.listener(move |this, checked: &bool, _, cx| { let v = *checked; this.update_settings(cx, |s| s.expand_thinking = v) })), cx))
+        .child(page_header("对话", "新建会话时使用的默认值,以及对话流的显示方式", div(), cx))
+        .child(group("新会话默认值", rows![
+            row("默认模型", "新建会话时使用", h_flex().gap_1().children(models.into_iter().enumerate().map(|(i, (id, name))| {
+                let active = id == cur_model;
+                let id2 = id.clone();
+                Button::new(SharedString::from(format!("dm-{i}"))).small().when(active, |b| b.primary()).when(!active, |b| b.ghost()).label(name)
+                    .on_click(cx.listener(move |this, _, _, cx| { let v = id2.clone(); this.update_settings(cx, |s| s.default_model = v) }))
+            })), cx),
+            row("默认权限模式", "也可以在输入框随时切换(⇧Tab)", segmented("dmode", PermissionMode::ALL.iter().map(|m| (*m, m.label())).collect(), s.default_mode, cx,
+                |this, v, cx| this.update_settings(cx, |s| s.default_mode = v)), cx),
+            row("默认思考强度", "也可以在输入框随时切换(⌥T)", segmented("deff", Effort::ALL.iter().map(|e| (*e, e.label())).collect(), s.default_effort, cx,
+                |this, v, cx| this.update_settings(cx, |s| s.default_effort = v)), cx),
+        ], cx))
+        .child(group("显示", rows![
+            row("默认展开思考内容", "关闭时思考折叠为「已思考」一行", Switch::new("sw-think").checked(s.expand_thinking)
+                .on_click(cx.listener(move |this, checked: &bool, _, cx| { let v = *checked; this.update_settings(cx, |s| s.expand_thinking = v) })), cx),
+        ], cx))
         .into_any_element()
 }
 
@@ -127,15 +160,11 @@ pub fn chat(wb: &Workbench, cx: &mut Context<Workbench>) -> AnyElement {
 pub fn shortcuts(cx: &mut Context<Workbench>) -> AnyElement {
     let t = cx.theme().clone();
     v_flex().w_full()
-        .child(page_title("快捷键"))
-        .children(SHORTCUTS.iter().map(|(group, items)| {
-            v_flex().w_full()
-                .child(section_title(group, cx))
-                .children(items.iter().map(|(k, d)| {
-                    h_flex().w_full().py_2().gap_3().items_center().border_b_1().border_color(t.border)
-                        .child(div().flex_1().text_size(px(13.)).child(d.to_string()))
-                        .child(div().px_2().h(px(22.)).flex().items_center().rounded(px(5.)).bg(t.muted).font_family(MONO).text_size(px(12.)).child(k.to_string()))
-                }))
+        .child(page_header("快捷键", "按窗口分组;目前不支持自定义", div(), cx))
+        .children(SHORTCUTS.iter().map(|(name, items)| {
+            group(name, items.iter().map(|(k, d)| {
+                row(d, "", div().px_2().h(px(22.)).flex().items_center().rounded(px(5.)).bg(t.muted).font_family(MONO).text_size(px(12.)).child(k.to_string()), cx).into_any_element()
+            }).collect(), cx)
         }))
         .into_any_element()
 }
@@ -144,11 +173,23 @@ pub fn shortcuts(cx: &mut Context<Workbench>) -> AnyElement {
 pub fn about(wb: &Workbench, cx: &mut Context<Workbench>) -> AnyElement {
     let t = cx.theme().clone();
     let claude = wb.claude_info.clone().unwrap_or_else(|| if wb.demo { "演示模式(未连接)".into() } else { "检测中…".into() });
+    let reveal = wb.settings_path.parent().map(|p| p.to_path_buf()).unwrap_or_default();
     v_flex().w_full()
-        .child(page_title("关于"))
-        .child(row("LoomCode", "Rust + gpui-kit 的 Claude Code 工作台", pill(format!("v{}", env!("CARGO_PKG_VERSION")), t.foreground, t.muted), cx))
-        .child(row("Claude Code", "本机 claude 命令行", div().font_family(MONO).text_size(px(12.5)).child(claude), cx))
-        .child(row("运行模式", "", pill(if wb.demo { "演示" } else { "真实" }, if wb.demo { t.warning } else { t.success }, t.muted), cx))
-        .child(row("配置文件", "", div().font_family(MONO).text_size(px(12.)).text_color(t.muted_foreground).child(wb.settings_path.display().to_string()), cx))
+        .child(page_header("关于", "LoomCode:Rust + gpui-kit 的 Claude Code 工作台", pill(format!("v{}", env!("CARGO_PKG_VERSION")), t.foreground, t.muted), cx))
+        .child(group("版本", rows![
+            row("LoomCode", "只支持 Claude Code,直连本机 claude 的 stream-json 控制协议", div().font_family(MONO).text_size(px(12.5)).child(format!("v{}", env!("CARGO_PKG_VERSION"))), cx),
+            row("Claude Code", "本机 claude 命令行", div().font_family(MONO).text_size(px(12.5)).child(claude), cx),
+            row("运行模式", "演示模式用脚本化后端与沙盒项目", pill(if wb.demo { "演示" } else { "真实" }, if wb.demo { t.warning } else { t.success }, t.muted), cx),
+            row("系统", "", div().font_family(MONO).text_size(px(12.5)).child(format!("{} · {}", std::env::consts::OS, std::env::consts::ARCH)), cx),
+        ], cx))
+        .child(group("文件", rows![
+            row("配置文件", "客户端偏好;Claude 自己的配置在 ~/.claude", div().font_family(MONO).text_size(px(12.)).text_color(t.muted_foreground).child(wb.settings_path.display().to_string()), cx),
+            row("数据目录", "设置、服务商、日志与诊断包所在目录", Button::new("about-reveal").small().ghost().label("在 Finder 中显示")
+                .on_click(move |_, _, _| { let _ = std::process::Command::new("open").arg(reveal.clone()).spawn(); }), cx),
+        ], cx))
+        .child(group("致谢", rows![
+            row("gpui / gpui-kit", "界面框架与组件库(Apache-2.0)", div(), cx),
+            row("Material Icon Theme", "文件图标,取自 OhMyAgent 的图标集", div(), cx),
+        ], cx))
         .into_any_element()
 }

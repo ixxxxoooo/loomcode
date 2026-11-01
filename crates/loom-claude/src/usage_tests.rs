@@ -54,3 +54,16 @@ fn 增量缓存() {
     assert_eq!(scan(&dir.join("projects"), &cache).total_output, r1.total_output);
     let _ = std::fs::remove_dir_all(dir);
 }
+
+#[test]
+fn 费用估算按系列定价() {
+    // 1M 输入 + 1M 输出的 sonnet:3 + 15 美元
+    assert!((estimate_cost("claude-sonnet-4-5", 1_000_000, 1_000_000, 0, 0).unwrap() - 18.).abs() < 1e-9);
+    // 缓存读取 0.1 倍、写入 1.25 倍输入价
+    assert!((estimate_cost("claude-opus-4", 0, 0, 1_000_000, 1_000_000).unwrap() - (1.5 + 18.75)).abs() < 1e-9);
+    assert_eq!(price_per_mtok("claude-3-5-haiku"), Some((0.8, 4.)));
+    assert_eq!(price_per_mtok("deepseek-chat"), None);
+    let r = UsageReport { by_model: vec![("deepseek-chat".into(), 10, 10, 0, 0, 1), ("claude-sonnet-4".into(), 1_000_000, 0, 0, 0, 1)], ..Default::default() };
+    let (cost, skipped) = r.estimated_cost();
+    assert!((cost - 3.).abs() < 1e-9 && skipped);
+}

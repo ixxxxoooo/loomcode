@@ -86,3 +86,14 @@ fn 参数校验拒绝选项注入() {
     assert_eq!(market_args("add", "o/r").unwrap(), ["plugin", "marketplace", "add", "o/r"]);
     assert!(market_args("remove", "-x").is_none());
 }
+
+#[test]
+fn 解析市场插件清单() {
+    let json = r#"{"name":"demo-mkt","plugins":[{"name":"a","description":"甲"},{"name":"b"},{"description":"无名"}]}"#;
+    let list = parse_market_plugins("dir", json);
+    assert_eq!(list.len(), 2);
+    assert_eq!(list[0].id(), "a@demo-mkt");
+    assert_eq!(list[1].description, "");
+    assert_eq!(parse_market_plugins("dir", r#"{"plugins":[{"name":"x"}]}"#)[0].market, "dir");
+    assert!(parse_market_plugins("d", "不是 json").is_empty());
+}

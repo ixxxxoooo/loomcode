@@ -39,21 +39,15 @@ pub fn ext_label(title: impl Into<String>, count: Option<usize>, cx: &App) -> Di
         .when_some(count, |d, n| d.child(div().text_size(px(11.)).text_color(t.muted_foreground.opacity(0.7)).child(n.to_string())))
 }
 
-/// 把一组行装进圆角卡片,行与行之间是缩进的细分隔线。
+/// 把一组行装进圆角卡片,行与行之间是缩进的细分隔线(缩进对齐图标方块右侧)。
 pub fn ext_card(rows: Vec<AnyElement>, cx: &App) -> Div {
-    let t = cx.theme();
-    v_flex().w_full().rounded(px(10.)).border_1().border_color(t.border).bg(t.popover).overflow_hidden()
-        .children(rows.into_iter().enumerate().map(|(i, r)| {
-            v_flex().w_full()
-                .when(i > 0, |d| d.child(div().ml(px(56.)).h(px(1.)).bg(t.border.opacity(0.7))))
-                .child(r)
-        }))
+    super::widgets::card(rows, 56., cx)
 }
 
 /// 空状态卡片。
 pub fn ext_empty(name: IconName, title: &str, message: &str, cx: &App) -> Div {
     let t = cx.theme();
-    v_flex().w_full().items_center().gap_2().py_8().rounded(px(10.)).border_1().border_color(t.border).bg(t.popover)
+    v_flex().w_full().items_center().gap_2().py_8().rounded(px(crate::theme::R_LG)).border_1().border_color(t.border).bg(t.popover)
         .child(icon(name, 26., t.muted_foreground.opacity(0.7)))
         .child(div().text_size(px(14.)).font_weight(FontWeight::MEDIUM).child(title.to_string()))
         .child(div().text_size(px(12.5)).text_color(t.muted_foreground).child(message.to_string()))

@@ -43,16 +43,40 @@ pub fn normalize_input(input: &str) -> String {
     format!("https://duckduckgo.com/html/?q={q}")
 }
 
-/// 抓取一个页面(阻塞)。
+/// 抓取选项。
+#[derive(Debug, Clone)]
+pub struct FetchOptions {
+    /// 请求总超时(秒)
+    pub timeout_secs: u64,
+    /// 自定义 User-Agent;为空使用默认
+    pub user_agent: String,
+}
+
+impl Default for FetchOptions {
+    fn default() -> Self {
+        Self { timeout_secs: 15, user_agent: String::new() }
+    }
+}
+
+const DEFAULT_UA: &str = "Mozilla/5.0 (Macintosh) LoomCode/0.1 ReaderBrowser";
+
+/// 用默认选项抓取一个页面(阻塞)。
 pub fn fetch(url: &str) -> Result<Fetched, BrowserError> {
+    fetch_with(url, &FetchOptions::default())
+}
+
+/// 抓取一个页面(阻塞)。
+///
+/// 参数:`url` 地址;`opts` 超时与 User-Agent。返回:响应正文与最终地址。
+pub fn fetch_with(url: &str, opts: &FetchOptions) -> Result<Fetched, BrowserError> {
     let parsed = url::Url::parse(url).map_err(|e| BrowserError::BadUrl(e.to_string()))?;
     if !matches!(parsed.scheme(), "http" | "https") {
         return Err(BrowserError::BadUrl(format!("不支持的协议:{}", parsed.scheme())));
     }
     let agent = ureq::AgentBuilder::new()
-        .timeout(Duration::from_secs(15))
+        .timeout(Duration::from_secs(opts.timeout_secs.clamp(1, 120)))
         .redirects(5)
-        .user_agent("Mozilla/5.0 (Macintosh) LoomCode/0.1 ReaderBrowser")
+        .user_agent(if opts.user_agent.trim().is_empty() { DEFAULT_UA } else { opts.user_agent.trim() })
         .build();
     let resp = match agent.get(url).call() {
         Ok(r) => r,
@@ -66,9 +90,14 @@ pub fn fetch(url: &str) -> Result<Fetched, BrowserError> {
     Ok(Fetched { url: final_url, content_type, body: String::from_utf8_lossy(&bytes).into_owned() })
 }
 
-/// 抓取并转换成可渲染的页面。非 HTML 内容(JSON、纯文本)以等宽文本展示。
+/// 用默认选项抓取并转换成可渲染的页面。
 pub fn load(url: &str) -> Result<Page, BrowserError> {
-    let f = fetch(url)?;
+    load_with(url, &FetchOptions::default())
+}
+
+/// 抓取并转换成可渲染的页面。非 HTML 内容(JSON、纯文本)以等宽文本展示。
+pub fn load_with(url: &str, opts: &FetchOptions) -> Result<Page, BrowserError> {
+    let f = fetch_with(url, opts)?;
     if f.content_type.contains("html") || f.body.trim_start().starts_with("<!") || f.body.trim_start().starts_with("<html") {
         let mut page = extract(&f.body, &f.url);
         page.url = f.url;

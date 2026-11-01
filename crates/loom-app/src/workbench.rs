@@ -146,6 +146,8 @@ pub struct Workbench {
     pub customize_tab: settings::CustomizeTab,
     /// 用量页当前显示的趋势指标
     pub usage_metric: settings::UsageMetric,
+    /// 用量页统计范围(天):7 / 14 / 30
+    pub usage_days: usize,
     pub settings_tab: SettingsTab,
     pub claude_info: Option<String>,
     pub palette: Option<Entity<Palette>>,
@@ -162,7 +164,7 @@ pub struct Workbench {
     pub automation: Entity<AutomationPage>,
     pub browser: Entity<BrowserPage>,
     _subs: Vec<Subscription>,
-    focus: FocusHandle,
+    pub(crate) focus: FocusHandle,
     new_counter: u32,
     /// 本次运行里新建、还没写进历史的会话 id(启动时用预分配 id,而不是恢复)
     pub new_sessions: HashSet<String>,
@@ -186,6 +188,8 @@ impl Workbench {
         };
         let settings_path = if demo { demo_root.join("settings.json") } else { AppSettings::default_path().unwrap_or_else(|| demo_root.join("settings.json")) };
         let settings = AppSettings::load(&settings_path);
+        let last_customize = settings.last_customize_tab.clone();
+        let last_tab = SettingsTab::from_name(&settings.last_settings_tab).unwrap_or(SettingsTab::General);
         let ui_state_path = settings_path.with_file_name("state.json");
         let ui_state = UiState::load(&ui_state_path);
         // 演示模式的 ~/.claude 在沙盒里(seed 时生成),读写走同一套代码
@@ -254,9 +258,10 @@ impl Workbench {
             claude_home,
             cfg_scope: loom_config::Scope::User,
             settings_forms: None,
-            customize_tab: settings::CustomizeTab::Plugins,
+            customize_tab: settings::CustomizeTab::from_name(&last_customize).unwrap_or(settings::CustomizeTab::Plugins),
             usage_metric: settings::UsageMetric::Tokens,
-            settings_tab: SettingsTab::General,
+            usage_days: 30,
+            settings_tab: last_tab,
             claude_info: None,
             palette: None,
             _palette_sub: None,
@@ -293,12 +298,15 @@ impl Workbench {
             Ok("dark") => theme::ThemeKind::PaperDark,
             Ok("system") => theme::ThemeKind::System,
             Ok("light") => theme::ThemeKind::PaperLight,
+            Ok("one-light") => theme::ThemeKind::OneLight,
+            Ok("one-dark") => theme::ThemeKind::OneDark,
             _ => theme::ThemeKind::from(wb.settings.theme),
         };
         cx.set_global(theme::Accent(wb.settings.accent.as_deref().and_then(theme::parse_hex)));
         theme::apply(kind, Some(window), cx);
         crate::app_icon::set_tray_visible(wb.settings.tray_icon);
         cx.set_global(crate::UiPrefs { expand_thinking: wb.settings.expand_thinking, cmd_enter_send: wb.settings.send_with_cmd_enter });
+        cx.set_global(crate::Prefs(wb.settings.clone()));
         if !demo {
             wb.detect_claude(cx);
         }
@@ -432,7 +440,9 @@ impl Workbench {
         };
         cmd("新会话", "⌘N", IconName::Plus, PaletteAction::NewSession);
         cmd("打开设置", "⌘,", IconName::Settings, PaletteAction::OpenSettings(None));
-        cmd("设置:权限规则", "", IconName::Shield, PaletteAction::OpenSettings(Some("permissions")));
+        for tab in SettingsTab::all().filter(|t| *t != SettingsTab::General) {
+            cmd(&format!("设置:{}", tab.label()), "", tab.icon(), PaletteAction::OpenSettings(Some(tab.key())));
+        }
         cmd("自定义:插件", "", IconName::Plug, PaletteAction::OpenCustomize("plugins"));
         cmd("自定义:MCP 服务器", "", IconName::Plug, PaletteAction::OpenCustomize("mcp"));
         cmd("自定义:技能", "", IconName::Sparkles, PaletteAction::OpenCustomize("skills"));
@@ -446,6 +456,8 @@ impl Workbench {
         cmd("显示 / 隐藏右侧面板", "⌥⌘B", IconName::PanelRight, PaletteAction::ToggleRight);
         cmd("主题:纸感浅色", "", IconName::Sun, PaletteAction::SetTheme(ThemeChoice::PaperLight));
         cmd("主题:纸感深色", "", IconName::Moon, PaletteAction::SetTheme(ThemeChoice::PaperDark));
+        cmd("主题:One 浅色", "", IconName::Sun, PaletteAction::SetTheme(ThemeChoice::OneLight));
+        cmd("主题:One 深色", "", IconName::Moon, PaletteAction::SetTheme(ThemeChoice::OneDark));
         cmd("主题:跟随系统", "", IconName::Monitor, PaletteAction::SetTheme(ThemeChoice::System));
         cmd("打开 Canvas 画布", "", IconName::LayoutDashboard, PaletteAction::OpenPage("canvas"));
         cmd("打开自动化", "", IconName::Timer, PaletteAction::OpenPage("automation"));
@@ -460,7 +472,7 @@ impl Workbench {
             }
         }
         if let Some(root) = self.active_project_path() {
-            for f in crate::palette_search::collect_files(std::path::Path::new(&root), 3000) {
+            for f in crate::palette_search::collect_files(std::path::Path::new(&root), 3000, &self.settings.intel) {
                 items.push(PaletteItem { title: f.rsplit('/').next().unwrap_or(&f).to_string(), subtitle: f.clone(), group: Group::File, icon: IconName::FileText, action: PaletteAction::OpenFile(f) });
             }
         }
@@ -637,12 +649,13 @@ impl Workbench {
 
     /// 修改偏好:立即生效并落盘。
     pub fn update_settings(&mut self, cx: &mut Context<Self>, f: impl FnOnce(&mut AppSettings)) {
-        let (old_theme, old_accent) = (self.settings.theme, self.settings.accent.clone());
+        let (old_theme, old_accent, old_expand) = (self.settings.theme, self.settings.accent.clone(), self.settings.expand_thinking);
         f(&mut self.settings);
         if let Err(e) = self.settings.save(&self.settings_path) {
             eprintln!("保存设置失败:{e}");
         }
         cx.set_global(crate::UiPrefs { expand_thinking: self.settings.expand_thinking, cmd_enter_send: self.settings.send_with_cmd_enter });
+        cx.set_global(crate::Prefs(self.settings.clone()));
         if self.settings.accent != old_accent {
             cx.set_global(theme::Accent(self.settings.accent.as_deref().and_then(theme::parse_hex)));
         }
@@ -650,8 +663,11 @@ impl Workbench {
             let kind = theme::ThemeKind::from(self.settings.theme);
             cx.defer(move |cx| theme::apply(kind, None, cx));
         }
-        for v in self.views.values() {
-            v.model.update(cx, |m, cx| m.remeasure_all(cx));
+        // 只有「默认展开思考」会改变对话流行高,其它偏好不必重新测量全部会话
+        if self.settings.expand_thinking != old_expand {
+            for v in self.views.values() {
+                v.model.update(cx, |m, cx| m.remeasure_all(cx));
+            }
         }
         cx.notify();
     }
@@ -1064,6 +1080,12 @@ impl Render for Workbench {
             .size_full()
             .bg(t.background)
             .text_color(t.foreground)
+            // 设置页:上下键切换分类、Esc 清搜索 / 返回
+            .on_key_down(cx.listener(|this, ev: &KeyDownEvent, window, cx| {
+                if this.page == Page::Settings && this.settings_forms.is_some() && this.settings_key(ev, window, cx) {
+                    cx.stop_propagation();
+                }
+            }))
             // 平滑滚动拦截层:必须是第一个子元素
             .child(crate::smooth_scroll::layer())
             .when_some(ide_shell, |d, shell| d.child(div().flex_1().min_h_0().w_full().child(shell)))

@@ -33,7 +33,7 @@ pub enum SearchEvent {
 impl EventEmitter<SearchEvent> for SearchPanel {}
 
 /// 在 `root` 下搜索 `query`(不区分大小写),最多 `max` 个命中行;返回 (结果, 是否被截断)。
-pub fn search_dir(root: &Path, query: &str, max: usize) -> (Vec<FileHits>, bool) {
+pub fn search_dir(root: &Path, query: &str, max: usize, intel: &loom_config::IntelPrefs) -> (Vec<FileHits>, bool) {
     let q = query.to_lowercase();
     let mut out = Vec::new();
     let (mut count, mut truncated) = (0usize, false);
@@ -44,7 +44,7 @@ pub fn search_dir(root: &Path, query: &str, max: usize) -> (Vec<FileHits>, bool)
         entries.sort_by_key(|e| std::cmp::Reverse(e.file_name()));
         for e in entries {
             let name = e.file_name().to_string_lossy().to_string();
-            if name.starts_with('.') || matches!(name.as_str(), "target" | "node_modules" | "DerivedData" | "dist") {
+            if name.starts_with('.') || intel.ignored(&name) {
                 continue;
             }
             let path = e.path();
@@ -121,8 +121,9 @@ impl SearchPanel {
         self.running = true;
         cx.notify();
         let root = PathBuf::from(&self.root);
+        let intel = crate::prefs(cx).intel;
         cx.spawn(async move |this, cx| {
-            let (results, truncated) = cx.background_spawn(async move { search_dir(&root, &query, MAX_HITS) }).await;
+            let (results, truncated) = cx.background_spawn(async move { search_dir(&root, &query, MAX_HITS, &intel) }).await;
             let _ = this.update(cx, |this, cx| {
                 this.results = results;
                 this.truncated = truncated;
@@ -188,11 +189,11 @@ mod tests {
         std::fs::write(dir.join("a.txt"), "hello\nWorld Foo\n").unwrap();
         std::fs::write(dir.join("sub/b.txt"), "foo bar\n").unwrap();
         std::fs::write(dir.join("target/c.txt"), "foo\n").unwrap();
-        let (res, truncated) = search_dir(&dir, "FOO", 10);
+        let (res, truncated) = search_dir(&dir, "FOO", 10, &Default::default());
         assert!(!truncated);
         assert_eq!(res.len(), 2);
         assert_eq!(res[0].lines, vec![(2, "World Foo".to_string())]);
-        let (_, truncated) = search_dir(&dir, "foo", 1);
+        let (_, truncated) = search_dir(&dir, "foo", 1, &Default::default());
         assert!(truncated);
         let _ = std::fs::remove_dir_all(&dir);
     }

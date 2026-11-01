@@ -13,6 +13,10 @@ pub enum ThemeChoice {
     #[default]
     PaperLight,
     PaperDark,
+    /// One 浅色(Zed One 风格的中性灰蓝)
+    OneLight,
+    /// One 深色
+    OneDark,
     /// 跟随系统外观
     System,
 }
@@ -28,6 +32,133 @@ pub enum ProxyMode {
     Direct,
     Http,
     Socks5,
+}
+
+/// 编辑器自动保存方式。
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, Default)]
+#[serde(rename_all = "snake_case")]
+pub enum AutoSave {
+    #[default]
+    Off,
+    /// 停止输入 1 秒后保存
+    Delay,
+    /// 切换标签或窗口失焦时保存
+    Blur,
+}
+
+/// IDE 编辑器偏好。
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[serde(default)]
+pub struct EditorPrefs {
+    /// 显示迷你地图
+    pub minimap: bool,
+    /// 迷你地图滑块:真为始终显示,假为悬停时显示
+    pub minimap_slider_always: bool,
+    pub line_numbers: bool,
+    pub folding: bool,
+    pub soft_wrap: bool,
+    /// 缩进宽度(2 / 4 / 8)
+    pub tab_size: u8,
+    /// 光标贴近括号时高亮配对
+    pub bracket_match: bool,
+    pub auto_save: AutoSave,
+    /// 超过这个大小(KB)的文件不在编辑器里打开
+    pub max_file_kb: u32,
+    /// 语法高亮(之后新打开的文件生效)
+    pub syntax_highlight: bool,
+}
+
+impl Default for EditorPrefs {
+    fn default() -> Self {
+        Self { minimap: true, minimap_slider_always: false, line_numbers: true, folding: true, soft_wrap: false, tab_size: 4, bracket_match: true, auto_save: AutoSave::Off, max_file_kb: 1024, syntax_highlight: true }
+    }
+}
+
+/// 终端光标形状。
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, Default)]
+#[serde(rename_all = "snake_case")]
+pub enum CursorShape {
+    #[default]
+    Block,
+    Bar,
+    Underline,
+}
+
+/// 终端偏好(新开的终端生效;字号与光标立即生效)。
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[serde(default)]
+pub struct TerminalPrefs {
+    pub font_size: u8,
+    pub cursor: CursorShape,
+    /// 回滚行数
+    pub scrollback: u32,
+    /// shell 程序;空为 `$SHELL`
+    pub shell: String,
+    /// 以登录 shell 启动(`-l`)
+    pub login_shell: bool,
+    /// 新终端的起始目录:真为项目根,假为家目录
+    pub start_in_project: bool,
+}
+
+impl Default for TerminalPrefs {
+    fn default() -> Self {
+        Self { font_size: 12, cursor: CursorShape::Block, scrollback: 5000, shell: String::new(), login_shell: true, start_in_project: true }
+    }
+}
+
+/// 内置浏览器偏好。
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[serde(default)]
+pub struct BrowserPrefs {
+    /// 抓取超时(秒)
+    pub timeout_secs: u32,
+    /// 自定义 User-Agent;空用内置
+    pub user_agent: String,
+}
+
+impl Default for BrowserPrefs {
+    fn default() -> Self {
+        Self { timeout_secs: 15, user_agent: String::new() }
+    }
+}
+
+/// 源代码管理偏好。
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[serde(default)]
+pub struct ScmPrefs {
+    /// Git 更改里超过这个大小(KB)的文件只列出不算 diff
+    pub diff_max_kb: u32,
+}
+
+impl Default for ScmPrefs {
+    fn default() -> Self {
+        Self { diff_max_kb: 1024 }
+    }
+}
+
+/// 代码智能(文件检索)偏好。
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[serde(default)]
+pub struct IntelPrefs {
+    /// 快速打开与项目内搜索跳过的目录名,每行一个;支持开头或结尾的 `*`
+    pub ignore: String,
+}
+
+impl Default for IntelPrefs {
+    fn default() -> Self {
+        Self { ignore: "target\nnode_modules\nDerivedData\n.build\n.git\ndist".into() }
+    }
+}
+
+impl IntelPrefs {
+    /// 目录 / 文件名是否被忽略规则命中。
+    pub fn ignored(&self, name: &str) -> bool {
+        self.ignore.lines().map(str::trim).filter(|l| !l.is_empty()).any(|pat| match (pat.strip_prefix('*'), pat.strip_suffix('*')) {
+            (Some(suffix), _) if !suffix.is_empty() => name.ends_with(suffix),
+            (_, Some(prefix)) if !prefix.is_empty() => name.starts_with(prefix),
+            _ => name == pat,
+        })
+    }
 }
 
 /// 偏好设置。所有字段都有默认值,旧文件缺字段时不会报错。
@@ -69,6 +200,17 @@ pub struct AppSettings {
     pub proxy_address: String,
     /// API 请求超时(秒),写 `API_TIMEOUT_MS`;空为默认
     pub request_timeout: Option<u64>,
+    /// 不走代理的主机(逗号分隔),写 `NO_PROXY`
+    pub no_proxy: String,
+    /// 上次停留的设置分类(小写名,供下次打开设置时恢复)
+    pub last_settings_tab: String,
+    /// 上次停留的「自定义」标签(小写名)
+    pub last_customize_tab: String,
+    pub editor: EditorPrefs,
+    pub terminal: TerminalPrefs,
+    pub browser: BrowserPrefs,
+    pub scm: ScmPrefs,
+    pub intel: IntelPrefs,
 }
 
 impl Default for AppSettings {
@@ -94,6 +236,14 @@ impl Default for AppSettings {
             proxy_mode: ProxyMode::System,
             proxy_address: String::new(),
             request_timeout: None,
+            no_proxy: String::new(),
+            last_settings_tab: String::new(),
+            last_customize_tab: String::new(),
+            editor: EditorPrefs::default(),
+            terminal: TerminalPrefs::default(),
+            browser: BrowserPrefs::default(),
+            scm: ScmPrefs::default(),
+            intel: IntelPrefs::default(),
         }
     }
 }
@@ -137,6 +287,11 @@ impl AppSettings {
                 env.push((k.to_string(), p.clone()));
             }
         }
+        let bypass = self.no_proxy.trim();
+        if !bypass.is_empty() && matches!(self.proxy_mode, ProxyMode::Http | ProxyMode::Socks5) {
+            env.push(("NO_PROXY".into(), bypass.to_string()));
+            env.push(("no_proxy".into(), bypass.to_string()));
+        }
         if let Some(t) = self.request_timeout.filter(|t| *t > 0) {
             env.push(("API_TIMEOUT_MS".into(), (t * 1000).to_string()));
         }
@@ -157,6 +312,33 @@ impl AppSettings {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn 新增偏好缺失时用默认值() {
+        let s: AppSettings = serde_json::from_str(r#"{"editor":{"minimap":false}}"#).unwrap();
+        assert!(!s.editor.minimap);
+        assert!(s.editor.folding);
+        assert_eq!(s.editor.tab_size, 4);
+        assert_eq!(s.terminal.scrollback, 5000);
+        assert_eq!(s.browser.timeout_secs, 15);
+    }
+
+    #[test]
+    fn 旧主题值仍可解析() {
+        let s: AppSettings = serde_json::from_str(r#"{"theme":"paper_dark"}"#).unwrap();
+        assert_eq!(s.theme, ThemeChoice::PaperDark);
+        let s: AppSettings = serde_json::from_str(r#"{"theme":"one_dark"}"#).unwrap();
+        assert_eq!(s.theme, ThemeChoice::OneDark);
+    }
+
+    #[test]
+    fn 忽略规则() {
+        let p = IntelPrefs { ignore: "target\n*.log\ntmp*".into() };
+        assert!(p.ignored("target"));
+        assert!(p.ignored("a.log"));
+        assert!(p.ignored("tmp-1"));
+        assert!(!p.ignored("src"));
+    }
 
     #[test]
     fn 缺字段使用默认值() {
@@ -202,6 +384,10 @@ mod tests {
         assert!(env.contains(&("CLAUDE_CODE_DISABLE_CLAUDE_MDS".into(), "1".into())));
         s.proxy_mode = ProxyMode::Direct;
         assert!(s.session_env().contains(&("ALL_PROXY".into(), String::new())));
+        s.proxy_mode = ProxyMode::Http;
+        s.proxy_address = "127.0.0.1:7890".into();
+        s.no_proxy = "localhost,127.0.0.1".into();
+        assert!(s.session_env().contains(&("NO_PROXY".into(), "localhost,127.0.0.1".into())));
         s.proxy_mode = ProxyMode::Socks5;
         s.proxy_address = String::new();
         assert!(!s.session_env().iter().any(|(k, _)| k == "ALL_PROXY"));

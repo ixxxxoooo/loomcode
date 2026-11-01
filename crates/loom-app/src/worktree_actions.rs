@@ -14,7 +14,7 @@ use loom_core::git;
 
 impl Workbench {
     /// worktree 的统一存放目录(`~/.loomcode/worktrees`,演示模式在沙盒里)。
-    fn worktrees_root(&self) -> PathBuf {
+    pub(crate) fn worktrees_root(&self) -> PathBuf {
         self.settings_path.with_file_name("worktrees")
     }
 

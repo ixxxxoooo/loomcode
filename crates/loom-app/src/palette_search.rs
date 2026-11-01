@@ -116,9 +116,9 @@ pub fn filter_items(items: &[PaletteItem], query: &str, limit: usize, segment: S
     scored.into_iter().take(limit).map(|(_, _, i)| i.clone()).collect()
 }
 
-/// 递归收集项目文件(相对路径),跳过隐藏目录与构建产物。
-pub fn collect_files(root: &Path, max: usize) -> Vec<String> {
-    fn go(root: &Path, dir: &Path, depth: usize, out: &mut Vec<String>, max: usize) {
+/// 递归收集项目文件(相对路径),跳过隐藏文件与「代码智能」忽略规则命中的条目。
+pub fn collect_files(root: &Path, max: usize, intel: &loom_config::IntelPrefs) -> Vec<String> {
+    fn go(root: &Path, dir: &Path, depth: usize, out: &mut Vec<String>, max: usize, intel: &loom_config::IntelPrefs) {
         if depth > 5 || out.len() >= max {
             return;
         }
@@ -127,12 +127,12 @@ pub fn collect_files(root: &Path, max: usize) -> Vec<String> {
         entries.sort_by_key(|e| e.file_name());
         for e in entries {
             let name = e.file_name().to_string_lossy().to_string();
-            if name.starts_with('.') && name != ".gitignore" || matches!(name.as_str(), "target" | "node_modules" | "DerivedData" | ".build") {
+            if name.starts_with('.') && name != ".gitignore" || intel.ignored(&name) {
                 continue;
             }
             let path = e.path();
             if path.is_dir() {
-                go(root, &path, depth + 1, out, max);
+                go(root, &path, depth + 1, out, max, intel);
             } else if let Ok(rel) = path.strip_prefix(root) {
                 out.push(rel.to_string_lossy().to_string());
                 if out.len() >= max {
@@ -142,7 +142,7 @@ pub fn collect_files(root: &Path, max: usize) -> Vec<String> {
         }
     }
     let mut out = Vec::new();
-    go(root, root, 0, &mut out, max);
+    go(root, root, 0, &mut out, max, intel);
     out
 }
 

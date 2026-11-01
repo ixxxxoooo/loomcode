@@ -38,6 +38,10 @@ pub struct ProviderUi {
 pub struct PluginUi {
     pub installed: Vec<loom_config::plugins::PluginEntry>,
     pub markets: Vec<loom_config::plugins::Marketplace>,
+    /// 市场里可安装的插件(「浏览市场」)
+    pub market_plugins: Vec<loom_config::plugins::MarketPlugin>,
+    /// 是否展开「浏览市场」
+    pub browse: bool,
     /// 正在执行的 CLI 操作说明;`Some` 时按钮置灰
     pub busy: Option<String>,
     /// 最近一次操作结果:(成功, 输出)
@@ -59,6 +63,8 @@ pub struct OpsUi {
     /// (pid, 内存 MB, CPU %, 命令)
     pub procs: Vec<(u32, f64, f64, String)>,
     pub log: Vec<String>,
+    /// 项目信任:(名称, 路径, 是否已信任)
+    pub trust: Vec<(String, String, bool)>,
 }
 
 /// 新建命令 / 子 Agent / Skill 的表单。
@@ -125,6 +131,8 @@ pub struct Forms {
     pub hooks_more: Vec<Scope>,
     /// 最近一次写配置失败的提示(显示在页顶,下次成功时清除)
     pub error: Option<String>,
+    /// 已经为它排过「自动消失」定时的那条提示
+    pub error_seen: Option<String>,
 }
 
 /// 新建单行输入框。
@@ -177,6 +185,7 @@ impl Forms {
             mcp_checking: false,
             hooks_more: Vec::new(),
             error: None,
+            error_seen: None,
         }
     }
 }

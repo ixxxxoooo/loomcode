@@ -22,6 +22,12 @@ pub struct SpawnOptions {
     pub command: Option<Vec<String>>,
     pub cols: u16,
     pub rows: u16,
+    /// 指定 shell 程序(仅在没有 `command` 时生效);为空用 `$SHELL`,再没有则 `/bin/zsh`
+    pub shell: Option<String>,
+    /// 为 `true` 时 shell 不加 `-l`(默认以登录 shell 启动)
+    pub no_login: bool,
+    /// 回看历史行数;为空用默认 10000
+    pub scrollback: Option<usize>,
 }
 
 /// 选择的粒度:单击拖动选字符,双击选单词,三击选整行。
@@ -129,8 +135,11 @@ impl Terminal {
                 c
             }
             _ => {
-                let mut c = CommandBuilder::new(std::env::var("SHELL").unwrap_or_else(|_| "/bin/zsh".into()));
-                c.arg("-l");
+                let shell = opts.shell.clone().filter(|s| !s.trim().is_empty()).or_else(|| std::env::var("SHELL").ok()).unwrap_or_else(|| "/bin/zsh".into());
+                let mut c = CommandBuilder::new(shell);
+                if !opts.no_login {
+                    c.arg("-l");
+                }
                 c
             }
         };
@@ -145,7 +154,7 @@ impl Terminal {
         let writer: SharedWriter = Arc::new(Mutex::new(pair.master.take_writer().map_err(|e| format!("无法写入终端:{e}"))?));
         let title = Arc::new(Mutex::new(String::new()));
         let listener = Listener { writer: writer.clone(), title: title.clone() };
-        let term = Term::new(Config::default(), &Size { cols: cols as usize, rows: rows as usize }, listener);
+        let term = Term::new(Config { scrolling_history: opts.scrollback.unwrap_or(10_000), ..Config::default() }, &Size { cols: cols as usize, rows: rows as usize }, listener);
         let inner = Arc::new(Mutex::new(Inner { term, parser: Processor::default() }));
         let child = Arc::new(Mutex::new(child));
         let exit_code = Arc::new(Mutex::new(None));

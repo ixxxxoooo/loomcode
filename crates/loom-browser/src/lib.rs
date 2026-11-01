@@ -9,5 +9,5 @@ mod fetch;
 mod history;
 
 pub use extract::{Link, Page, PageBlock, extract};
-pub use fetch::{BrowserError, Fetched, fetch, load, normalize_input};
+pub use fetch::{BrowserError, FetchOptions, Fetched, fetch, fetch_with, load, load_with, normalize_input};
 pub use history::History;

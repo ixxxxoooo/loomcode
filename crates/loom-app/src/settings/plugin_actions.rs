@@ -13,9 +13,11 @@ impl Workbench {
     pub fn refresh_plugins(&mut self) {
         let installed = plugins::list_installed(&self.claude_home, self.cfg_project());
         let markets = plugins::list_markets(&self.claude_home);
+        let market_plugins = plugins::list_market_plugins(&self.claude_home);
         if let Some(f) = self.settings_forms.as_mut() {
             f.plugins.installed = installed;
             f.plugins.markets = markets;
+            f.plugins.market_plugins = market_plugins;
         }
     }
 
