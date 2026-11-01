@@ -1396,7 +1396,7 @@ impl Workbench {
 /// 渲染对话区(时间线 + 输入框 + 静态页脚),IDE 窗口使用。
 pub fn chat_panel(parts: Option<(Entity<SessionModel>, Entity<Composer>)>, branch: Option<String>, demo: bool, cx: &App) -> AnyElement {
     let t = cx.theme().clone();
-    let footer = h_flex().h(px(26.)).px_4().items_center().text_size(px(12.)).text_color(t.muted_foreground)
+    let footer = h_flex().h(px(26.)).px_1().items_center().text_size(px(12.)).text_color(t.muted_foreground)
         .child(h_flex().gap_1().items_center().when_some(branch, |d, b| d.child(icon(IconName::GitBranch, 12., t.muted_foreground)).child(b)))
         .child(div().flex_1())
         .child(if demo { "" } else { "Claude Code" })
@@ -1428,7 +1428,8 @@ pub fn chat_panel_with_footer(parts: Option<(Entity<SessionModel>, Entity<Compos
         .children(crate::dock_cards::render(&model_for_dock, cx))
         .children(crate::task_dock::dock(&model_for_dock, cx))
         .child(composer)
-        .child(footer)
+        // 页脚(分支 / 运行模式)与输入框同宽居中:分支在输入框左下、说明在右下
+        .child(div().w_full().flex().justify_center().px_4().child(div().w_full().max_w(px(crate::timeline::content_max_w(cx))).child(footer)))
         .into_any_element()
 }
 

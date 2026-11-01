@@ -31,7 +31,7 @@ pub fn footer(wb: &Workbench, cx: &mut Context<Workbench>) -> AnyElement {
         }
         _ => h_flex().gap_1().items_center().when_some(branch, |d, b| d.child(icon(IconName::GitBranch, 12., t.muted_foreground)).child(b)).into_any_element(),
     };
-    h_flex().h(px(26.)).px_4().items_center().text_size(px(12.)).text_color(t.muted_foreground)
+    h_flex().h(px(26.)).px_1().items_center().text_size(px(12.)).text_color(t.muted_foreground)
         .child(left)
         .child(div().flex_1())
         .child(if wb.demo { "" } else { "Claude Code" })
