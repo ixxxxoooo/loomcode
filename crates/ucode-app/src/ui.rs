@@ -130,7 +130,7 @@ pub fn dialog_footer(ok_label: &'static str) -> gpui_kit::component::dialog::Dia
         .child(DialogAction::new().child(Button::new("dialog-ok").primary().label(ok_label)))
 }
 
-/// 标题栏右侧的「窗口切换」按钮(Agent 窗口的「IDE」与 IDE 窗口的「Agents Window」共用),
+/// 标题栏右侧的「窗口切换」按钮(Agent 窗口的「IDE」与 IDE 窗口的「Agent」共用),
 /// 固定同一宽度,这样两个窗口里切换按钮的位置和大小一致。
 ///
 /// 参数:`id` 元素 id;`label` 文案;`icon_name` 图标;`primary` 为真用主题色实心(只有「回到 Agent」这一个),否则描边。
@@ -142,4 +142,4 @@ pub fn mode_switch(id: &'static str, label: &'static str, icon_name: IconName, p
 }
 
 /// 窗口切换按钮的宽度。
-pub const MODE_SWITCH_W: f32 = 150.;
+pub const MODE_SWITCH_W: f32 = 92.;

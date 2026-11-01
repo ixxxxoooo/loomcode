@@ -194,7 +194,7 @@ pub fn breadcrumbs(path: &Path, root: &str, saved: bool, note: Option<String>, c
 /// 没有打开文件时的欢迎页:常用快捷键。
 pub fn welcome(cx: &App) -> impl IntoElement {
     let t = cx.theme();
-    let hints = [("显示 / 隐藏侧栏", "⌘B"), ("显示 / 隐藏对话栏", "⌥⌘B"), ("查找 / 替换", "⌘F"), ("保存文件", "⌘S"), ("关闭标签", "⌘W"), ("切换标签", "⌥⌘← / →"), ("切换到 Agents Window", "⇧⌘E")];
+    let hints = [("显示 / 隐藏侧栏", "⌘B"), ("显示 / 隐藏对话栏", "⌥⌘B"), ("查找 / 替换", "⌘F"), ("保存文件", "⌘S"), ("关闭标签", "⌘W"), ("切换标签", "⌥⌘← / →"), ("切换到 Agent", "⇧⌘E")];
     v_flex()
         .size_full()
         .items_center()

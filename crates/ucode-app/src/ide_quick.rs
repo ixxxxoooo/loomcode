@@ -31,7 +31,7 @@ impl IdeWindow {
         let mut cmd = |title: &str, sub: &str, ic: IconName, action: PaletteAction| {
             items.push(PaletteItem { title: title.into(), subtitle: sub.into(), group: Group::Command, icon: ic, action });
         };
-        cmd("切换到 Agents Window", "⇧⌘E", IconName::MessageSquare, PaletteAction::ToggleIde);
+        cmd("切换到 Agent", "⇧⌘E", IconName::MessageSquare, PaletteAction::ToggleIde);
         cmd("显示 / 隐藏侧栏", "⌘B", IconName::PanelLeft, PaletteAction::ToggleLeft);
         cmd("显示 / 隐藏对话栏", "⌥⌘B", IconName::PanelRight, PaletteAction::ToggleRight);
         let palette = cx.new(|cx| Palette::new(items, window, cx));
