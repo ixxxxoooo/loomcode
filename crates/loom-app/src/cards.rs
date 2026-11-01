@@ -55,25 +55,24 @@ pub fn render_canvas(session: &Entity<SessionModel>, id: &str, title: &str, cx: 
         .into_any_element()
 }
 
-/// 本轮改动汇总。
+/// 本轮改动汇总(Cursor 风格:「N 个文件已更改」+ 审查,每行一个文件,点击直接查看)。
+///
+/// 参数:`session` 会话;`files` 改动文件;返回:卡片元素。
 pub fn render_changes(session: &Entity<SessionModel>, files: &[ChangedFile], cx: &App) -> AnyElement {
     let t = cx.theme();
-    let (a, r): (u32, u32) = files.iter().fold((0, 0), |(a, r), f| (a + f.added, r + f.removed));
-    let s = session.clone();
-    card(cx).p_3().gap_1p5()
-        .child(h_flex().gap_2().items_center()
-            .child(icon(IconName::FileDiff, 15., t.muted_foreground))
-            .child(div().text_size(px(13.)).font_weight(FontWeight::MEDIUM).child(format!("本轮改动 · {} 个文件", files.len())))
-            .child(div().text_size(px(12.)).font_family(MONO).text_color(t.success).child(format!("+{a}")))
-            .child(div().text_size(px(12.)).font_family(MONO).text_color(t.danger).child(format!("−{r}")))
-            .child(div().flex_1())
-            .child(Button::new("changes-open").small().ghost().label("查看改动")
-                .on_click(move |_, _, cx| { s.update(cx, |_, cx| cx.emit(UiRequest::OpenChanges)); })))
-        .children(files.iter().map(|f| {
-            h_flex().gap_2().text_size(px(12.)).font_family(MONO)
-                .child(div().flex_1().truncate().child(f.path.clone()))
-                .child(div().text_color(t.success).child(format!("+{}", f.added)))
-                .child(div().text_color(t.danger).child(format!("−{}", f.removed)))
+    let open = |s: &Entity<SessionModel>| { let s = s.clone(); move |_: &ClickEvent, _: &mut Window, cx: &mut App| { s.update(cx, |_, cx| cx.emit(UiRequest::OpenChanges)); } };
+    card(cx).p_3().gap_1().mt_2()
+        .child(h_flex().id("changes-head").items_center().cursor_pointer().on_click(open(session))
+            .child(div().flex_1().text_size(px(13.)).text_color(t.muted_foreground).child(format!("{} 个文件已更改", files.len())))
+            .child(div().text_size(px(13.)).text_color(t.muted_foreground).hover(|d| d.text_color(t.foreground)).child("审查")))
+        .children(files.iter().enumerate().map(|(i, f)| {
+            let name = f.path.rsplit('/').next().unwrap_or(&f.path).to_string();
+            h_flex().id(SharedString::from(format!("changes-file-{i}"))).h(px(28.)).px_1().gap_2().items_center().rounded(px(6.)).cursor_pointer()
+                .hover(|d| d.bg(t.list_hover)).on_click(open(session))
+                .child(crate::file_icons::file_icon_img(&name, false, false, 14.))
+                .child(div().flex_1().min_w_0().truncate().text_size(px(13.)).child(name))
+                .when(f.added > 0, |d| d.child(div().text_size(px(12.)).font_family(MONO).text_color(t.success).child(format!("+{}", f.added))))
+                .when(f.removed > 0, |d| d.child(div().text_size(px(12.)).font_family(MONO).text_color(t.danger).child(format!("−{}", f.removed))))
         }))
         .into_any_element()
 }

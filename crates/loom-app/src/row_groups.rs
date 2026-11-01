@@ -130,10 +130,14 @@ pub fn build_rows(items: &[TimelineItem], working: bool, density: ToolDensity, d
             i += 1;
             continue;
         }
-        // 「本轮改动」汇总等回合结束后再显示(进行中的最后一轮先不显示)
-        if working && matches!(items[i], TimelineItem::Changes { .. }) && !items[i + 1..].iter().any(|x| matches!(x, TimelineItem::User { .. })) {
-            i += 1;
-            continue;
+        // 「本轮改动」汇总放到本回合最后一条助手回复之后;进行中的最后一轮先不显示
+        if matches!(items[i], TimelineItem::Changes { .. }) {
+            let turn_end = items[i..].iter().position(|x| matches!(x, TimelineItem::User { .. })).map_or(items.len(), |p| i + p);
+            let has_reply = (i..turn_end).any(|k| is_turn_last_assistant(items, k, working));
+            if working && turn_end == items.len() || has_reply {
+                i += 1;
+                continue;
+            }
         }
         if let Some(d) = digests.iter().find(|d| d.start == i) {
             rows.push(Row::Digest(d.clone()));
@@ -163,6 +167,11 @@ pub fn build_rows(items: &[TimelineItem], working: bool, density: ToolDensity, d
             i = j;
         } else {
             rows.push(Row::Item(i));
+            if is_turn_last_assistant(items, i, working) {
+                let start = items[..i].iter().rposition(|x| matches!(x, TimelineItem::User { .. })).map_or(0, |p| p + 1);
+                let end = items[i..].iter().position(|x| matches!(x, TimelineItem::User { .. })).map_or(items.len(), |p| i + p);
+                rows.extend((start..end).filter(|&k| matches!(items[k], TimelineItem::Changes { .. })).map(Row::Item));
+            }
             i += 1;
         }
     }
