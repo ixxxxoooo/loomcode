@@ -10,18 +10,20 @@ use std::path::Path;
 pub enum Segment {
     All,
     Session,
+    Project,
     File,
     Command,
 }
 
 impl Segment {
-    pub const ALL: [Segment; 4] = [Segment::All, Segment::Session, Segment::File, Segment::Command];
+    pub const ALL: [Segment; 5] = [Segment::All, Segment::Session, Segment::Project, Segment::File, Segment::Command];
 
     /// 分段标签。
     pub fn label(self) -> &'static str {
         match self {
             Self::All => "全部",
             Self::Session => "会话",
+            Self::Project => "项目",
             Self::File => "文件",
             Self::Command => "命令",
         }
@@ -32,6 +34,7 @@ impl Segment {
         match self {
             Self::All => true,
             Self::Session => group == Group::Session,
+            Self::Project => group == Group::Project,
             Self::File => group == Group::File,
             Self::Command => group == Group::Command,
         }
@@ -181,6 +184,14 @@ mod tests {
         assert_eq!(shown.len(), 2);
         // 前缀命中(词首)优先
         assert_eq!(shown[0].title, "会话列表");
+    }
+
+    #[::core::prelude::v1::test]
+    fn 项目分段可列出并搜索项目() {
+        let items = vec![item("UCode", Group::Project), item("某会话", Group::Session)];
+        assert_eq!(filter_items(&items, "", 10, Segment::Project).len(), 1);
+        assert_eq!(filter_items(&items, "uco", 10, Segment::All).len(), 1);
+        assert!(filter_items(&items, "uco", 10, Segment::Session).is_empty());
     }
 
     #[::core::prelude::v1::test]

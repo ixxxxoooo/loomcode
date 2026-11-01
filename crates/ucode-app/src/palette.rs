@@ -22,6 +22,8 @@ pub enum PaletteAction {
     SetTheme(ThemeChoice),
     /// (项目下标, 会话 id)
     OpenSession(usize, String),
+    /// 项目下标:展开并打开最近会话(没有则新建)
+    OpenProject(usize),
     OpenFile(String),
     /// 演示场景 id
     RunScenario(String),
@@ -32,6 +34,7 @@ pub enum PaletteAction {
 pub enum Group {
     Command,
     Session,
+    Project,
     File,
     Scenario,
 }
@@ -41,6 +44,7 @@ impl Group {
         match self {
             Self::Command => "命令",
             Self::Session => "会话",
+            Self::Project => "项目",
             Self::File => "文件",
             Self::Scenario => "演示场景",
         }
@@ -76,7 +80,7 @@ pub struct Palette {
 
 impl Palette {
     pub fn new(items: Vec<PaletteItem>, window: &mut Window, cx: &mut Context<Self>) -> Self {
-        let input = cx.new(|cx| InputState::new(window, cx).placeholder("搜索命令、会话、文件…"));
+        let input = cx.new(|cx| InputState::new(window, cx).placeholder("搜索命令、会话、项目、文件…"));
         let sub = cx.subscribe_in(&input, window, |this: &mut Self, _, ev: &InputEvent, _, cx| match ev {
             InputEvent::Change => this.refilter(cx),
             InputEvent::PressEnter { .. } => this.run_selected(cx),

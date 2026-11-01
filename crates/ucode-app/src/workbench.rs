@@ -404,6 +404,9 @@ impl Workbench {
         cmd("打开自动化", "", IconName::Timer, PaletteAction::OpenPage("automation"));
         cmd("打开内置浏览器", "", IconName::Globe, PaletteAction::OpenPage("browser"));
         for (pi, p) in self.projects.iter().enumerate() {
+            items.push(PaletteItem { title: p.name.clone(), subtitle: p.path.clone(), group: Group::Project, icon: IconName::Folder, action: PaletteAction::OpenProject(pi) });
+        }
+        for (pi, p) in self.projects.iter().enumerate() {
             for s in &p.sessions {
                 items.push(PaletteItem { title: s.title.clone(), subtitle: p.name.clone(), group: Group::Session, icon: IconName::MessageSquare, action: PaletteAction::OpenSession(pi, s.id.clone()) });
             }
@@ -443,8 +446,19 @@ impl Workbench {
             PaletteAction::OpenPage(p) => self.set_page(match p { "canvas" => Page::Canvas, "automation" => Page::Automation, _ => Page::Browser }, cx),
             PaletteAction::SetTheme(c) => self.update_settings(cx, |s| s.theme = c),
             PaletteAction::OpenSession(pi, id) => self.open_session(pi, &id, window, cx),
+            PaletteAction::OpenProject(pi) => self.open_project_from_palette(pi, window, cx),
             PaletteAction::OpenFile(path) => self.open_file(path, window, cx),
             PaletteAction::RunScenario(id) => self.open_scenario(&id, window, cx),
+        }
+    }
+
+    /// 从面板打开项目:展开侧栏分组,有会话则打开最近一个(非归档),否则新建会话。
+    fn open_project_from_palette(&mut self, pi: usize, window: &mut Window, cx: &mut Context<Self>) {
+        let Some(p) = self.projects.get_mut(pi) else { return };
+        p.expanded = true;
+        match p.sessions.iter().find(|s| !s.archived).map(|s| s.id.clone()) {
+            Some(id) => self.open_session(pi, &id, window, cx),
+            None => self.new_session(pi, window, cx),
         }
     }
 
