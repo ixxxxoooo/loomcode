@@ -5,7 +5,7 @@
 //! @author ixxxxoooo
 
 use crate::composer::Composer;
-use crate::ui::{MONO, icon};
+use crate::ui::icon;
 use gpui_kit::assets::IconName;
 use gpui_kit::component::progress::ProgressCircle;
 use gpui_kit::component::{ActiveTheme, h_flex, v_flex};
@@ -74,44 +74,6 @@ pub fn model_popup(models: &[ModelInfo], current: &str, effort: Effort, this: En
         .child(div().h(px(1.)).my_1().bg(t.border))
         .child(div().px_2().pt_1().pb_0p5().text_size(px(11.)).text_color(t.muted_foreground).child("思考强度"))
         .child(div().px_1().child(segments))
-}
-
-/// 上下文弹层。
-///
-/// 参数:`usage` 当前用量;`this` 输入框实体。
-pub fn context_popup(usage: &Usage, this: Entity<Composer>, cx: &App) -> Div {
-    let t = cx.theme().clone();
-    let ratio = usage.context_ratio();
-    let row = |label: &'static str, value: String| {
-        h_flex().justify_between().text_size(px(12.)).child(div().text_color(t.muted_foreground).child(label)).child(div().font_family(MONO).child(value))
-    };
-    let action = |id: &'static str, ic: IconName, label: &'static str, tip: &'static str, f: Box<dyn Fn(&mut Window, &mut App)>| {
-        h_flex().id(id).gap_2().px_2().h(px(30.)).items_center().rounded(px(6.)).cursor_pointer().hover(|d| d.bg(t.list_hover))
-            .on_click(move |_, window, cx| f(window, cx))
-            .child(icon(ic, 13., t.muted_foreground))
-            .child(div().text_size(px(13.)).child(label))
-            .child(div().flex_1())
-            .child(div().text_size(px(11.)).text_color(t.muted_foreground).child(tip))
-    };
-    let (a, b) = (this.clone(), this);
-    v_flex().absolute().bottom(px(44.)).right(px(8.)).w(px(280.)).p_2().gap_1().rounded(px(10.)).border_1().border_color(t.border).bg(t.popover).shadow_lg()
-        .child(div().text_size(px(12.)).font_weight(FontWeight::SEMIBOLD).child("上下文"))
-        .child(row("已用", if usage.context_size == 0 { "发送消息后统计".to_string() } else { format!("{} / {}", short_tokens(usage.context_used), short_tokens(usage.context_size)) }))
-        .child(row("占比", format!("{:.0}%", ratio * 100.)))
-        .child(row("本会话花费", format!("${:.2}", usage.cost_usd)))
-        .when_some(usage.five_hour_pct, |d, p| d.child(row("5 小时限额", format!("{p:.0}%"))))
-        .when_some(usage.weekly_pct, |d, p| d.child(row("每周限额", format!("{p:.0}%"))))
-        .when(usage.five_hour_pct.is_none() && usage.weekly_pct.is_none(), |d| {
-            let note = match usage.limits_state {
-                loom_core::LimitsState::Checking => "正在查询账户限额…",
-                loom_core::LimitsState::Unavailable => "账户限额不可用(第三方服务商或离线)",
-                loom_core::LimitsState::Idle => "打开此面板时查询账户限额",
-            };
-            d.child(div().text_size(px(11.)).text_color(t.muted_foreground).child(note))
-        })
-        .child(div().h(px(1.)).my_1().bg(t.border))
-        .child(action("ctx-compact", IconName::Minimize2, "压缩上下文", "发送 /compact", Box::new(move |window, cx| { a.update(cx, |c, cx| c.compact(window, cx)); })))
-        .child(action("ctx-new", IconName::SquarePen, "新会话继续", "⌘N", Box::new(move |window, cx| { b.update(cx, |c, cx| c.close_pop(cx)); window.dispatch_action(Box::new(crate::workbench::NewSession), cx); })))
 }
 
 #[cfg(test)]

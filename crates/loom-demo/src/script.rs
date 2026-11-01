@@ -305,6 +305,8 @@ impl ScriptBuilder {
             five_hour_pct: five,
             weekly_pct: weekly,
             limits_state: LimitsState::Idle,
+            five_hour_resets: five.map(|_| now_secs() + 4 * 3600 + 1500),
+            weekly_resets: weekly.map(|_| now_secs() + 3 * 86400 + 7200),
         }));
         self
     }
@@ -423,4 +425,9 @@ pub fn question(header: &str, text: &str, opts: &[(&str, &str)], multi: bool) ->
             .collect(),
         multi_select: multi,
     }
+}
+
+/// 当前 Unix 秒(演示限额的重置时刻以它为基准)。
+fn now_secs() -> i64 {
+    std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH).map(|d| d.as_secs() as i64).unwrap_or(0)
 }

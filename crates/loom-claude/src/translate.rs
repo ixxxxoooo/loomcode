@@ -699,7 +699,10 @@ impl Translator {
         let limits = &body["rate_limits"];
         let pct = |k: &str| limits[k].get("utilization").and_then(Value::as_f64).map(|u| u as f32);
         let (five, weekly) = (pct("five_hour"), pct("seven_day"));
+        let resets = |k: &str| limits[k].get("resets_at").and_then(Value::as_str).and_then(|s| chrono::DateTime::parse_from_rfc3339(s).ok()).map(|t| t.timestamp());
         if ok && (five.is_some() || weekly.is_some()) {
+            self.usage.five_hour_resets = resets("five_hour").or(self.usage.five_hour_resets);
+            self.usage.weekly_resets = resets("seven_day").or(self.usage.weekly_resets);
             self.usage.five_hour_pct = five.or(self.usage.five_hour_pct);
             self.usage.weekly_pct = weekly.or(self.usage.weekly_pct);
             self.usage.limits_state = LimitsState::Idle;

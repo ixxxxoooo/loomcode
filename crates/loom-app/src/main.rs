@@ -32,6 +32,7 @@ mod cards;
 mod code_hl;
 mod composer;
 mod composer_pop;
+mod context_panel;
 mod composer_send;
 mod diff;
 mod mode_style;

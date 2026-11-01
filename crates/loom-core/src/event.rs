@@ -29,6 +29,10 @@ pub struct Usage {
     pub five_hour_pct: Option<f32>,
     /// 每周限额使用百分比
     pub weekly_pct: Option<f32>,
+    /// 5 小时限额的重置时刻(Unix 秒)
+    pub five_hour_resets: Option<i64>,
+    /// 每周限额的重置时刻(Unix 秒)
+    pub weekly_resets: Option<i64>,
     /// 限额查询状态(只在用户点开上下文弹层时才查询,不自动轮询)
     pub limits_state: LimitsState,
 }

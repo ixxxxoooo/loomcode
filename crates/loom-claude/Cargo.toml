@@ -10,4 +10,5 @@ serde_json.workspace = true
 thiserror.workspace = true
 async-channel = "2"
 base64 = "0.22"
+chrono = { version = "0.4", default-features = false, features = ["std"] }
 uuid = { version = "1", features = ["v4"] }

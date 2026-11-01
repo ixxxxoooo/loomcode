@@ -382,7 +382,7 @@ impl Render for Composer {
                 let (models, current) = { let st = &self.session.read(cx).state; (st.models.clone(), st.model.clone()) };
                 crate::composer_pop::model_popup(&models, &current, effort, this.clone(), cx)
             }
-            Pick::Context => crate::composer_pop::context_popup(&usage, this.clone(), cx),
+            Pick::Context => crate::context_panel::context_popup(&usage, this.clone(), cx),
             Pick::Mode => {
                 let items = self.pick_list(kind, cx);
                 let this = this.clone();
