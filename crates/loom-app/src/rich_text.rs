@@ -102,7 +102,7 @@ pub fn render_assistant(id: &str, text: &str, cx: &App) -> AnyElement {
     let blocks = split_blocks(text);
     v_flex().w_full().gap_2().text_size(px(14. * cx.try_global::<crate::UiPrefs>().map_or(1., |p| p.font_scale)))
         .children(blocks.into_iter().enumerate().map(|(n, b)| match b {
-            Block::Markdown(md) => div().w_full().child(crate::code_actions::with_copy(TextView::markdown(SharedString::from(format!("md-{id}-{n}")), md).selectable(true))).into_any_element(),
+            Block::Markdown(md) => div().w_full().child(TextView::markdown(SharedString::from(format!("md-{id}-{n}")), md).selectable(true)).into_any_element(),
             Block::Chart(spec) => render_chart(id, n, &spec, cx),
             Block::Source { kind, code } => render_source(&kind, &code, cx),
         }))
