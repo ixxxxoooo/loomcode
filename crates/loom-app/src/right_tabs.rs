@@ -36,40 +36,6 @@ impl RightPanel {
             self.open.push(tab);
         }
         self.tab = tab;
-        self.active_preview = None;
-        cx.notify();
-    }
-
-    /// 在右栏打开文件预览:`pinned` 为假是预览标签(会被下一次单击替换),为真固定;已打开的直接选中。
-    pub fn open_preview(&mut self, path: std::path::PathBuf, pinned: bool, window: &mut Window, cx: &mut Context<Self>) {
-        self.files.select(path.clone());
-        if let Some(ix) = self.previews.iter().position(|p| p.path == path) {
-            if pinned {
-                self.previews[ix].preview = false;
-            }
-            self.active_preview = Some(ix);
-        } else {
-            let view = crate::file_preview::FilePreview::load(path, !pinned, window, cx);
-            // 先替换已有的预览标签,没有就追加
-            match (!pinned).then(|| self.previews.iter().position(|p| p.preview)).flatten() {
-                Some(ix) => { self.previews[ix] = view; self.active_preview = Some(ix); }
-                None => { self.previews.push(view); self.active_preview = Some(self.previews.len() - 1); }
-            }
-        }
-        cx.notify();
-    }
-
-    /// 关闭一个文件预览标签。
-    pub fn close_preview(&mut self, ix: usize, cx: &mut Context<Self>) {
-        if ix >= self.previews.len() {
-            return;
-        }
-        self.previews.remove(ix);
-        self.active_preview = match self.active_preview {
-            Some(a) if a == ix => (!self.previews.is_empty()).then(|| ix.min(self.previews.len() - 1)),
-            Some(a) if a > ix => Some(a - 1),
-            other => other,
-        };
         cx.notify();
     }
 
@@ -87,7 +53,6 @@ impl RightPanel {
     pub(crate) fn tab_bar(&self, changes: usize, window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
         let t = cx.theme().clone();
         let (cur, open, trailing) = (self.tab, self.open.clone(), self.trailing.clone());
-        let in_preview = self.active_preview.is_some();
         let weak = cx.entity().downgrade();
         let menu = move |menu: PopupMenu, _: &mut Window, _: &mut Context<PopupMenu>| {
             let mut menu = menu;
@@ -100,7 +65,7 @@ impl RightPanel {
             menu
         };
         let tabs = self.open.iter().copied().map(|rt| {
-            let on = rt == cur && !in_preview;
+            let on = rt == cur;
             let group = SharedString::from(format!("rt-g-{}", rt.key()));
             h_flex().id(SharedString::from(format!("rt-{}", rt.key()))).group(group.clone()).h(px(28.)).pl_2().pr_1().gap_1().items_center().rounded(px(6.)).cursor_pointer()
                 .text_size(px(12.)).flex_none()
@@ -121,31 +86,9 @@ impl RightPanel {
                         .child(icon(IconName::X, 10., t.muted_foreground)),
                 )
         });
-        let active_preview = self.active_preview;
-        let previews = self.previews.iter().enumerate().map(|(ix, p)| {
-            let on = active_preview == Some(ix);
-            let (name, preview) = (p.name(), p.preview);
-            let group = SharedString::from(format!("rt-pg-{ix}"));
-            h_flex().id(SharedString::from(format!("rt-p-{ix}"))).group(group.clone()).h(px(28.)).pl_2().pr_1().gap_1().items_center().rounded(px(6.)).cursor_pointer()
-                .text_size(px(12.)).flex_none().max_w(px(160.))
-                .text_color(if on { t.foreground } else { t.muted_foreground })
-                .when(on, |d| d.bg(t.muted))
-                .hover(|d| d.bg(t.list_hover))
-                .on_mouse_down(MouseButton::Left, cx.listener(move |this, _, _, cx| { this.active_preview = Some(ix); cx.notify(); }))
-                .on_mouse_down(MouseButton::Middle, cx.listener(move |this, _, _, cx| this.close_preview(ix, cx)))
-                .child(crate::file_icons::file_icon_img(&name, false, false, 13.))
-                .child(div().min_w_0().truncate().when(preview, |d| d.italic()).child(name))
-                .child(
-                    div().id(SharedString::from(format!("rt-px-{ix}"))).size(px(16.)).flex_none().flex().items_center().justify_center().rounded(px(4.))
-                        .when(!on, |d| d.invisible().group_hover(group, |d| d.visible()))
-                        .hover(|d| d.bg(t.border))
-                        .on_mouse_down(MouseButton::Left, cx.listener(move |this, _, _, cx| { cx.stop_propagation(); this.close_preview(ix, cx); }))
-                        .child(icon(IconName::X, 10., t.muted_foreground)),
-                )
-        });
         crate::window_header::draggable(h_flex().id("rt-tabbar").h(px(crate::window_header::HEADER_H)).flex_none().px_2().gap_0p5().items_center())
             // 标签放不下时横向滚动,「+」与右侧按钮始终固定可见
-            .child(div().id("rt-tabs-scroll").min_w_0().h_full().flex().items_center().overflow_x_scroll().child(h_flex().gap_0p5().items_center().children(tabs).children(previews)))
+            .child(div().id("rt-tabs-scroll").min_w_0().h_full().flex().items_center().overflow_x_scroll().child(h_flex().gap_0p5().items_center().children(tabs)))
             .child(Button::new("rt-add").xsmall().ghost().icon(IconName::Plus).tooltip("新增标签").dropdown_menu(menu))
             .child(div().flex_1().h_full())
             .when_some(trailing, |d, f| d.child(div().flex_none().child(f(window, cx))))

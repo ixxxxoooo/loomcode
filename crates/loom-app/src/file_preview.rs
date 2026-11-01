@@ -1,4 +1,4 @@
-//! 右栏里的文件预览标签:只读代码预览(带语法高亮),Markdown 用与 IDE 共用的预览视图。
+//! 右栏「文件」标签左侧的文件预览:只读代码预览(带语法高亮),Markdown 用与 IDE 共用的预览视图。
 //!
 //! @author ixxxxoooo
 
@@ -15,8 +15,6 @@ const MAX_PREVIEW_BYTES: u64 = 512 * 1024;
 /// 一个已打开的文件预览标签。
 pub struct FilePreview {
     pub path: PathBuf,
-    /// 预览标签(单击打开,会被下一次单击替换)为真;双击后固定为假
-    pub preview: bool,
     editor: Option<Entity<EditorState>>,
     md_view: Option<Entity<crate::ide_markdown::MdDocView>>,
     /// 预览不可用时的说明(二进制、过大、读取失败)
@@ -26,9 +24,9 @@ pub struct FilePreview {
 impl FilePreview {
     /// 读取文件并建立预览。
     ///
-    /// 参数:`path` 绝对路径;`preview` 是否为可被替换的预览标签。
-    pub fn load(path: PathBuf, preview: bool, window: &mut Window, cx: &mut Context<RightPanel>) -> Self {
-        let mut this = Self { path: path.clone(), preview, editor: None, md_view: None, note: None };
+    /// 参数:`path` 绝对路径。
+    pub fn load(path: PathBuf, window: &mut Window, cx: &mut Context<RightPanel>) -> Self {
+        let mut this = Self { path: path.clone(), editor: None, md_view: None, note: None };
         match std::fs::metadata(&path) {
             Err(e) => this.note = Some(format!("无法读取:{e}")),
             Ok(m) if m.len() > MAX_PREVIEW_BYTES => this.note = Some(format!("文件较大({} KB),不预览", m.len() / 1024)),
@@ -45,11 +43,6 @@ impl FilePreview {
             },
         }
         this
-    }
-
-    /// 文件名。
-    pub fn name(&self) -> String {
-        self.path.file_name().map(|n| n.to_string_lossy().to_string()).unwrap_or_default()
     }
 
     /// 预览内容。

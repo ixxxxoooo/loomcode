@@ -23,6 +23,7 @@ mod composer_send;
 mod diff;
 mod model;
 mod file_dnd;
+mod files_workspace;
 mod file_icons;
 mod file_ops;
 mod file_lang;

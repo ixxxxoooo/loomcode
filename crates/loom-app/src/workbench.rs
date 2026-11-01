@@ -922,8 +922,8 @@ impl Workbench {
     fn on_panel_event(&mut self, ev: &PanelEvent, window: &mut Window, cx: &mut Context<Self>) {
         match ev {
             PanelEvent::OpenFile(path) | PanelEvent::OpenFilePinned(path) => {
-                let (path, pinned) = (path.clone(), matches!(ev, PanelEvent::OpenFilePinned(_)));
-                self.panel.update(cx, |p, cx| p.open_preview(path, pinned, window, cx));
+                let path = path.clone();
+                self.panel.update(cx, |p, cx| p.open_in_place(path, window, cx));
             }
         }
     }

@@ -134,11 +134,6 @@ impl FileTree {
         self.selected = Some(path.to_path_buf());
     }
 
-    /// 选中某个文件(不改变展开状态),用来高亮当前预览的文件。
-    pub fn select(&mut self, path: PathBuf) {
-        self.selected = Some(path);
-    }
-
     /// 递归把可见节点摊平成 (深度, 节点) 列表。
     fn flatten(&self) -> Vec<(usize, Node)> {
         fn go(t: &FileTree, dir: &Path, depth: usize, out: &mut Vec<(usize, Node)>) {
