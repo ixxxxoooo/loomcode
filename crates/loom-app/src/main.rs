@@ -14,6 +14,7 @@ mod subagent_card;
 mod subagent_tab;
 mod tool_present;
 mod wizard_card;
+mod wizard_input;
 mod appearance;
 mod app_icon;
 mod automation_page;

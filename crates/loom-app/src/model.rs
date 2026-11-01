@@ -18,6 +18,9 @@ pub struct SessionModel {
     pub wizard_step: std::collections::HashMap<String, usize>,
     /// 提问向导已选答案草稿(按提问 id → 每题的已选项)
     pub wizard_draft: std::collections::HashMap<String, Vec<Vec<String>>>,
+    /// 提问向导每题的「其他」输入框(按提问 id)与键盘焦点句柄,见 `wizard_input`
+    pub wizard_inputs: std::collections::HashMap<String, Vec<Entity<gpui_kit::component::input::InputState>>>,
+    pub wizard_focus: Option<FocusHandle>,
     /// 一次滚轮手势里累计的垂直位移与防抖任务是否已排队(用来吸附误触的微小滚动)
     /// 显示行(连续工具调用折成一行)与「条目下标 → 行下标」映射
     pub rows: Vec<crate::row_groups::Row>,
@@ -64,6 +67,8 @@ impl SessionModel {
             queued: Vec::new(),
             wizard_step: Default::default(),
             wizard_draft: Default::default(),
+            wizard_inputs: Default::default(),
+            wizard_focus: None,
             rows: Vec::new(),
             copied: None,
             turn_started: None,
@@ -404,12 +409,5 @@ impl SessionModel {
     pub fn wizard_go(&mut self, id: &str, step: usize, cx: &mut Context<Self>) {
         self.wizard_step.insert(id.to_string(), step);
         self.remeasure_id(id, cx);
-    }
-
-    /// 提问向导:提交全部答案。
-    pub fn wizard_submit(&mut self, id: &str, n_questions: usize, cx: &mut Context<Self>) {
-        let mut answers = self.wizard_draft.get(id).cloned().unwrap_or_default();
-        answers.resize(n_questions, Vec::new());
-        self.answer_question(id, answers, cx);
     }
 }

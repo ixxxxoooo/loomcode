@@ -314,6 +314,9 @@ impl Render for IdeWindow {
             let mode = view.map(|v| v.model.read(cx).state.mode.label().to_string());
             (wb.chat_parts(), project, name, mode, wb.settings.fused_ide, wb.active_branch(), wb.demo)
         };
+        if let Some((model, _)) = &parts {
+            crate::wizard_input::ensure(model, window, cx);
+        }
         let chat_col = v_flex().size_full().child(self.chat_tabs_bar(cx)).child(div().flex_1().min_h_0().child(if self.chat_empty { self.chat_empty_view(cx) } else { chat_panel(parts, branch.clone(), demo, cx) })).into_any_element();
         v_flex()
             .key_context("IdeWindow")

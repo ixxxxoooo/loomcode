@@ -1168,7 +1168,10 @@ impl Workbench {
         self.projects.get(v.project_ix).and_then(|p| p.branch.clone())
     }
 
-    fn chat_view(&self, cx: &mut Context<Self>) -> AnyElement {
+    fn chat_view(&self, window: &mut Window, cx: &mut Context<Self>) -> AnyElement {
+        if let Some((model, _)) = self.chat_parts() {
+            crate::wizard_input::ensure(&model, window, cx);
+        }
         chat_panel_with_footer(self.chat_parts(), crate::branch_bar::footer(self, cx), cx)
     }
 
@@ -1225,7 +1228,7 @@ impl Render for Workbench {
         let ide_shell = self.ide_shell.clone().filter(|_| self.ide && !full_settings);
         let show_ide = ide_shell.is_some();
         let center = match self.page {
-            Page::Chat => self.chat_view(cx),
+            Page::Chat => self.chat_view(window, cx),
             Page::Settings => settings::render(self, window, cx),
             Page::Canvas => self.canvas.clone().into_any_element(),
             Page::Automation => self.automation.clone().into_any_element(),
