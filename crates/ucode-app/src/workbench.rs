@@ -954,6 +954,8 @@ impl Workbench {
         // 新窗口首帧会回读本工作台,必须等当前更新结束后再创建
         cx.defer(move |cx| {
             let mut options = TitleBar::window_options();
+            // 红绿灯位置与 Agent 窗口一致
+            crate::window_header::apply_traffic_light(&mut options);
             options.window_bounds = Some(WindowBounds::Windowed(Bounds::centered(None, size(px(1280.), px(820.)), cx)));
             options.window_min_size = Some(size(px(640.), px(480.)));
             let owner = wb.clone();

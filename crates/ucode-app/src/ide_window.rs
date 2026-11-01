@@ -157,7 +157,8 @@ impl IdeWindow {
     /// 标题栏:左侧面板开关、居中的项目名搜索框、右侧对话栏开关 / 设置 / 回 Agent。
     fn title_bar(&self, project: String, fused: bool, cx: &mut Context<Self>) -> impl IntoElement {
         let t = cx.theme().clone();
-        TitleBar::new().child(
+        // 高度与 Agent 窗口的顶部行一致,切换按钮在两个窗口里位置不变
+        TitleBar::new().h(px(crate::window_header::HEADER_H)).child(
             h_flex().w_full().items_center().gap_1().pr_2()
                 .child(no_drag(Button::new("iw-left").small().ghost().icon(IconName::PanelLeft).tooltip("侧栏(⌘B)")
                     .on_click(cx.listener(|this, _, _, cx| { this.left_open = !this.left_open; cx.notify(); }))))

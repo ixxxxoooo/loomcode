@@ -108,10 +108,8 @@ fn main() {
             KeyBinding::new("shift-tab", workbench::CycleMode, Some("Workbench")),
         ]);
         let mut options = TitleBar::window_options();
-        // Agent 窗口没有整条标题栏,红绿灯要和 40px 顶部行垂直居中
-        if let Some(tb) = options.titlebar.as_mut() {
-            tb.traffic_light_position = Some(point(px(14.), px(14.)));
-        }
+        // 红绿灯位置与 IDE 窗口统一(顶部行 35px,参考 OhMyAgent)
+        window_header::apply_traffic_light(&mut options);
         // 调试用:UCODE_WINDOW_SIZE=宽,高 覆盖初始窗口大小(验证窄窗口布局)
         let (w, h) = std::env::var("UCODE_WINDOW_SIZE").ok().and_then(|v| v.split_once(',').and_then(|(a, b)| Some((a.trim().parse::<f32>().ok()?, b.trim().parse::<f32>().ok()?)))).unwrap_or((1360., 860.));
         options.window_bounds = Some(WindowBounds::Windowed(Bounds::centered(None, size(px(w), px(h)), cx)));

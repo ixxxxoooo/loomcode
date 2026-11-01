@@ -14,8 +14,20 @@ use gpui_kit::component::{ActiveTheme, InteractiveElementExt as _, Sizable, h_fl
 use gpui_kit::prelude::FluentBuilder as _;
 use gpui_kit::*;
 
-/// 顶部行高度。
-pub const HEADER_H: f32 = 40.;
+/// 顶部行高度:Agent 窗口与 IDE 窗口共用(参考 OhMyAgent 的 `TitlebarMetrics.height` = 35)。
+pub const HEADER_H: f32 = 35.;
+/// 红绿灯左上角位置(窗口左上角为原点),Agent 窗口与 IDE 窗口共用。
+/// 参考 OhMyAgent 实测:35pt 顶部行里红绿灯中心在约 16.5pt、首个按钮中心 x≈16pt。
+pub const TRAFFIC_LIGHT_POS: (f32, f32) = (9., 9.5);
+
+/// 把窗口选项里的红绿灯位置设成统一值。
+///
+/// 参数:`options` 窗口选项(需带标题栏选项,即来自 `TitleBar::window_options()`)。
+pub fn apply_traffic_light(options: &mut WindowOptions) {
+    if let Some(tb) = options.titlebar.as_mut() {
+        tb.traffic_light_position = Some(point(px(TRAFFIC_LIGHT_POS.0), px(TRAFFIC_LIGHT_POS.1)));
+    }
+}
 /// 给 macOS 红绿灯留的左边距。
 #[cfg(target_os = "macos")]
 const TRAFFIC_PAD: f32 = 80.;
