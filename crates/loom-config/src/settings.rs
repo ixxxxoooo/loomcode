@@ -144,11 +144,13 @@ impl Default for BrowserPrefs {
 pub struct ScmPrefs {
     /// Git 更改里超过这个大小(KB)的文件只列出不算 diff
     pub diff_max_kb: u32,
+    /// Diff 默认左右对比(关闭为统一视图);差异块右上角的切换按钮也改这一项
+    pub diff_split: bool,
 }
 
 impl Default for ScmPrefs {
     fn default() -> Self {
-        Self { diff_max_kb: 1024 }
+        Self { diff_max_kb: 1024, diff_split: true }
     }
 }
 

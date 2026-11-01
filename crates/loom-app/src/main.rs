@@ -69,6 +69,7 @@ mod ide_chat_tabs;
 mod ide_blame;
 mod ide_hover;
 mod swift_hl;
+mod diff_split;
 mod ide_gutter;
 mod lsp;
 mod ide_memory;
@@ -174,6 +175,10 @@ impl Global for UiPrefs {}
 /// 客户端偏好的完整全局副本:编辑器、终端、浏览器、文件检索等不持有工作台引用的地方读取。
 #[derive(Clone, Default)]
 pub struct Prefs(pub loom_config::AppSettings);
+
+/// 工作台的弱引用(各处的小控件改全局偏好时经它转交)。
+pub struct WorkbenchRef(pub WeakEntity<workbench::Workbench>);
+impl Global for WorkbenchRef {}
 impl Global for Prefs {}
 
 /// 当前偏好(尚未初始化时为默认值)。

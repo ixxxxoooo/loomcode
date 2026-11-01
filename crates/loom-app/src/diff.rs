@@ -47,14 +47,17 @@ pub fn render(lines: &[DiffLine], max_lines: usize, lang: &str, cx: &App) -> Div
 }
 
 /// 无外框版本(嵌在已有卡片里时用,避免框中框):整行底色直接铺到卡片边缘。
+/// 按偏好(设置 → 源代码管理)选左右对比或统一视图,顶部带切换条。
 pub fn render_flat(lines: &[DiffLine], max_lines: usize, lang: &str, cx: &App) -> Div {
-    render_with(lines, max_lines, false, lang, cx)
+    let split = crate::prefs(cx).scm.diff_split;
+    let body = if split { crate::diff_split::render_split(lines, max_lines, lang, cx) } else { render_with(lines, max_lines, false, lang, cx) };
+    v_flex().w_full().child(crate::diff_split::mode_bar(split, cx)).child(body)
 }
 
 /// 给要显示的各行算语法高亮:把这些行拼成一份文本整体解析,再按行切回(每行一组相对偏移的样式)。
 ///
 /// 参数:`lines` 要显示的行;`lang` 语言名(`text` 或解析失败则不着色);`cx` 取语法主题。
-fn line_styles(lines: &[DiffLine], lang: &str, cx: &App) -> Vec<Vec<(std::ops::Range<usize>, HighlightStyle)>> {
+pub(crate) fn line_styles(lines: &[DiffLine], lang: &str, cx: &App) -> Vec<Vec<(std::ops::Range<usize>, HighlightStyle)>> {
     let mut out = vec![Vec::new(); lines.len()];
     let text = lines.iter().map(|l| l.text.as_str()).collect::<Vec<_>>().join("\n");
     if lang == "text" || text.is_empty() || text.len() > 200_000 {

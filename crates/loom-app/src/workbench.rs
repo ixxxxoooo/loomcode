@@ -414,6 +414,7 @@ impl Workbench {
         cx.set_global(crate::UiPrefs::from_settings(&wb.settings));
         crate::appearance::apply_scrollbar(wb.settings.appearance.scrollbar, cx);
         cx.set_global(crate::Prefs(wb.settings.clone()));
+        cx.set_global(crate::WorkbenchRef(cx.weak_entity()));
         if !demo {
             wb.detect_claude(cx);
             wb.startup_update(cx);

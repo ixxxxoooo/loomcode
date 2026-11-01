@@ -2,7 +2,7 @@
 //!
 //! @author ixxxxoooo
 
-use super::widgets::{group, item, note, page_header, row, rows, stepper};
+use super::widgets::{group, item, note, page_header, row, rows, segmented, stepper};
 use crate::ui::{MONO, caption};
 use crate::workbench::Workbench;
 use gpui_kit::component::button::{Button, ButtonVariants};
@@ -43,6 +43,8 @@ pub fn render(wb: &Workbench, cx: &mut Context<Workbench>) -> AnyElement {
     v_flex().w_full()
         .child(page_header("源代码管理", "改动面板与 Git worktree 的行为", div(), cx))
         .child(group("改动面板", rows![
+            row("Diff 视图", "改动、提交详情里差异的默认呈现;差异块右上角也能随时切换", segmented("scm-diff-mode", vec![(true, "左右对比"), (false, "统一视图")], wb.settings.scm.diff_split, cx,
+                |this, v, cx| this.update_settings(cx, |s| s.scm.diff_split = v)), cx),
             row("Diff 大小上限", "超过这个大小的文件在改动面板里不计算 diff,避免卡顿", stepper("scm-diff", wb.settings.scm.diff_max_kb as i64, (256, 8192, 256), " KB", cx,
                 |this, v, cx| this.update_settings(cx, |s| s.scm.diff_max_kb = v as u32)), cx),
         ], cx))
