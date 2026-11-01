@@ -1,16 +1,23 @@
 //! 设置页:左侧分类导航 + 右侧表单。所有修改即时生效并写入 `~/.loomcode/settings.json`。
 //!
-//! 子模块:`widgets` 公共控件;`pages` 通用 / 对话 / 快捷键 / 关于;
-//! `claude_pages` 权限 / MCP / 钩子 / 记忆;`actions` 这些页面的 Workbench 方法。
+//! 子模块:`widgets` 公共控件;`forms` 表单状态;`pages` 通用 / 对话 / 快捷键 / 关于;
+//! `permissions_page` / `mcp_page` / `hooks_page` / `claude_pages`(记忆)Claude 配置页;
+//! `actions` / `mcp_actions` / `hook_actions` 这些页面的 Workbench 方法。
 //!
 //! @author ixxxxoooo
 
 mod actions;
 mod claude_pages;
+mod forms;
+mod hook_actions;
+mod hooks_page;
+mod mcp_actions;
+mod mcp_page;
 mod pages;
+mod permissions_page;
 mod widgets;
 
-pub use actions::{claude_home, new_rule_input};
+pub use forms::Forms;
 
 use crate::ui::icon;
 use crate::workbench::Workbench;
@@ -88,14 +95,15 @@ pub struct MemoryDoc {
 pub fn render(wb: &mut Workbench, window: &mut Window, cx: &mut Context<Workbench>) -> AnyElement {
     // 当前项目变了就按新项目重读 Claude 配置
     wb.ensure_claude_cfg();
+    wb.ensure_forms(window, cx);
     let t = cx.theme().clone();
     let tab = wb.settings_tab;
     let body = match tab {
         SettingsTab::General => pages::general(wb, cx),
         SettingsTab::Chat => pages::chat(wb, cx),
-        SettingsTab::Permissions => claude_pages::permissions(wb, cx),
-        SettingsTab::Mcp => claude_pages::mcp(wb, cx),
-        SettingsTab::Hooks => claude_pages::hooks(wb, cx),
+        SettingsTab::Permissions => permissions_page::permissions(wb, cx),
+        SettingsTab::Mcp => mcp_page::mcp(wb, cx),
+        SettingsTab::Hooks => hooks_page::hooks(wb, cx),
         SettingsTab::Memory => claude_pages::memory(wb, window, cx),
         SettingsTab::Shortcuts => pages::shortcuts(cx),
         SettingsTab::About => pages::about(wb, cx),

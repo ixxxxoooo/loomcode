@@ -99,6 +99,7 @@ pub fn seed(root: &Path) -> io::Result<Vec<PathBuf>> {
         make_project(root, "web-dashboard", dashboard_files(), None)?,
         make_project(root, "docs-site", docs_files(), Some(("docs/guide.md", "3. 部署\n")))?,
     ])
+    .and_then(|paths| seed_claude_home(root).map(|_| paths))
 }
 
 fn s(id: &str, title: &str, updated: &str, pinned: bool, badge: SessionBadge) -> SessionMeta {
@@ -160,7 +161,13 @@ mod tests {
     }
 }
 
-/// 演示模式下展示的 Claude 配置(不读取真实的 `~/.claude`)。
+/// 演示模式的家目录:`<沙盒>/home`,其中放假的 `~/.claude/settings.json` 与 `~/.claude.json`,
+/// 设置页的读写都落在这里,不碰真实的 `~/.claude`。
+pub fn claude_home(root: &Path) -> PathBuf {
+    root.join("home")
+}
+
+/// 演示用的用户层 `~/.claude/settings.json`。
 pub const DEMO_CLAUDE_SETTINGS: &str = r#"{
   "model": "sonnet",
   "env": { "ANTHROPIC_BASE_URL": "***", "HTTPS_PROXY": "***" },
@@ -171,11 +178,29 @@ pub const DEMO_CLAUDE_SETTINGS: &str = r#"{
   },
   "hooks": {
     "PreToolUse": [{ "matcher": "Bash", "hooks": [{ "type": "command", "command": "echo \"即将执行命令\"" }] }],
-    "PostToolUse": [{ "matcher": "Edit|Write", "hooks": [{ "type": "command", "command": "cargo fmt" }] }]
-  },
-  "mcpServers": {
-    "filesystem": { "command": "npx", "args": ["-y", "@modelcontextprotocol/server-filesystem", "."] },
-    "github": { "type": "http", "url": "https://api.githubcopilot.com/mcp/" },
-    "playwright": { "command": "npx", "args": ["@playwright/mcp@latest"], "disabled": true }
+    "PostToolUse": [{ "matcher": "Edit|Write", "hooks": [{ "type": "command", "command": "cargo fmt", "timeout": 30 }] }]
   }
 }"#;
+
+/// 生成演示家目录(每次启动重置):用户层 MCP 在 `~/.claude.json` 顶层,
+/// router-demo 另有一个本地层 MCP 并禁用了 playwright。
+pub fn seed_claude_home(root: &Path) -> io::Result<PathBuf> {
+    let home = claude_home(root);
+    let _ = fs::remove_dir_all(&home);
+    fs::create_dir_all(home.join(".claude"))?;
+    fs::write(home.join(".claude/settings.json"), DEMO_CLAUDE_SETTINGS)?;
+    let router = root.join("router-demo").to_string_lossy().to_string();
+    let claude_json = serde_json::json!({
+        "mcpServers": {
+            "filesystem": { "type": "stdio", "command": "npx", "args": ["-y", "@modelcontextprotocol/server-filesystem", "."] },
+            "github": { "type": "http", "url": "https://api.githubcopilot.com/mcp/" },
+            "playwright": { "type": "stdio", "command": "npx", "args": ["@playwright/mcp@latest"] }
+        },
+        "projects": { router: {
+            "mcpServers": { "router-docs": { "type": "sse", "url": "http://localhost:4000/sse" } },
+            "disabledMcpServers": ["playwright"]
+        } }
+    });
+    fs::write(home.join(".claude.json"), serde_json::to_string_pretty(&claude_json).map_err(io::Error::other)?)?;
+    Ok(home)
+}

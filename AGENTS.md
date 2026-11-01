@@ -8,7 +8,7 @@ Rust + gpui-kit 0.8 的 Claude Code 工作台。只支持 Claude Code,直连本�
 | --- | --- |
 | `loom-core` | 与界面无关的数据模型:时间线条目、`AgentEvent`/`AgentCommand`、`SessionState` 归约器、`AgentBackend` 抽象 |
 | `loom-claude` | 真实后端:启动参数、stream-json 翻译器、权限应答、历史读取与回放、`LazyBackend` |
-| `loom-demo` | 演示后端:脚本化场景(36 个)与沙盒项目 |
+| `loom-demo` | 演示后端:脚本化场景(36 个)与沙盒项目;沙盒里的 `home/` 是演示用的假 `~/.claude` 与 `~/.claude.json`,设置页的读写都落在这里 |
 | `loom-config` | `~/.loomcode/settings.json` 与 Claude 配置(权限规则、MCP、Hooks)读写 |
 | `loom-canvas` | Canvas 画布文档模型、校验与存储 |
 | `loom-automation` | 自动化的计划、存储与运行器 |

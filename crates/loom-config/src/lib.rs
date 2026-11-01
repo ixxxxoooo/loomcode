@@ -7,6 +7,6 @@ pub mod legacy;
 pub mod settings;
 pub mod ui_state;
 
-pub use claude::{ClaudeConfig, HookEntry, McpServer, PermissionRules, Rule, Scope};
+pub use claude::{ClaudeConfig, HookEntry, LayerSettings, McpServer, McpSpec, PermissionRules, Rule, Scope};
 pub use settings::{AppSettings, ThemeChoice};
 pub use ui_state::UiState;

@@ -4,7 +4,8 @@
 
 use super::load::claude_json_mcp;
 use super::*;
-use std::path::{Path, PathBuf};
+use std::path::Path;
+pub(super) use super::tests_write::{put, temp_dir};
 
 const SAMPLE: &str = r#"{
     "model": "opus",
@@ -21,26 +22,13 @@ fn texts(rules: &[Rule]) -> Vec<&str> {
     rules.iter().map(|r| r.text.as_str()).collect()
 }
 
-/// 每个测试用独立临时目录。
-fn temp_dir(tag: &str) -> PathBuf {
-    let dir = std::env::temp_dir().join(format!("loom-claude-{tag}-{}", std::process::id()));
-    let _ = std::fs::remove_dir_all(&dir);
-    std::fs::create_dir_all(&dir).unwrap();
-    dir
-}
-
-fn put(path: &Path, text: &str) {
-    std::fs::create_dir_all(path.parent().unwrap()).unwrap();
-    std::fs::write(path, text).unwrap();
-}
-
 #[test]
 fn 解析权限与钩子() {
     let c = parse_settings(SAMPLE, Scope::User);
     assert_eq!(texts(&c.permissions.allow), vec!["Bash(git status)", "Read"]);
     assert_eq!(c.permissions.deny.len(), 1);
     assert!(c.permissions.allow.iter().all(|r| r.scope == Scope::User));
-    assert_eq!(c.hooks, vec![HookEntry { event: "PreToolUse".into(), matcher: "Bash".into(), command: "echo hi".into(), scope: Scope::User }]);
+    assert_eq!(c.hooks, vec![HookEntry { event: "PreToolUse".into(), matcher: "Bash".into(), kind: "command".into(), command: "echo hi".into(), timeout: None, scope: Scope::User }]);
     assert_eq!(c.default_model.as_deref(), Some("opus"));
 }
 
@@ -54,8 +42,9 @@ fn 环境变量只保留名称() {
 #[test]
 fn 解析_mcp_服务器() {
     let c = parse_settings(SAMPLE, Scope::Project);
-    assert_eq!(c.mcp_servers[0], McpServer { name: "fs".into(), transport: "stdio".into(), target: "npx -y server-fs".into(), enabled: true, scope: Scope::Project });
-    assert_eq!(c.mcp_servers[1].transport, "http");
+    assert_eq!(c.mcp_servers[0].spec.target(), "npx -y server-fs");
+    assert_eq!(c.mcp_servers[0].scope, Scope::Project);
+    assert_eq!(c.mcp_servers[1].spec.transport, "http");
     assert!(!c.mcp_servers[1].enabled);
 }
 
@@ -73,11 +62,11 @@ fn 合并按来源层去重() {
 #[test]
 fn 读取_claude_json_的用户与本地_mcp() {
     let json = r#"{"mcpServers":{"u":{"command":"a"}},"projects":{"/p":{"mcpServers":{"l":{"url":"https://l"}}}}}"#;
-    let (local, user) = claude_json_mcp(json, Some(Path::new("/p")));
-    assert_eq!(local[0].name, "l");
-    assert_eq!(local[0].scope, Scope::Local);
-    assert_eq!(user[0].scope, Scope::User);
-    assert!(claude_json_mcp(json, None).0.is_empty());
+    let cj = claude_json_mcp(json, Some(Path::new("/p/")));
+    assert_eq!(cj.local[0].name, "l");
+    assert_eq!(cj.local[0].scope, Scope::Local);
+    assert_eq!(cj.user[0].scope, Scope::User);
+    assert!(claude_json_mcp(json, None).local.is_empty());
 }
 
 #[test]
@@ -99,33 +88,39 @@ fn 分层加载与_mcp_优先级() {
     assert_eq!(c.permissions.deny[0], Rule { text: "P".into(), scope: Scope::Project });
     assert_eq!(c.permissions.ask[0].scope, Scope::Local);
     let dup = c.mcp_servers.iter().find(|m| m.name == "dup").unwrap();
-    assert_eq!((dup.target.as_str(), dup.scope), ("local", Scope::Local));
+    assert_eq!((dup.spec.target(), dup.scope), ("local".to_string(), Scope::Local));
     assert_eq!(c.mcp_servers.len(), 3);
     let _ = std::fs::remove_dir_all(home);
 }
 
 #[test]
-fn 增删权限规则保留其余字段() {
-    let dir = temp_dir("rw");
-    let path = dir.join(".claude/settings.local.json");
-    put(&path, r#"{"model":"opus"}"#);
-    add_permission_rule(&path, "allow", "Bash(ls)").unwrap();
-    add_permission_rule(&path, "allow", "Bash(ls)").unwrap();
-    let c = parse_settings(&std::fs::read_to_string(&path).unwrap(), Scope::Local);
-    assert_eq!(texts(&c.permissions.allow), vec!["Bash(ls)"]);
-    assert_eq!(c.default_model.as_deref(), Some("opus"));
-    remove_permission_rule(&path, "allow", "Bash(ls)").unwrap();
-    assert!(parse_settings(&std::fs::read_to_string(&path).unwrap(), Scope::Local).permissions.allow.is_empty());
-    assert!(!path.with_extension("json.tmp").exists());
-    let _ = std::fs::remove_dir_all(dir);
+fn 解析钩子类型超时与层设置() {
+    let json = r#"{"hooks":{"Stop":[{"hooks":[{"type":"http","url":"https://h","timeout":5}]}]},
+        "permissions":{"defaultMode":"plan","additionalDirectories":["../lib"],"disableBypassPermissionsMode":"disable"},
+        "sandbox":{"enabled":true},"enabledMcpjsonServers":["a"]}"#;
+    let c = parse_settings(json, Scope::Project);
+    assert_eq!((c.hooks[0].kind.as_str(), c.hooks[0].command.as_str(), c.hooks[0].timeout), ("http", "https://h", Some(5)));
+    let l = c.layer(Scope::Project);
+    assert_eq!(l.default_mode.as_deref(), Some("plan"));
+    assert_eq!(l.additional_dirs, vec!["../lib"]);
+    assert!(l.disable_bypass);
+    assert_eq!(l.sandbox, Some(true));
+    assert_eq!(l.enabled_mcpjson, vec!["a"]);
+    assert_eq!(c.layer(Scope::User), LayerSettings::default());
 }
 
 #[test]
-fn 非法_json_不会被覆盖() {
-    let dir = temp_dir("bad");
-    let path = dir.join("settings.json");
-    put(&path, "{ 坏掉的");
-    assert!(add_permission_rule(&path, "allow", "X").is_err());
-    assert_eq!(std::fs::read_to_string(&path).unwrap(), "{ 坏掉的");
-    let _ = std::fs::remove_dir_all(dir);
+fn mcp_启用与批准状态() {
+    let home = temp_dir("state");
+    let proj = home.join("proj");
+    put(&proj.join(".mcp.json"), r#"{"mcpServers":{"ok":{"command":"a"},"pending":{"command":"b"},"off":{"command":"c"}}}"#);
+    put(&proj.join(".claude/settings.local.json"), r#"{"enabledMcpjsonServers":["ok"],"disabledMcpjsonServers":["off"]}"#);
+    put(&home.join(".claude.json"), &format!(r#"{{"mcpServers":{{"u":{{"command":"u"}}}},"projects":{{"{}":{{"disabledMcpServers":["u"]}}}}}}"#, proj.display()));
+    let c = load(&home, Some(&proj));
+    let get = |n: &str| c.mcp_servers.iter().find(|m| m.name == n).unwrap().clone();
+    assert!(get("ok").enabled && !get("ok").needs_approval);
+    assert!(get("pending").enabled && get("pending").needs_approval);
+    assert!(!get("off").enabled && !get("off").needs_approval);
+    assert!(!get("u").enabled);
+    let _ = std::fs::remove_dir_all(home);
 }

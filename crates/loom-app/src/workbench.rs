@@ -25,7 +25,6 @@ use loom_config::{AppSettings, ClaudeConfig, ThemeChoice, UiState};
 use loom_core::*;
 use loom_claude::{ClaudeBackend, LazyBackend};
 use loom_demo::DemoBackend;
-use gpui_kit::component::input::InputState;
 
 actions!(loomcode, [TogglePalette, ToggleLeft, ToggleRight, OpenSettings, CycleMode, NewSession, Escape, SaveFile, ToggleIde]);
 
@@ -135,11 +134,14 @@ pub struct Workbench {
     pub claude_cfg: ClaudeConfig,
     /// `claude_cfg` 是按哪个项目根加载的(`None` 表示只有用户层)
     pub claude_cfg_root: Option<String>,
-    /// 权限页新增规则写入的层
-    pub rule_scope: loom_config::Scope,
+    /// Claude 配置所在的家目录(演示模式指向沙盒)
+    pub claude_home: PathBuf,
+    /// 权限 / MCP / 钩子页当前选中的配置层
+    pub cfg_scope: loom_config::Scope,
+    /// 设置页表单的输入框状态(首次进入设置页时创建)
+    pub settings_forms: Option<settings::Forms>,
     pub settings_tab: SettingsTab,
     pub memory: Option<MemoryDoc>,
-    pub rule_input: Entity<InputState>,
     pub claude_info: Option<String>,
     pub palette: Option<Entity<Palette>>,
     _palette_sub: Option<Subscription>,
@@ -181,12 +183,9 @@ impl Workbench {
         let settings = AppSettings::load(&settings_path);
         let ui_state_path = settings_path.with_file_name("state.json");
         let ui_state = UiState::load(&ui_state_path);
-        let claude_cfg = if demo {
-            loom_config::claude::parse_settings(loom_demo::workspace::DEMO_CLAUDE_SETTINGS, loom_config::Scope::User)
-        } else {
-            loom_config::claude::load(&settings::claude_home(), None)
-        };
-        let rule_input = settings::new_rule_input(window, cx);
+        // 演示模式的 ~/.claude 在沙盒里(seed 时生成),读写走同一套代码
+        let claude_home = if demo { loom_demo::workspace::claude_home(&demo_root) } else { std::env::var_os("HOME").map(PathBuf::from).unwrap_or_default() };
+        let claude_cfg = loom_config::claude::load(&claude_home, None);
         let focus = cx.focus_handle();
         let panel_root = if demo { demo_root.to_string_lossy().to_string() } else { std::env::var("HOME").unwrap_or_default() };
         let panel = cx.new(|cx| RightPanel::new(panel_root, demo, window, cx));
@@ -247,10 +246,11 @@ impl Workbench {
             view_order: Vec::new(),
             claude_cfg,
             claude_cfg_root: None,
-            rule_scope: loom_config::Scope::Local,
+            claude_home,
+            cfg_scope: loom_config::Scope::Local,
+            settings_forms: None,
             settings_tab: SettingsTab::General,
             memory: None,
-            rule_input,
             claude_info: None,
             palette: None,
             _palette_sub: None,

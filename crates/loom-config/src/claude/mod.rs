@@ -1,18 +1,27 @@
-//! Claude Code 配置的解析与受控写入:权限规则、钩子、MCP 服务器、环境变量。
+//! Claude Code 配置的解析与受控写入:权限、钩子、MCP 服务器、环境变量。
 //!
 //! 每一项都带「来源层」(用户 / 项目 / 本地),界面据此显示来源并把修改写回对应文件。
-//! 解析全部是纯函数,便于测试;读文件在 `load`,写文件在 `write`。
+//! 子模块:`parse` 纯函数解析;`load` 读盘合并;`write` JSON 受控写入(保留未知字段、原子替换、备份);
+//! `mcp_write` / `hooks_write` 各自的增删改。
 //!
 //! @author ixxxxoooo
 
+mod hooks_write;
 mod load;
+mod mcp_write;
+mod parse;
 mod write;
 
 #[cfg(test)]
 mod tests;
+#[cfg(test)]
+mod tests_write;
 
+pub use hooks_write::{HOOK_EVENTS, add_hook, remove_hook};
 pub use load::{load, scope_file};
-pub use write::{add_permission_rule, remove_permission_rule};
+pub use mcp_write::{McpLocation, parse_mcp_paste, remove_mcp, set_mcp_enabled, upsert_mcp, upsert_mcp_raw, validate as validate_mcp};
+pub use parse::{merge, parse_mcp_servers, parse_settings};
+pub use write::{add_permission_rule, backup_path, edit_json, remove_permission_rule, set_string_list, set_value};
 
 use serde_json::Value;
 
@@ -71,6 +80,25 @@ impl PermissionRules {
     }
 }
 
+/// 单个 `settings.json` 层里的非列表型设置(权限页、MCP 启停用)。
+#[derive(Debug, Clone, Default, PartialEq)]
+pub struct LayerSettings {
+    /// `permissions.defaultMode`
+    pub default_mode: Option<String>,
+    /// `permissions.additionalDirectories`
+    pub additional_dirs: Vec<String>,
+    /// `permissions.disableBypassPermissionsMode == "disable"`
+    pub disable_bypass: bool,
+    /// `sandbox.enabled`
+    pub sandbox: Option<bool>,
+    /// `enableAllProjectMcpServers`
+    pub enable_all_project_mcp: bool,
+    /// `enabledMcpjsonServers`
+    pub enabled_mcpjson: Vec<String>,
+    /// `disabledMcpjsonServers`
+    pub disabled_mcpjson: Vec<String>,
+}
+
 /// 一条钩子。
 #[derive(Debug, Clone, PartialEq)]
 pub struct HookEntry {
@@ -78,19 +106,40 @@ pub struct HookEntry {
     pub event: String,
     /// 工具匹配,如 `Bash`;空表示全部
     pub matcher: String,
+    /// 处理器类型:`command` / `http` / `prompt`…
+    pub kind: String,
+    /// 命令(command)、URL(http)或提示词(prompt)
     pub command: String,
+    /// 超时(秒)
+    pub timeout: Option<u64>,
     pub scope: Scope,
+}
+
+/// MCP 服务器的可编辑部分;其余字段(env、headers…)写入时原样保留。
+#[derive(Debug, Clone, Default, PartialEq)]
+pub struct McpSpec {
+    /// `stdio` / `http` / `sse`
+    pub transport: String,
+    pub command: String,
+    pub args: Vec<String>,
+    pub url: String,
+}
+
+impl McpSpec {
+    /// 列表里显示的目标:URL 或「命令 参数」。
+    pub fn target(&self) -> String {
+        if self.transport == "stdio" { format!("{} {}", self.command, self.args.join(" ")).trim().to_string() } else { self.url.clone() }
+    }
 }
 
 /// 一个 MCP 服务器。
 #[derive(Debug, Clone, PartialEq)]
 pub struct McpServer {
     pub name: String,
-    /// `stdio` / `http` / `sse`
-    pub transport: String,
-    /// 命令行(stdio)或 URL
-    pub target: String,
+    pub spec: McpSpec,
     pub enabled: bool,
+    /// 项目层(`.mcp.json`)服务器尚未被批准
+    pub needs_approval: bool,
     pub scope: Scope,
 }
 
@@ -103,87 +152,17 @@ pub struct ClaudeConfig {
     /// 环境变量名(值不读取)
     pub env_names: Vec<String>,
     pub default_model: Option<String>,
+    /// 各层的非列表型设置
+    pub layers: Vec<(Scope, LayerSettings)>,
+}
+
+impl ClaudeConfig {
+    /// 取某一层的设置;该层不存在时返回默认值。
+    pub fn layer(&self, scope: Scope) -> LayerSettings {
+        self.layers.iter().find(|(s, _)| *s == scope).map(|(_, l)| l.clone()).unwrap_or_default()
+    }
 }
 
 fn string_list(v: Option<&Value>) -> Vec<String> {
     v.and_then(Value::as_array).map(|a| a.iter().filter_map(|x| x.as_str().map(str::to_string)).collect()).unwrap_or_default()
-}
-
-/// 解析一份 `settings.json`,所有条目标记为 `scope` 层。
-///
-/// 参数:`json` 文件文本;`scope` 来源层。返回:解析结果,格式错误时返回空配置。
-pub fn parse_settings(json: &str, scope: Scope) -> ClaudeConfig {
-    let Ok(v) = serde_json::from_str::<Value>(json) else { return ClaudeConfig::default() };
-    let perms = v.get("permissions");
-    let rules = |k: &str| string_list(perms.and_then(|p| p.get(k))).into_iter().map(|text| Rule { text, scope }).collect();
-    let permissions = PermissionRules { allow: rules("allow"), deny: rules("deny"), ask: rules("ask") };
-    let mut hooks = Vec::new();
-    if let Some(map) = v.get("hooks").and_then(Value::as_object) {
-        for (event, groups) in map {
-            for g in groups.as_array().into_iter().flatten() {
-                let matcher = g.get("matcher").and_then(Value::as_str).unwrap_or("").to_string();
-                for h in g.get("hooks").and_then(Value::as_array).into_iter().flatten() {
-                    if let Some(cmd) = h.get("command").and_then(Value::as_str) {
-                        hooks.push(HookEntry { event: event.clone(), matcher: matcher.clone(), command: cmd.to_string(), scope });
-                    }
-                }
-            }
-        }
-    }
-    let env_names = v.get("env").and_then(Value::as_object).map(|m| m.keys().cloned().collect()).unwrap_or_default();
-    let mcp_servers = v.get("mcpServers").map(|m| parse_mcp_servers(m, scope)).unwrap_or_default();
-    ClaudeConfig { permissions, hooks, mcp_servers, env_names, default_model: v.get("model").and_then(Value::as_str).map(str::to_string) }
-}
-
-/// 解析 `mcpServers` 对象(`.mcp.json`、`~/.claude.json` 通用)。
-///
-/// 参数:`v` 为 `mcpServers` 的值;`scope` 来源层。返回:服务器列表。
-pub fn parse_mcp_servers(v: &Value, scope: Scope) -> Vec<McpServer> {
-    let Some(map) = v.as_object() else { return Vec::new() };
-    map.iter()
-        .map(|(name, cfg)| {
-            let url = cfg.get("url").and_then(Value::as_str);
-            let transport = cfg.get("type").and_then(Value::as_str).map(str::to_string).unwrap_or_else(|| if url.is_some() { "http".into() } else { "stdio".into() });
-            let target = match url {
-                Some(u) => u.to_string(),
-                None => {
-                    let cmd = cfg.get("command").and_then(Value::as_str).unwrap_or("");
-                    let args = string_list(cfg.get("args")).join(" ");
-                    format!("{cmd} {args}").trim().to_string()
-                }
-            };
-            McpServer { name: name.clone(), transport, target, enabled: !cfg.get("disabled").and_then(Value::as_bool).unwrap_or(false), scope }
-        })
-        .collect()
-}
-
-/// 合并两份配置:规则按「文本 + 来源层」去重;MCP 同名保留先出现的(调用方按优先级从高到低传入)。
-///
-/// 参数:`base` 已有配置;`over` 追加的配置。返回:合并结果;`model` 以后者为准。
-pub fn merge(mut base: ClaudeConfig, over: ClaudeConfig) -> ClaudeConfig {
-    fn extend_rules(dst: &mut Vec<Rule>, src: Vec<Rule>) {
-        for r in src {
-            if !dst.contains(&r) {
-                dst.push(r);
-            }
-        }
-    }
-    extend_rules(&mut base.permissions.allow, over.permissions.allow);
-    extend_rules(&mut base.permissions.deny, over.permissions.deny);
-    extend_rules(&mut base.permissions.ask, over.permissions.ask);
-    base.hooks.extend(over.hooks);
-    for s in over.mcp_servers {
-        if !base.mcp_servers.iter().any(|m| m.name == s.name) {
-            base.mcp_servers.push(s);
-        }
-    }
-    for n in over.env_names {
-        if !base.env_names.contains(&n) {
-            base.env_names.push(n);
-        }
-    }
-    if over.default_model.is_some() {
-        base.default_model = over.default_model;
-    }
-    base
 }
