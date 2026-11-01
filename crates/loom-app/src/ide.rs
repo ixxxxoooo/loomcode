@@ -401,6 +401,8 @@ fn load(path: &Path, window: &mut Window, cx: &mut Context<IdeView>) -> Result<I
     // 光标移动 / 滚动时编辑器只会 notify(没有事件):刷新括号配对高亮与缩略图视口
     let key2 = path.to_path_buf();
     let sub2 = cx.observe(&editor, move |this: &mut IdeView, ed, cx| {
+        // 光标移动 / 滚动:收起悬停卡片
+        this.hover_check_moved(&key2, cx);
         if let Some(doc) = this.docs.get_mut(&key2).filter(|_| crate::prefs(cx).editor.bracket_match) {
             crate::ide_brackets::refresh(&ed, &mut doc.bracket_marks, &mut doc.bracket_pair, cx);
         }

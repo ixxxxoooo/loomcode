@@ -29,11 +29,18 @@ pub fn render(wb: &Workbench, cx: &mut Context<Workbench>) -> AnyElement {
             switch_row("ed-syntax", "语法高亮", "之后新打开的文件生效;关闭可以让超大文件更流畅", e.syntax_highlight, cx, |this, v, cx| this.update_settings(cx, |s| s.editor.syntax_highlight = v)),
         ], cx))
         .child(group("Git 追溯", rows![
-            switch_row("ed-blame-inline", "行内追溯", "光标所在行的末尾淡淡地显示「作者, 时间 • 提交说明」,悬停看完整信息,点击复制提交哈希", e.blame_inline, cx, |this, v, cx| this.update_settings(cx, |s| s.editor.blame_inline = v)),
+            switch_row("ed-blame-inline", "行内追溯", "光标所在行的末尾淡淡地显示「作者, 时间 • 提交说明」,纯展示,不可点击", e.blame_inline, cx, |this, v, cx| this.update_settings(cx, |s| s.editor.blame_inline = v)),
             switch_row("ed-blame-gutter", "追溯栏", "在编辑器左侧逐行显示最后修改该行的作者与时间(也可在编辑器面包屑栏的按钮里临时开关);自动换行时不显示", e.blame_gutter, cx, |this, v, cx| this.update_settings(cx, |s| s.editor.blame_gutter = v)),
         ], cx))
         .child(group("语言智能", rows![
             switch_row("ed-lsp", "语言服务器(LSP)", "悬停查看类型与文档、⌘ 悬停出下划线并 ⌘ 点击(或 F12)跳转到定义、补全、错误与警告波浪线;按文件类型自动使用本机已装的 rust-analyzer / Pyright / gopls / SourceKit-LSP / clangd / typescript-language-server,之后新打开的文件生效", e.lsp, cx, |this, v, cx| this.update_settings(cx, |s| s.editor.lsp = v)),
+        ], cx))
+        .child(group("悬停提示", rows![
+            row("出现延迟", "鼠标停住多久后弹出类型与文档卡片(Zed 默认 300);编辑器内部固定先等 150ms,不能更短", stepper("ed-hover-delay", e.hover_delay_ms as i64, (150, 1000, 50), " ms", cx,
+                |this, v, cx| this.update_settings(cx, |s| s.editor.hover_delay_ms = v.clamp(150, 1000) as u16)), cx),
+            switch_row("ed-hover-sticky", "粘性卡片", "鼠标朝卡片靠近时保持展开,可以移进去选中文字、滚动;关闭后一离开符号就收起", e.hover_sticky, cx, |this, v, cx| this.update_settings(cx, |s| s.editor.hover_sticky = v)),
+            row("收起延迟", "鼠标离开后等多久收起(仅粘性卡片有效,Zed 默认 300)", stepper("ed-hover-hide", e.hover_hiding_delay_ms as i64, (0, 1000, 50), " ms", cx,
+                |this, v, cx| this.update_settings(cx, |s| s.editor.hover_hiding_delay_ms = v.clamp(0, 1000) as u16)), cx),
         ], cx))
         .child(group("编辑", rows![
             row("缩进宽度", "Tab 键缩进使用的列数", segmented("ed-tab", vec![(2u8, "2"), (4u8, "4"), (8u8, "8")], e.tab_size, cx,

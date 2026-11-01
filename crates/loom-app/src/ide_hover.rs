@@ -8,6 +8,7 @@
 //! @author ixxxxoooo
 
 use crate::ide::{IdeDoc, IdeView};
+use gpui_kit::component::input::EditorState;
 use gpui_kit::component::ActiveTheme;
 use gpui_kit::component::text::{TextView, TextViewStyle};
 use gpui_kit::*;
@@ -22,10 +23,6 @@ const MAX_H: f32 = 320.;
 pub const MAX_HOVER_BYTES: usize = 100_000;
 /// 卡片与符号之间的间距(与 Zed 的 `HOVER_POPOVER_GAP` 一致)。
 const GAP: f32 = 10.;
-/// 鼠标离开后多久收起(与 Zed 的 `hover_popover_hiding_delay` 一致)。
-const HIDING_DELAY: std::time::Duration = std::time::Duration::from_millis(300);
-/// 从鼠标停住到卡片出现的总延迟(与 Zed 的 `hover_popover_delay` 一致);请求在其前半发出,耗时藏在延迟里。
-pub const SHOW_DELAY: std::time::Duration = std::time::Duration::from_millis(300);
 
 /// 悬停卡片的界面状态:收起计时、鼠标到卡片的最近距离(判断是否在靠近卡片)。
 #[derive(Default)]
@@ -39,6 +36,14 @@ pub struct HoverUi {
 pub struct HoverCard {
     pub range: Range<usize>,
     pub markdown: SharedString,
+    /// 卡片出现时的 (选区起, 选区止, 视口首行):之后任何一项变了(光标移动 / 滚动)就收起
+    pub anchor: (usize, usize, usize),
+}
+
+/// 编辑器当前的 (选区起, 选区止, 视口首行)。
+pub fn view_anchor(ed: &EditorState, ) -> (usize, usize, usize) {
+    let sel = ed.selected_range();
+    (sel.start, sel.end, ed.visible_row_range().map_or(0, |r| r.start))
 }
 
 /// 把 LSP 悬停内容拼成 Markdown。带语言的片段包成代码块,方便着色;全空白返回 `None`。
@@ -84,7 +89,10 @@ fn distance_to(b: Bounds<Pixels>, p: Point<Pixels>) -> Pixels {
 
 impl IdeView {
     /// 写入 / 清除某文档的悬停卡片。
-    pub(crate) fn set_hover_card(&mut self, path: &Path, card: Option<HoverCard>, cx: &mut Context<Self>) {
+    pub(crate) fn set_hover_card(&mut self, path: &Path, mut card: Option<HoverCard>, cx: &mut Context<Self>) {
+        if let (Some(c), Some(doc)) = (card.as_mut(), self.docs.get(path)) {
+            c.anchor = view_anchor(doc.editor.read(cx));
+        }
         if card.is_some() {
             self.hover_ui.hide_task = None;
             self.hover_ui.closest = None;
@@ -105,6 +113,13 @@ impl IdeView {
             return;
         }
         let d = distance_to(card, pos);
+        // 非粘性:离开符号与卡片就收起
+        let (sticky, hide_ms) = { let e = crate::prefs(cx).editor; (e.hover_sticky, e.hover_hiding_delay_ms) };
+        if !sticky {
+            self.set_hover_card(path, None, cx);
+            return;
+        }
+        let ui = &mut self.hover_ui;
         let closer = !ui.closest.is_some_and(|c| d > c + px(4.));
         if closer {
             ui.closest = Some(d.min(ui.closest.unwrap_or(d)));
@@ -114,12 +129,22 @@ impl IdeView {
         }
         let path = path.to_path_buf();
         ui.hide_task = Some(cx.spawn(async move |this, cx| {
-            cx.background_executor().timer(HIDING_DELAY).await;
+            cx.background_executor().timer(std::time::Duration::from_millis(u64::from(hide_ms))).await;
             let _ = this.update(cx, |this, cx| {
                 this.hover_ui.hide_task.take().map(Task::detach);
                 this.set_hover_card(&path, None, cx);
             });
         }));
+    }
+
+    /// 光标移动或滚动后(选区 / 视口首行与卡片出现时不同)收起卡片,与 Zed 一致。
+    pub(crate) fn hover_check_moved(&mut self, path: &Path, cx: &App) -> bool {
+        let Some(doc) = self.docs.get_mut(path) else { return false };
+        let moved = doc.hover.as_ref().is_some_and(|c| c.anchor != view_anchor(doc.editor.read(cx)));
+        if moved {
+            doc.hover = None;
+        }
+        moved
     }
 
     /// 当前卡片是否已经覆盖这个偏移(覆盖就不必重复向语言服务器请求)。

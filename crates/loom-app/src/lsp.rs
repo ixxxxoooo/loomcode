@@ -153,11 +153,11 @@ impl HoverProvider for LspProvider {
                     Ok(Some(hover))
                 })
                 .await;
-            // 照 Zed:总延迟 300ms,编辑器已等过一半,请求耗时算在剩下的一半里,先到也要等够
-            let spent = started.elapsed();
-            let half = crate::ide_hover::SHOW_DELAY / 2;
-            if spent < half {
-                cx.background_executor().timer(half - spent).await;
+                        let spent = started.elapsed();
+            // 编辑器已固定等过 150ms,剩下的延迟从偏好里取;请求耗时算在里面,先到也要等够
+            let wait = std::time::Duration::from_millis(u64::from(cx.update(|cx| crate::prefs(cx).editor.hover_delay_ms)).saturating_sub(150));
+            if spent < wait {
+                cx.background_executor().timer(wait - spent).await;
             }
             let card = match res {
                 Ok(Some(h)) => crate::ide_hover::hover_markdown(&h).map(|md| {
@@ -165,7 +165,7 @@ impl HoverProvider for LspProvider {
                         Some(r) => rope.position_to_offset(&r.start)..rope.position_to_offset(&r.end),
                         None => rope.word_range(offset).unwrap_or(offset..offset),
                     };
-                    crate::ide_hover::HoverCard { range, markdown: md.into() }
+                    crate::ide_hover::HoverCard { range, markdown: md.into(), anchor: (0, 0, 0) }
                 }),
                 _ => None,
             };

@@ -76,11 +76,17 @@ pub struct EditorPrefs {
     pub blame_gutter: bool,
     /// 语言服务器(LSP):悬停语义、跳转到定义、补全、诊断(之后新打开的文件生效)
     pub lsp: bool,
+    /// 悬停提示:鼠标停住多久后出现(毫秒,150–1000;编辑器内部已固定等 150ms,更小的值无效)
+    pub hover_delay_ms: u16,
+    /// 悬停提示粘性:鼠标朝卡片靠近时保持展开,可以移进去选中文字、滚动(关闭则一离开符号就收起)
+    pub hover_sticky: bool,
+    /// 悬停提示:鼠标离开后多久收起(毫秒,仅粘性开启时有效)
+    pub hover_hiding_delay_ms: u16,
 }
 
 impl Default for EditorPrefs {
     fn default() -> Self {
-        Self { minimap: true, minimap_slider_always: false, minimap_width: 100, minimap_git: true, line_numbers: true, folding: true, soft_wrap: false, tab_size: 4, bracket_match: true, auto_save: AutoSave::Off, max_file_kb: 1024, syntax_highlight: true, blame_inline: true, blame_gutter: false, lsp: true }
+        Self { minimap: true, minimap_slider_always: false, minimap_width: 100, minimap_git: true, line_numbers: true, folding: true, soft_wrap: false, tab_size: 4, bracket_match: true, auto_save: AutoSave::Off, max_file_kb: 1024, syntax_highlight: true, blame_inline: true, blame_gutter: false, lsp: true, hover_delay_ms: 300, hover_sticky: true, hover_hiding_delay_ms: 300 }
     }
 }
 
