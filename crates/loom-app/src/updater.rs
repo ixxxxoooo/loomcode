@@ -108,7 +108,10 @@ impl Workbench {
             return;
         };
         match update::launch_replacer(&staged, &bundle) {
-            Ok(()) => cx.quit(),
+            Ok(()) => {
+                loom_diag::crash::clean_exit("应用更新后重启");
+                cx.quit()
+            }
             Err(e) => {
                 self.update = UpdateState::Failed(e);
                 cx.notify();

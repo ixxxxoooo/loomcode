@@ -128,6 +128,7 @@ impl Workbench {
         }
         loom_config::diag::info(&format!("切换模式并重启:→ {}", if to_demo { "演示" } else { "真实" }));
         if spawn_relaunch(to_demo) {
+            loom_diag::crash::clean_exit("切换运行模式并重启");
             cx.quit();
         } else {
             loom_config::diag::error("切换模式失败:无法启动新进程");
