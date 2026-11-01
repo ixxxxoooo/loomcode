@@ -181,7 +181,7 @@ fn main() {
     loom_config::legacy::migrate_home();
     // 诊断日志:~/.loomcode/logs/loomcode.log;崩溃信息也写进去
     if let Some(home) = std::env::var_os("HOME") {
-        loom_config::diag::init(&std::path::PathBuf::from(home).join(".loomcode/logs"));
+        loom_config::diag::init(&std::path::PathBuf::from(home));
     }
     let default_hook = std::panic::take_hook();
     std::panic::set_hook(Box::new(move |info| {

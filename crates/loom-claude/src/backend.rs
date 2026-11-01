@@ -54,6 +54,7 @@ impl AgentBackend for ClaudeBackend {
             .spawn()
             .map_err(|e| BackendError::Spawn(format!("{}:{e}", path.display())))?;
 
+        loom_diag::info!("claude 已启动 pid={} 路径={} cwd={} 恢复会话={}", child.id(), path.display(), opts.cwd, opts.args().iter().any(|a| a == "--resume"));
         let stdin = child.stdin.take().ok_or_else(|| BackendError::Spawn("无法获取标准输入".into()))?;
         let stdout = child.stdout.take().ok_or_else(|| BackendError::Spawn("无法获取标准输出".into()))?;
         let stderr = child.stderr.take().ok_or_else(|| BackendError::Spawn("无法获取标准错误".into()))?;
@@ -149,12 +150,18 @@ struct Actor {
     shutting_down: bool,
     /// 后端确认过的权限模式(切换失败时回退到它,界面不能停在没生效的模式上)
     confirmed_mode: PermissionMode,
+    /// 进程启动时刻与 pid(退出日志里给出存活时长)
+    started: std::time::Instant,
+    pid: u32,
+    /// 无法解析为 JSON 的输出行计数(日志只记前几条与每 100 条)
+    bad_lines: u32,
 }
 
 impl Actor {
     fn new(child: Child, stdin: ChildStdin, opts: ClaudeOptions, ev_tx: async_channel::Sender<AgentEvent>) -> Self {
         let mut translator = Translator::new(&opts.cwd);
         translator.session_id = opts.effective_session_id();
+        let pid = child.id();
         Self {
             child,
             stdin,
@@ -168,6 +175,9 @@ impl Actor {
             stderr_tail: VecDeque::new(),
             shutting_down: false,
             confirmed_mode: PermissionMode::Default,
+            started: std::time::Instant::now(),
+            pid,
+            bad_lines: 0,
         }
     }
 
@@ -307,6 +317,7 @@ impl Actor {
             AgentCommand::RunScenario(_) => {}
             AgentCommand::Shutdown => {
                 self.shutting_down = true;
+                loom_diag::info!("claude pid={} 由界面关闭,存活 {} 秒", self.pid, self.started.elapsed().as_secs());
                 // 先把挂起的请求都拒绝掉,让 claude 干净退出
                 for (_, p) in self.translator.drain_pending() {
                     self.write(&protocol::reject_response(&p));
@@ -322,6 +333,10 @@ impl Actor {
     fn on_line(&mut self, line: &str) -> bool {
         let Ok(v) = serde_json::from_str::<Value>(line) else {
             // 非 JSON 行(例如启动横幅)当作诊断信息保留
+            self.bad_lines += 1;
+            if self.bad_lines <= 3 || self.bad_lines % 100 == 0 {
+                loom_diag::warn!("claude(pid {})输出了非 JSON 行(第 {} 条):{}", self.pid, self.bad_lines, line.chars().take(120).collect::<String>());
+            }
             self.stderr_tail.push_back(line.chars().take(200).collect());
             return true;
         };
@@ -433,6 +448,15 @@ impl Actor {
         }
         let status = self.child.wait().ok();
         let code = status.and_then(|s| s.code());
+        {
+            use std::os::unix::process::ExitStatusExt;
+            let signal = status.and_then(|s| s.signal());
+            loom_diag::warn!(
+                "claude 进程退出 pid={} 退出码={:?} 信号={:?} 存活 {} 秒 回合进行中={} stderr 尾部:{}",
+                self.pid, code, signal, self.started.elapsed().as_secs(), self.turn_active,
+                self.stderr_tail.iter().rev().take(5).rev().cloned().collect::<Vec<_>>().join(" | ")
+            );
+        }
         let mut text = match code {
             Some(0) => "claude 进程已退出".to_string(),
             Some(c) => format!("claude 进程异常退出(退出码 {c})"),

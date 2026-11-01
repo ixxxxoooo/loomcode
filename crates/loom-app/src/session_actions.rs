@@ -24,7 +24,7 @@ impl Workbench {
     /// 保存 `state.json`;演示模式也写(落在沙盒目录里)。
     pub fn persist_ui_state(&self) {
         if let Err(e) = self.ui_state.save(&self.ui_state_path) {
-            eprintln!("保存界面状态失败:{e}");
+            loom_diag::error!("保存界面状态失败:{e}");
         }
     }
 
@@ -160,7 +160,7 @@ impl Workbench {
         self.view_order.retain(|x| x != id);
         if !self.demo {
             if let Err(e) = loom_claude::history::delete_session(cwd, id) {
-                eprintln!("删除会话文件失败:{e}");
+                loom_diag::error!("删除会话文件失败:{e}");
             }
         }
         for p in self.projects.iter_mut() {

@@ -64,7 +64,7 @@ impl Workbench {
     /// 保存工作区:创建专属目录、写入 `state.json`、让它出现在侧栏;新建时直接开一个会话。
     pub fn save_workspace(&mut self, def: WorkspaceDef, is_new: bool, window: &mut Window, cx: &mut Context<Self>) {
         if let Err(e) = std::fs::create_dir_all(&def.dir) {
-            eprintln!("创建工作区目录失败:{e}");
+            loom_diag::error!("创建工作区目录失败:{e}");
             return;
         }
         let dir = def.dir.clone();

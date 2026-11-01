@@ -127,7 +127,10 @@ impl Terminal {
     /// 返回:成功返回终端;失败返回给用户看的原因。
     pub fn spawn(opts: SpawnOptions, on_update: impl Fn() + Send + Sync + 'static) -> Result<Self, String> {
         let (cols, rows) = (opts.cols.max(2), opts.rows.max(1));
-        let pair = native_pty_system().openpty(PtySize { rows, cols, pixel_width: 0, pixel_height: 0 }).map_err(|e| format!("无法创建终端:{e}"))?;
+        let pair = native_pty_system().openpty(PtySize { rows, cols, pixel_width: 0, pixel_height: 0 }).map_err(|e| {
+            loom_diag::error!("终端:无法创建 PTY:{e}");
+            format!("无法创建终端:{e}")
+        })?;
         let mut cmd = match &opts.command {
             Some(argv) if !argv.is_empty() => {
                 let mut c = CommandBuilder::new(&argv[0]);
@@ -148,7 +151,13 @@ impl Terminal {
         }
         cmd.env("TERM", "xterm-256color");
         cmd.env("COLORTERM", "truecolor");
-        let child = pair.slave.spawn_command(cmd).map_err(|e| format!("无法启动 shell:{e}"))?;
+        let child = pair.slave.spawn_command(cmd).map_err(|e| {
+            loom_diag::error!("终端:无法启动 shell(命令 {:?},cwd {:?}):{e}", opts.command, opts.cwd);
+            format!("无法启动 shell:{e}")
+        })?;
+        let pid = child.process_id();
+        let started = std::time::Instant::now();
+        loom_diag::info!("终端已启动 pid={pid:?} cwd={:?} 命令={:?}", opts.cwd, opts.command.as_ref().map(|c| c.first().cloned()));
         drop(pair.slave);
         let mut reader = pair.master.try_clone_reader().map_err(|e| format!("无法读取终端:{e}"))?;
         let writer: SharedWriter = Arc::new(Mutex::new(pair.master.take_writer().map_err(|e| format!("无法写入终端:{e}"))?));
@@ -179,6 +188,7 @@ impl Terminal {
             // 输出读完说明 shell 退出了:收尸并记下退出码
             let code = child2.lock().unwrap().wait().map(|s| s.exit_code()).unwrap_or(1);
             *exit2.lock().unwrap() = Some(code);
+            loom_diag::info!("终端退出 pid={pid:?} 退出码={code} 存活 {} 秒", started.elapsed().as_secs());
             notify();
         });
         Ok(Self { inner, writer, master: Mutex::new(pair.master), child, title, exit_code })

@@ -58,7 +58,7 @@ impl BottomTerminal {
         let root = self.root(cx);
         match hub.update(cx, |h, cx| h.spawn(&root, None, cx)) {
             Ok(id) => self.focus_tab(&hub, &root, id, window, cx),
-            Err(e) => eprintln!("打开终端失败:{e}"),
+            Err(e) => loom_diag::error!("打开终端失败:{e}"),
         }
     }
 

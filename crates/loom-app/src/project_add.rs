@@ -24,7 +24,7 @@ impl Workbench {
                 return;
             }
             if let Err(e) = std::fs::create_dir_all(&path) {
-                eprintln!("创建项目文件夹失败:{e}");
+                loom_diag::error!("创建项目文件夹失败:{e}");
                 return;
             }
             let _ = this.update_in(cx, |this, window, cx| this.register_project(path.to_string_lossy().to_string(), window, cx));

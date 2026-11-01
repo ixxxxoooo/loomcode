@@ -3557,6 +3557,7 @@ dependencies = [
  "loom-config",
  "loom-core",
  "loom-demo",
+ "loom-diag",
  "loom-term",
  "objc2 0.6.5",
  "objc2-app-kit 0.3.2",
@@ -3602,6 +3603,7 @@ dependencies = [
  "base64 0.22.1",
  "chrono",
  "loom-core",
+ "loom-diag",
  "serde",
  "serde_json",
  "thiserror 2.0.21",
@@ -3613,6 +3615,7 @@ name = "loom-config"
 version = "0.1.0"
 dependencies = [
  "loom-core",
+ "loom-diag",
  "serde",
  "serde_json",
  "thiserror 2.0.21",
@@ -3639,10 +3642,20 @@ dependencies = [
 ]
 
 [[package]]
+name = "loom-diag"
+version = "0.1.0"
+dependencies = [
+ "libc",
+ "serde",
+ "serde_json",
+]
+
+[[package]]
 name = "loom-term"
 version = "0.1.0"
 dependencies = [
  "alacritty_terminal",
+ "loom-diag",
  "portable-pty",
 ]
 

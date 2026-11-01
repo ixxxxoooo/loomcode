@@ -8,4 +8,5 @@ loom-core = { path = "../loom-core" }
 serde.workspace = true
 serde_json.workspace = true
 thiserror.workspace = true
+loom-diag = { path = "../loom-diag" }
 ureq = { version = "2", features = ["json"] }

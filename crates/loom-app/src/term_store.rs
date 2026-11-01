@@ -81,6 +81,7 @@ impl ProjectTerminals {
     /// 参数:`root` 项目根目录(也是终端的工作目录);`command` 要运行的命令,为空启动登录 shell。
     /// 返回:新终端的 id;启动失败返回原因。
     pub fn spawn(&mut self, root: &str, command: Option<Vec<String>>, cx: &mut Context<Self>) -> Result<u64, String> {
+        loom_diag::crumb!("新建终端 {root}");
         let view = TerminalView::start(root, command, cx)?;
         self.next_id += 1;
         let id = self.next_id;

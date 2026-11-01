@@ -36,7 +36,7 @@ impl RightPanel {
                     window.focus(&h, cx);
                 }
             }
-            Err(e) => eprintln!("打开终端失败:{e}"),
+            Err(e) => loom_diag::error!("打开终端失败:{e}"),
         }
     }
 
@@ -46,7 +46,7 @@ impl RightPanel {
         let root = self.root.clone();
         let argv = vec!["/bin/sh".to_string(), "-c".to_string(), command];
         if let Err(e) = hub.update(cx, |h, cx| h.spawn(&root, Some(argv), cx)) {
-            eprintln!("运行命令失败:{e}");
+            loom_diag::error!("运行命令失败:{e}");
         }
         cx.notify();
     }

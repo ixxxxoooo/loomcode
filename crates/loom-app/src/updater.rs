@@ -56,9 +56,18 @@ impl Workbench {
             let result = cx.background_spawn(async { update::check("", env!("CARGO_PKG_VERSION"), current_build()) }).await;
             let _ = this.update(cx, |this, cx| {
                 this.update = match result {
-                    UpdateResult::UpToDate => UpdateState::UpToDate,
-                    UpdateResult::Available(info) => UpdateState::Available(info),
-                    UpdateResult::Failed(e) => UpdateState::Failed(e),
+                    UpdateResult::UpToDate => {
+                        loom_diag::info!("检查更新:已是最新版本");
+                        UpdateState::UpToDate
+                    }
+                    UpdateResult::Available(info) => {
+                        loom_diag::info!("检查更新:发现新版本");
+                        UpdateState::Available(info)
+                    }
+                    UpdateResult::Failed(e) => {
+                        loom_diag::warn!("检查更新失败:{e}");
+                        UpdateState::Failed(e)
+                    }
                 };
                 cx.notify();
             });
@@ -75,8 +84,14 @@ impl Workbench {
             let result = cx.background_spawn(async move { update::download(&info) }).await;
             let _ = this.update(cx, |this, cx| {
                 this.update = match result {
-                    Ok(staged) => UpdateState::Ready(staged),
-                    Err(e) => UpdateState::Failed(e),
+                    Ok(staged) => {
+                        loom_diag::info!("更新包下载并校验完成");
+                        UpdateState::Ready(staged)
+                    }
+                    Err(e) => {
+                        loom_diag::warn!("更新包下载失败:{e}");
+                        UpdateState::Failed(e)
+                    }
                 };
                 cx.notify();
             });

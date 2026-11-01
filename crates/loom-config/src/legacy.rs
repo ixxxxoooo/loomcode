@@ -24,7 +24,7 @@ pub fn migrate_home() -> Migration {
     match migrate(&home.join(".ucode"), &home.join(".loomcode")) {
         Ok(m) => m,
         Err(e) => {
-            eprintln!("迁移 ~/.ucode 失败:{e}");
+            loom_diag::error!("迁移 ~/.ucode 失败:{e}");
             Migration::Skipped
         }
     }

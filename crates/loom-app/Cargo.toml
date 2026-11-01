@@ -10,6 +10,7 @@ path = "src/main.rs"
 [dependencies]
 gpui-kit.workspace = true
 loom-core = { path = "../loom-core" }
+loom-diag = { path = "../loom-diag" }
 loom-term = { path = "../loom-term" }
 loom-demo = { path = "../loom-demo" }
 loom-config = { path = "../loom-config" }

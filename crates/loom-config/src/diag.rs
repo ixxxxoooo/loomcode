@@ -3,74 +3,35 @@
 //!
 //! @author ixxxxoooo
 
-use std::io::Write;
 use std::path::{Path, PathBuf};
-use std::sync::{Mutex, OnceLock};
 
-static LOG_PATH: OnceLock<PathBuf> = OnceLock::new();
-static LOCK: Mutex<()> = Mutex::new(());
-const MAX_LOG: u64 = 2 * 1024 * 1024;
+pub use loom_diag::{log_path, redact_home, tail};
 
-/// 设定日志文件(只生效一次)。
+/// 初始化日志(只生效一次):日志、崩溃记录、运行标记都放在 `<home>/.loomcode`。
 ///
-/// 参数:`dir` 日志目录。
-pub fn init(dir: &Path) {
-    let _ = std::fs::create_dir_all(dir);
-    let _ = LOG_PATH.set(dir.join("loomcode.log"));
+/// 参数:`home` 用户家目录。
+pub fn init(home: &Path) {
+    loom_diag::init_home(home);
 }
 
-/// 当前日志文件路径。
-pub fn log_path() -> Option<&'static Path> {
-    LOG_PATH.get().map(PathBuf::as_path)
-}
-
-/// 把家目录替换为 `~`。
-pub fn redact_home(text: &str) -> String {
-    match std::env::var("HOME") {
-        Ok(h) if !h.is_empty() => text.replace(&h, "~"),
-        _ => text.to_string(),
-    }
-}
-
-/// 当前本地时间(`YYYY-MM-DD HH:MM:SS`),取自系统 `date`,失败时用 Unix 秒。
-fn now() -> String {
-    std::process::Command::new("date").arg("+%Y-%m-%d %H:%M:%S").output().ok().map(|o| String::from_utf8_lossy(&o.stdout).trim().to_string()).filter(|s| !s.is_empty()).unwrap_or_else(|| {
-        std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH).map(|d| d.as_secs().to_string()).unwrap_or_default()
-    })
-}
-
-/// 写一条日志,同时打印到标准错误(开发版的 `target/dev.log` 也能看到)。
-///
-/// 参数:`level` 级别(INFO / WARN / ERROR);`msg` 内容。
+/// 写一条日志(旧接口:级别按字符串给出)。
 pub fn log(level: &str, msg: &str) {
-    let line = format!("{} [{level}] {}", now(), redact_home(msg));
-    eprintln!("{line}");
-    let Some(path) = LOG_PATH.get() else { return };
-    let _guard = LOCK.lock();
-    if std::fs::metadata(path).is_ok_and(|m| m.len() > MAX_LOG) {
-        let _ = std::fs::rename(path, path.with_extension("log.1"));
-    }
-    if let Ok(mut f) = std::fs::OpenOptions::new().create(true).append(true).open(path) {
-        let _ = writeln!(f, "{line}");
-    }
+    loom_diag::log_str(level, msg);
 }
 
 /// 错误日志。
 pub fn error(msg: &str) {
-    log("ERROR", msg);
+    loom_diag::log(loom_diag::Level::Error, "loom_config", format_args!("{msg}"));
 }
 
 /// 普通日志。
 pub fn info(msg: &str) {
-    log("INFO", msg);
+    loom_diag::log(loom_diag::Level::Info, "loom_config", format_args!("{msg}"));
 }
 
-/// 日志末尾 `n` 行。
-pub fn tail(n: usize) -> Vec<String> {
-    let Some(path) = LOG_PATH.get() else { return Vec::new() };
-    let text = std::fs::read_to_string(path).unwrap_or_default();
-    let lines: Vec<&str> = text.lines().collect();
-    lines[lines.len().saturating_sub(n)..].iter().map(|s| s.to_string()).collect()
+/// 当前本地时间(`YYYY-MM-DD HH:MM:SS`)。
+fn now() -> String {
+    loom_diag::timestamp().chars().take(19).collect()
 }
 
 /// 本进程及子进程的资源占用:(pid, 内存 MB, CPU %, 命令名)。

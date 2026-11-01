@@ -49,7 +49,7 @@ impl Workbench {
                 this.settings.left_width = this.left_w;
                 this.settings.right_width = this.right_w;
                 if let Err(e) = this.settings.save(&this.settings_path) {
-                    eprintln!("保存栏宽失败:{e}");
+                    loom_diag::error!("保存栏宽失败:{e}");
                 }
             });
         })

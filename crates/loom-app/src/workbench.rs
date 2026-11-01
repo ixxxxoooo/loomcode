@@ -203,7 +203,7 @@ impl Workbench {
         // 演示沙盒与演示项目只在演示模式出现;真实模式的项目稍后从 Claude 历史里后台读取
         let projects = if demo {
             if let Err(e) = loom_demo::workspace::seed(&demo_root) {
-                eprintln!("生成演示沙盒失败:{e}");
+                loom_diag::error!("生成演示沙盒失败:{e}");
             }
             loom_demo::workspace::demo_projects(&demo_root)
         } else {
@@ -244,7 +244,7 @@ impl Workbench {
         if demo {
             let project = projects.first().map(|p| p.path.clone()).unwrap_or_default();
             if let Err(e) = CanvasStore::new(&canvas_dir).save(&demo_document(&project, now_ts())) {
-                eprintln!("写入演示画布失败:{e}");
+                loom_diag::error!("写入演示画布失败:{e}");
             }
         }
         let canvas = cx.new(|_| CanvasPage::new(CanvasStore::new(canvas_dir)));
@@ -467,6 +467,7 @@ impl Workbench {
     }
 
     pub fn set_page(&mut self, page: Page, cx: &mut Context<Self>) {
+        loom_diag::crumb!("切换页面 {:?}", page);
         if matches!(page, Page::Settings | Page::Customize) && self.page != page {
             // 进入设置 / 自定义时重读 Claude 配置,外部修改(如 claude mcp add)能立刻看到
             self.reload_claude_cfg();
@@ -609,6 +610,7 @@ impl Workbench {
 
     /// 打开(必要时创建)一个会话。
     pub fn open_session(&mut self, project_ix: usize, id: &str, window: &mut Window, cx: &mut Context<Self>) {
+        loom_diag::crumb!("打开会话 {id}");
         self.page = Page::Chat;
         if !self.views.contains_key(id) {
             let cwd = self.projects[project_ix].path.clone();
@@ -742,7 +744,7 @@ impl Workbench {
         let old_layout = (self.settings.appearance.chat_width, self.settings.appearance.timeline_font_pct, self.settings.appearance.scrollbar);
         f(&mut self.settings);
         if let Err(e) = self.settings.save(&self.settings_path) {
-            eprintln!("保存设置失败:{e}");
+            loom_diag::error!("保存设置失败:{e}");
         }
         cx.set_global(crate::UiPrefs::from_settings(&self.settings));
         cx.set_global(crate::Prefs(self.settings.clone()));
@@ -1096,6 +1098,7 @@ impl Workbench {
     /// 切换到 IDE。融合模式:本窗口原地切换(右侧面板自动切到「文件」);
     /// 非融合模式:打开或聚焦独立的 IDE 窗口。
     pub fn toggle_ide(&mut self, window: &mut Window, cx: &mut Context<Self>) {
+        loom_diag::crumb!("切换 IDE(融合={})", self.settings.fused_ide);
         if !self.settings.fused_ide {
             self.open_ide_window(window, cx);
             return;
@@ -1148,7 +1151,7 @@ impl Workbench {
                 ide
             }) {
                 Ok((handle, _)) => owner.update(cx, |this, _| this.ide_window = Some(handle)),
-                Err(e) => eprintln!("打开 IDE 窗口失败:{e}"),
+                Err(e) => loom_diag::error!("打开 IDE 窗口失败:{e}"),
             }
         });
     }
@@ -1174,6 +1177,7 @@ impl Workbench {
 
     /// 统一的「打开文件」入口:融合 IDE 视图开编辑器,否则在右侧面板预览。
     pub fn open_file(&mut self, path: String, window: &mut Window, cx: &mut Context<Self>) {
+        loom_diag::crumb!("打开文件 {path}");
         self.page = Page::Chat;
         self.right_open = true;
         if let Some(shell) = self.ide_shell.clone().filter(|_| self.ide) {

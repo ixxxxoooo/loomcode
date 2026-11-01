@@ -260,6 +260,7 @@ impl IdeView {
                 self.tabs.pin(&path);
             }
             Err(e) => {
+                loom_diag::error!("保存文件失败 {}:{e}", path.display());
                 self.note = Some(format!("保存失败:{e}"));
                 cx.notify();
                 return false;
