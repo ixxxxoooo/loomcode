@@ -16,15 +16,15 @@ pub fn sections(wb: &Workbench, cx: &mut Context<Workbench>) -> Vec<AnyElement> 
     let a = wb.settings.appearance.clone();
     let t = cx.theme().clone();
     let scale = f32::from(a.timeline_font_pct) / 100.;
-    let spinners = SPINNERS.iter().enumerate().map(|(i, (style, name, sample, ..))| {
-        let (style, on) = (*style, a.spinner == *style);
-        h_flex().id(SharedString::from(format!("spin-{i}"))).w_full().px_3().py_2().gap_3().items_center().rounded(px(8.)).cursor_pointer()
+    let spinners = SPINNERS.iter().enumerate().map(|(i, def)| {
+        let (style, on) = (def.style, a.spinner == def.style);
+        h_flex().id(SharedString::from(format!("spin-{i}"))).w_full().px_3().py_2().gap_3().items_center().cursor_pointer()
             .when(on, |d| d.bg(t.primary.opacity(0.1))).hover(|d| d.bg(t.muted))
             .on_click(cx.listener(move |this, _, _, cx| this.update_settings(cx, |s| s.appearance.spinner = style)))
-            .child(div().w(px(20.)).flex().justify_center().text_size(px(15.)).text_color(t.primary).child(crate::appearance::glyph_static(style)))
+            .child(div().w(px(20.)).flex().justify_center().text_size(px(15.)).text_color(t.primary).child(crate::appearance::glyph_anim(&format!("spin-demo-{i}"), style, t.primary, 15.)))
             .child(v_flex().flex_1().gap_0p5()
-                .child(div().text_size(px(13.)).child(name.to_string()))
-                .child(div().text_size(px(12.)).text_color(t.muted_foreground).child(sample.to_string())))
+                .child(div().text_size(px(13.)).child(def.name))
+                .child(div().text_size(px(12.)).text_color(t.muted_foreground).child(crate::appearance::sample(def))))
             .when(on, |d| d.child(crate::ui::icon(IconName::Check, 14., t.primary)))
             .into_any_element()
     }).collect::<Vec<_>>();
