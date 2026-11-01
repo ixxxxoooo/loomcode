@@ -102,7 +102,7 @@ impl IdeWindow {
         // 调试用:LOOM_IDE_TERM=1 启动时就展开底部终端面板,方便截图
         let term_open = std::env::var("LOOM_IDE_TERM").is_ok_and(|v| v == "1");
         // 此时工作台可能正处于更新中,不在这里回读它;首次渲染时再同步
-        Self { wb, panel, ide, focus, left_open: true, chat_open: true, left_narrow: false, left_before: true, chat_narrow: false, chat_before: true, synced: None, mem_gen: 0, _subs: subs, search, search_open: false, quick: None, _quick_sub: None, term_open, term, chat_tabs: Vec::new(), chat_last_active: None, chat_empty: false, chat_wide: false }
+        Self { wb, panel, ide, focus, left_open: true, chat_open: true, left_narrow: false, left_before: true, chat_narrow: false, chat_before: true, synced: None, mem_gen: 0, _subs: subs, search, search_open: false, quick: None, _quick_sub: None, term_open, term, chat_tabs: Vec::new(), chat_last_active: None, chat_empty: false, chat_wide: std::env::var("LOOM_CHAT_WIDE").is_ok() }
     }
 
     /// 让面板与根目录跟随工作台当前会话。
@@ -310,6 +310,7 @@ impl Render for IdeWindow {
             let mode = view.map(|v| v.model.read(cx).state.mode.label().to_string());
             (wb.chat_parts(), project, name, mode, wb.settings.fused_ide, wb.active_branch(), wb.demo)
         };
+        let chat_col = v_flex().size_full().child(self.chat_tabs_bar(cx)).child(div().flex_1().min_h_0().child(if self.chat_empty { self.chat_empty_view(cx) } else { chat_panel(parts, branch.clone(), demo, cx) })).into_any_element();
         v_flex()
             .key_context("IdeWindow")
             // 平滑滚动拦截层:必须是第一个子元素
@@ -336,19 +337,23 @@ impl Render for IdeWindow {
                 h_flex().flex_1().min_h_0().w_full()
                     .child(self.activity_bar(cx))
                     .child(
-                        div().flex_1().min_w_0().h_full().child(
+                        div().flex_1().min_w_0().h_full().child(if self.chat_wide {
+                            // 展开:对话栏占满整个区域
+                            div().size_full().child(chat_col).into_any_element()
+                        } else {
                             h_resizable("ide-split")
-                                .child(resizable_panel().size(px(260.)).size_range(px(160.)..px(520.)).flex_none().visible(self.left_open && !self.chat_wide)
+                                .child(resizable_panel().size(px(260.)).size_range(px(160.)..px(520.)).flex_none().visible(self.left_open)
                                     .child(div().size_full().child(if self.search_open { self.search.clone().into_any_element() } else { self.panel.clone().into_any_element() })))
-                                .child(resizable_panel().size_range(px(320.)..Pixels::MAX).visible(!self.chat_wide).child(
+                                .child(resizable_panel().size_range(px(320.)..Pixels::MAX).child(
                                     v_resizable("ide-vsplit")
                                         .child(resizable_panel().size_range(px(120.)..Pixels::MAX).child(div().size_full().child(self.ide.clone())))
                                         .child(resizable_panel().size(px(260.)).size_range(px(120.)..px(600.)).flex_none().visible(self.term_open)
                                             .child(div().size_full().child(self.term.clone()))),
                                 ))
-                                .child(resizable_panel().size(px(420.)).size_range(px(320.)..px(900.)).flex_none().visible(self.chat_open || self.chat_wide)
-                                    .child(v_flex().size_full().child(self.chat_tabs_bar(cx)).child(div().flex_1().min_h_0().child(if self.chat_empty { self.chat_empty_view(cx) } else { chat_panel(parts, branch.clone(), demo, cx) })))),
-                        ),
+                                .child(resizable_panel().size(px(420.)).size_range(px(320.)..px(900.)).flex_none().visible(self.chat_open)
+                                    .child(chat_col))
+                                .into_any_element()
+                        }),
                     ),
             )
             .when_some(self.quick.clone(), |d, p| d.child(p))
