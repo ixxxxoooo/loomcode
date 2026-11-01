@@ -171,11 +171,10 @@ pub(crate) fn render_editor(session: &Entity<SessionModel>, input: &Entity<Texta
         .when(running, |d| d.child(div().text_size(px(11.)).text_color(t.muted_foreground).child("回合进行中,将排到本轮结束后发送。")))
         .child(
             h_flex().gap_2().items_center().justify_end()
-                .children(crate::edit_model::chip(session, cx).map(|c| div().flex_1().child(c)))
+                .children(crate::edit_model::picker(session, cx).map(|c| div().flex_1().flex().child(c)))
                 .child(Button::new("umsg-cancel").small().ghost().label("取消").on_click(move |_, _, cx| { s_cancel.update(cx, |m, cx| m.end_edit(cx)); }))
                 .child(send_button(false, has_text, move |window, cx| { s_send.update(cx, |m, cx| m.submit_edit(window, cx)); }, cx)),
         )
-        .children(crate::edit_model::list(session, cx))
         .into_any_element()
 }
 
