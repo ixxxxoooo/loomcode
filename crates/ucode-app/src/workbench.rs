@@ -96,6 +96,10 @@ pub struct Workbench {
     pub demo: bool,
     pub projects: Vec<Project>,
     pub active: Option<String>,
+    /// 会话访问历史(前进 / 后退箭头)
+    pub nav: crate::nav_history::NavHistory,
+    /// 正在按前进 / 后退切换会话:这时打开会话不应再写入历史
+    pub nav_navigating: bool,
     pub views: HashMap<String, SessionView>,
     pub left_open: bool,
     pub right_open: bool,
@@ -215,6 +219,8 @@ impl Workbench {
             demo,
             projects,
             active: None,
+            nav: Default::default(),
+            nav_navigating: false,
             views: HashMap::new(),
             left_open: true,
             right_open: settings.right_open,
@@ -568,6 +574,9 @@ impl Workbench {
         }
         self.unread.remove(id);
         self.active = Some(id.to_string());
+        if !self.nav_navigating {
+            self.nav.visit(id);
+        }
         crate::view_cache::touch(&mut self.view_order, id);
         self.evict_idle_views(cx);
         if let Some(dir) = self.active_git_dir() {

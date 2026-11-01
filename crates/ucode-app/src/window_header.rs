@@ -9,6 +9,7 @@ use crate::ui::{mode_switch, no_drag};
 use crate::workbench::{Page, Workbench};
 use gpui_kit::assets::IconName;
 use gpui_kit::component::button::{Button, ButtonVariants};
+use gpui_kit::component::Disableable as _;
 use gpui_kit::component::{ActiveTheme, InteractiveElementExt as _, Sizable, h_flex};
 use gpui_kit::prelude::FluentBuilder as _;
 use gpui_kit::*;
@@ -48,18 +49,42 @@ fn header_row(id: &'static str) -> Stateful<Div> {
 }
 
 /// 「侧栏开关 + 搜索」两个按钮。
-fn left_buttons(cx: &mut Context<Workbench>) -> impl IntoElement {
+fn left_buttons(wb: &Workbench, cx: &mut Context<Workbench>) -> impl IntoElement {
+    let (can_back, can_fwd) = (wb.nav.can_back(), wb.nav.can_forward());
     h_flex().gap_0p5()
         .child(no_drag(Button::new("hd-left").small().ghost().icon(IconName::PanelLeft).tooltip("侧栏(⌘B)")
             .on_click(cx.listener(|this, _, _, cx| { this.left_open = !this.left_open; cx.notify(); }))))
         .child(no_drag(Button::new("hd-search").small().ghost().icon(IconName::Search).tooltip("搜索(⌘K)")
             .on_click(cx.listener(|this, _, window, cx| this.toggle_palette(window, cx)))))
+        .child(no_drag(Button::new("hd-back-nav").small().ghost().icon(IconName::ArrowLeft).tooltip("后退").disabled(!can_back)
+            .on_click(cx.listener(|this, _, window, cx| this.navigate(false, window, cx)))))
+        .child(no_drag(Button::new("hd-fwd-nav").small().ghost().icon(IconName::ArrowRight).tooltip("前进").disabled(!can_fwd)
+            .on_click(cx.listener(|this, _, window, cx| this.navigate(true, window, cx)))))
 }
 
 impl Workbench {
+    /// 按访问历史前进 / 后退一个会话;已经不存在的会话(被删除或项目被移除)会被跳过。
+    ///
+    /// 参数:`forward` true 前进、false 后退。
+    pub fn navigate(&mut self, forward: bool, window: &mut Window, cx: &mut Context<Self>) {
+        loop {
+            let target = if forward { self.nav.forward() } else { self.nav.back() };
+            let Some(id) = target else { return };
+            let project_ix = self.views.get(&id).map(|v| v.project_ix)
+                .or_else(|| self.projects.iter().position(|p| p.sessions.iter().any(|s| s.id == id)));
+            if let Some(pi) = project_ix {
+                self.nav_navigating = true;
+                self.open_session(pi, &id, window, cx);
+                self.nav_navigating = false;
+                return;
+            }
+            self.nav.remove(&id);
+        }
+    }
+
     /// 侧栏顶部行:红绿灯位置 + 侧栏开关 + 搜索。
     pub fn left_header(&self, cx: &mut Context<Self>) -> impl IntoElement {
-        header_row("hd-left-row").pl(px(TRAFFIC_PAD)).pr_2().child(left_buttons(cx))
+        header_row("hd-left-row").pl(px(TRAFFIC_PAD)).pr_2().child(left_buttons(self, cx))
     }
 
     /// 对话区顶部行:侧栏收起时承接红绿灯与按钮,中间是当前会话标题,右面板收起时右端放面板开关与 IDE 入口。
@@ -75,7 +100,7 @@ impl Workbench {
         };
         let right_hidden = !self.right_visible();
         header_row("hd-center-row").pl(px(if left_hidden { TRAFFIC_PAD } else { 12. })).pr_2()
-            .when(left_hidden, |d| d.child(left_buttons(cx)))
+            .when(left_hidden, |d| d.child(left_buttons(self, cx)))
             .when(self.page != Page::Chat, |d| d.child(no_drag(Button::new("hd-back").small().ghost().icon(IconName::ArrowLeft).tooltip("返回会话")
                 .on_click(cx.listener(|this, _, _, cx| this.set_page(Page::Chat, cx))))))
             .when_some(title.filter(|s| !s.is_empty()), |d, title| d.child(

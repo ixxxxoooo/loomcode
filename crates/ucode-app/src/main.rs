@@ -37,6 +37,7 @@ mod ide_chrome;
 mod ide_close;
 mod ide_tabs;
 mod chat_scroll;
+mod nav_history;
 mod window_header;
 mod ide_window;
 mod layout_rules;
