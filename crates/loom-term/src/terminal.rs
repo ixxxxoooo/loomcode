@@ -151,7 +151,12 @@ impl Terminal {
         }
         cmd.env("TERM", "xterm-256color");
         cmd.env("COLORTERM", "truecolor");
-        let child = pair.slave.spawn_command(cmd).map_err(|e| {
+        // spawn 内部会 fork:持有 fork 保护锁,避免此刻别的线程正在 libc 里初始化(见 `loom_diag::fork_guard`)。
+        let spawned = {
+            let _fork = loom_diag::fork_guard();
+            pair.slave.spawn_command(cmd)
+        };
+        let child = spawned.map_err(|e| {
             loom_diag::error!("终端:无法启动 shell(命令 {:?},cwd {:?}):{e}", opts.command, opts.cwd);
             format!("无法启动 shell:{e}")
         })?;

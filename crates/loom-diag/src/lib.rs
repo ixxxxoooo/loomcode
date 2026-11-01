@@ -17,6 +17,6 @@ pub mod stats;
 
 pub use crash::RunInfo;
 pub use crumbs::crumb;
-pub use logger::{Dirs, Level, Logger, dirs, enabled, init_home, level, log, log_nonblocking, log_path, log_str, logger, redact_home, run_id, set_level, tail, timestamp};
+pub use logger::{Dirs, fork_guard, Level, Logger, dirs, enabled, init_home, level, log, log_nonblocking, log_path, log_str, logger, redact_home, run_id, set_level, tail, timestamp};
 pub use perf::{Span, span};
 pub use records::CrashRecord;

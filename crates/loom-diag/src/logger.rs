@@ -236,14 +236,68 @@ fn unix_secs() -> u64 {
     SystemTime::now().duration_since(UNIX_EPOCH).map(|d| d.as_secs()).unwrap_or(0)
 }
 
-/// 当前本地时间 `YYYY-MM-DD HH:MM:SS.mmm`,用 libc 计算,不起子进程。
+/// 「fork 保护锁」:`localtime_r` 之类的 libc 函数内部会用 `os_once` 初始化 libnotify,
+/// 若此刻另一个线程恰好 `fork`(起终端的子进程),子进程会继承到「初始化到一半」的状态,
+/// 在 exec 之前就以 "os_once_t is corrupt" 崩溃(见 `loom_term` 测试崩溃报告)。
+/// 所以:调用 libc 本地时间换算的一方拿读锁,`fork` 的一方(终端启动)拿写锁,两者互斥。
+static FORK_LOCK: std::sync::RwLock<()> = std::sync::RwLock::new(());
+
+/// 取 fork 保护写锁。启动子进程(会 `fork`)的代码在 `spawn` 期间持有它。
+pub fn fork_guard() -> std::sync::RwLockWriteGuard<'static, ()> {
+    FORK_LOCK.write().unwrap_or_else(|e| e.into_inner())
+}
+
+/// 缓存的本地时区偏移(秒)与上次刷新时间(UNIX 秒,0 表示从未刷新)。
+static TZ_OFFSET: std::sync::atomic::AtomicI64 = std::sync::atomic::AtomicI64::new(0);
+static TZ_CHECKED: std::sync::atomic::AtomicU64 = std::sync::atomic::AtomicU64::new(0);
+/// 时区偏移的刷新间隔(夏令时切换后最多偏差这么久)。
+const TZ_REFRESH_SECS: u64 = 3600;
+
+/// 本地时区偏移(秒)。每小时才用 libc 刷新一次,且只在拿得到读锁时刷新(拿不到就沿用旧值,
+/// 绝不阻塞,panic / 信号路径也能安全调用)。
+fn tz_offset(secs: u64) -> i64 {
+    use std::sync::atomic::Ordering::Relaxed;
+    let last = TZ_CHECKED.load(Relaxed);
+    if last == 0 || secs.saturating_sub(last) >= TZ_REFRESH_SECS {
+        if let Ok(_g) = FORK_LOCK.try_read() {
+            let t = secs as libc::time_t;
+            // SAFETY: `tm` 由 `localtime_r` 完整填写;失败时保持全零,偏移按 0 处理。
+            let mut tm: libc::tm = unsafe { std::mem::zeroed() };
+            let ok = !unsafe { libc::localtime_r(&t, &mut tm) }.is_null();
+            TZ_OFFSET.store(if ok { tm.tm_gmtoff as i64 } else { 0 }, Relaxed);
+            TZ_CHECKED.store(secs.max(1), Relaxed);
+        }
+    }
+    TZ_OFFSET.load(Relaxed)
+}
+
+/// 把 UNIX 天数换算为公历 (年, 月, 日)(Howard Hinnant 的 civil_from_days 算法)。
+fn civil_from_days(z: i64) -> (i64, u32, u32) {
+    let z = z + 719_468;
+    let era = z.div_euclid(146_097);
+    let doe = z.rem_euclid(146_097);
+    let yoe = (doe - doe / 1460 + doe / 36_524 - doe / 146_096) / 365;
+    let doy = doe - (365 * yoe + yoe / 4 - yoe / 100);
+    let mp = (5 * doy + 2) / 153;
+    let d = (doy - (153 * mp + 2) / 5 + 1) as u32;
+    let m = if mp < 10 { mp + 3 } else { mp - 9 } as u32;
+    let y = yoe + era * 400 + i64::from(m <= 2);
+    (y, m, d)
+}
+
+/// 把 UNIX 秒 + 偏移格式化为 `YYYY-MM-DD HH:MM:SS.mmm`(纯计算,不碰 libc)。
+fn format_time(secs: u64, offset: i64, millis: u32) -> String {
+    let local = secs as i64 + offset;
+    let (y, mo, d) = civil_from_days(local.div_euclid(86_400));
+    let rem = local.rem_euclid(86_400);
+    format!("{y:04}-{mo:02}-{d:02} {:02}:{:02}:{:02}.{millis:03}", rem / 3600, rem % 3600 / 60, rem % 60)
+}
+
+/// 当前本地时间 `YYYY-MM-DD HH:MM:SS.mmm`;热路径不调用 libc(见 `FORK_LOCK`),不起子进程。
 pub fn timestamp() -> String {
     let d = SystemTime::now().duration_since(UNIX_EPOCH).unwrap_or_default();
-    let secs = d.as_secs() as libc::time_t;
-    // SAFETY: `tm` 由 `localtime_r` 完整填写;失败时保持全零,只会得到 1900 年的时间串。
-    let mut tm: libc::tm = unsafe { std::mem::zeroed() };
-    unsafe { libc::localtime_r(&secs, &mut tm) };
-    format!("{:04}-{:02}-{:02} {:02}:{:02}:{:02}.{:03}", tm.tm_year + 1900, tm.tm_mon + 1, tm.tm_mday, tm.tm_hour, tm.tm_min, tm.tm_sec, d.subsec_millis())
+    let secs = d.as_secs();
+    format_time(secs, tz_offset(secs), d.subsec_millis())
 }
 
 /// 把家目录替换为 `~`。
@@ -378,5 +432,27 @@ mod tests {
         assert_eq!(t.len(), 23, "{t}");
         assert_eq!(&t[4..5], "-");
         assert_eq!(&t[19..20], ".");
+    }
+
+    #[test]
+    fn 纯计算的时间换算正确() {
+        // 1970-01-01 00:00:00 UTC
+        assert_eq!(format_time(0, 0, 7), "1970-01-01 00:00:00.007");
+        // 2026-11-01 22:43:00 +08:00 = 2026-11-01 14:43:00 UTC = 1793544180
+        assert_eq!(format_time(1_793_544_180, 8 * 3600, 0), "2026-11-01 22:43:00.000");
+        // 闰日与跨日偏移:2024-02-29 23:30:00 UTC,偏移 +1 小时 → 3 月 1 日
+        assert_eq!(format_time(1_709_249_400, 3600, 0), "2024-03-01 00:30:00.000");
+        // 负偏移跨到前一天
+        assert_eq!(format_time(0, -3600, 0), "1969-12-31 23:00:00.000");
+    }
+
+    #[test]
+    fn 与_libc_的本地时间一致() {
+        let now = SystemTime::now().duration_since(UNIX_EPOCH).unwrap().as_secs();
+        let t = now as libc::time_t;
+        let mut tm: libc::tm = unsafe { std::mem::zeroed() };
+        unsafe { libc::localtime_r(&t, &mut tm) };
+        let want = format!("{:04}-{:02}-{:02} {:02}:{:02}:{:02}.000", tm.tm_year + 1900, tm.tm_mon + 1, tm.tm_mday, tm.tm_hour, tm.tm_min, tm.tm_sec);
+        assert_eq!(format_time(now, tm.tm_gmtoff as i64, 0), want);
     }
 }
