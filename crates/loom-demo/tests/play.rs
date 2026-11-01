@@ -28,7 +28,7 @@ fn run(prompt: &str, auto_resolve: bool) -> SessionState {
                     handle.send(AgentCommand::AnswerQuestion { id: q.id.clone(), answers: vec![vec!["x".into()]; q.questions.len()] })
                 }
                 AgentEvent::Append { item: TimelineItem::PlanApproval(p), .. } => {
-                    handle.send(AgentCommand::ResolvePlan { id: p.id.clone(), approve: true })
+                    handle.send(AgentCommand::ResolvePlan { id: p.id.clone(), approve: true, mode: None })
                 }
                 _ => {}
             }

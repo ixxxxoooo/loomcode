@@ -95,12 +95,17 @@ fn permission(session: &Entity<SessionModel>, req: &PermissionRequest, cx: &App)
         .into_any_element()
 }
 
+/// 计划批准后的几种 Build 方式:(按钮文案, 之后的权限模式, 悬停说明)。
+const BUILDS: [(&str, PermissionMode, &str); 3] = [
+    ("Build · 逐项确认", PermissionMode::Default, "按计划实施,每次修改文件或运行命令前都问你"),
+    ("Build · 自动模式", PermissionMode::Auto, "按计划实施,自动模式下由分类器判断哪些操作无需确认"),
+    ("Build · 跳过权限确认", PermissionMode::BypassPermissions, "按计划实施,并跳过所有权限确认——只在完全信任这个计划时使用"),
+];
+
 /// 计划待批准条:计划正文在时间线的计划卡里,这里只保留决定。
 fn plan_bar(session: &Entity<SessionModel>, plan: &PlanApproval, cx: &App) -> AnyElement {
     let t = cx.theme();
     let name = plan.markdown.lines().map(|l| l.trim_start_matches('#').trim()).find(|l| !l.is_empty()).unwrap_or("计划").to_string();
-    let (s1, id1) = (session.clone(), plan.id.clone());
-    let (s2, id2) = (session.clone(), plan.id.clone());
     v_flex().w_full().p_3().gap_2().rounded(px(12.)).border_1().border_color(t.border).bg(t.background).shadow_sm()
         .child(
             h_flex().gap_2().items_center()
@@ -111,10 +116,18 @@ fn plan_bar(session: &Entity<SessionModel>, plan: &PlanApproval, cx: &App) -> An
         .child(caption("上面的计划卡里可以查看完整计划;确认没问题再选择 Build。", cx))
         .child(
             h_flex().flex_wrap().gap_2()
-                .child(Button::new(SharedString::from(format!("{}-ok", plan.id))).small().primary().label("Build · 逐项确认")
-                    .on_click(move |_, _, cx| { s1.update(cx, |m, cx| m.resolve_plan(&id1, true, cx)); }))
-                .child(Button::new(SharedString::from(format!("{}-no", plan.id))).small().label("继续规划")
-                    .on_click(move |_, _, cx| { s2.update(cx, |m, cx| m.resolve_plan(&id2, false, cx)); })),
+                .children(BUILDS.iter().enumerate().map(|(i, (label, mode, hint))| {
+                    let (s, id, mode) = (session.clone(), plan.id.clone(), *mode);
+                    // 逐项确认(最稳妥的 Build)是唯一的实心主按钮
+                    let b = Button::new(SharedString::from(format!("{}-build{i}", plan.id))).small().label(*label).tooltip(*hint);
+                    let b = if i == 0 { b.primary() } else { b };
+                    b.on_click(move |_, _, cx| { s.update(cx, |m, cx| m.resolve_plan(&id, true, Some(mode), cx)); })
+                }))
+                .child({
+                    let (s, id) = (session.clone(), plan.id.clone());
+                    Button::new(SharedString::from(format!("{}-no", plan.id))).small().label("继续规划").tooltip("不批准,让 Claude 根据反馈继续完善计划")
+                        .on_click(move |_, _, cx| { s.update(cx, |m, cx| m.resolve_plan(&id, false, None, cx)); })
+                }),
         )
         .into_any_element()
 }

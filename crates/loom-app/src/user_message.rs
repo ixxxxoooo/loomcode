@@ -64,6 +64,20 @@ pub fn render_pinned_editor(session: &Entity<SessionModel>, cx: &App) -> Option<
     Some(render_editor(session, &e.input.clone(), &images, cx))
 }
 
+/// 悬停操作条上的小图标按钮:按下有底色反馈,`done` 为真时显示绿色对勾(复制 / 重试后短暂显示)。
+///
+/// 参数:`bid` 元素 id;`ic` 图标;`tip` 提示;`done` 是否显示完成态。
+pub fn action_btn(bid: String, ic: IconName, tip: &'static str, done: bool, cx: &App) -> Stateful<Div> {
+    let t = cx.theme();
+    div().id(SharedString::from(bid)).size(px(24.)).flex().items_center().justify_center().rounded(px(6.)).cursor_pointer()
+        // 按下不再冒泡给消息卡,避免点按钮时进入选择文本状态
+        .on_mouse_down(MouseButton::Left, |_, _, cx| cx.stop_propagation())
+        .hover(|d| d.bg(t.foreground.opacity(0.08)))
+        .active(|d| d.bg(t.foreground.opacity(0.18)))
+        .tooltip(move |window, cx| gpui_kit::component::tooltip::Tooltip::new(tip).build(window, cx))
+        .child(if done { icon(IconName::Check, 13., t.success) } else { icon(ic, 12., t.muted_foreground) })
+}
+
 /// 图片缩略图:本地文件存在就画图(点击预览大图),否则(演示数据)退回文件名 chip。
 fn thumb(name: &str, cx: &App) -> AnyElement {
     let t = cx.theme();
@@ -101,18 +115,16 @@ fn render_card(session: &Entity<SessionModel>, id: &str, text: &str, images: &[S
     let (s_retry, id_retry) = (session.clone(), id.to_string());
     let (s_click, id_click, text_click) = (session.clone(), id.to_string(), text.clone());
     let copy_text = text.clone();
-    let icon_btn = |bid: String, ic: IconName, tip: &'static str| {
-        div().id(SharedString::from(bid)).size(px(24.)).flex().items_center().justify_center().rounded(px(6.)).cursor_pointer()
-            // 按下不再冒泡给消息卡,避免点按钮时进入选择文本状态
-            .on_mouse_down(MouseButton::Left, |_, _, cx| cx.stop_propagation())
-            .hover(|d| d.bg(t.foreground.opacity(0.08)))
-            .tooltip(move |window, cx| gpui_kit::component::tooltip::Tooltip::new(tip).build(window, cx))
-            .child(icon(ic, 12., t.muted_foreground))
+    let (copied, retried) = {
+        let c = session.read(cx).copied.as_deref();
+        (c == Some(format!("c-{id}").as_str()), c == Some(format!("r-{id}").as_str()))
     };
+    let (s_copy_mark, id_copy_mark) = (session.clone(), id.to_string());
+    let (s_retry_mark, id_retry_mark) = (session.clone(), id.to_string());
     v_flex().id(SharedString::from(format!("umsg-card-{id}"))).group(group.clone()).relative().w_full().gap_2().px(px(14.)).py(px(10.)).pr(px(76.)).rounded(px(12.)).bg(t.muted).cursor_pointer()
         .on_click(move |_, window, cx| {
             let (id, text) = (id_click.clone(), text_click.clone());
-            s_click.update(cx, |m, cx| m.begin_edit(&id, &text, false, window, cx));
+            s_click.update(cx, |m, cx| m.begin_edit(&id, &text, true, window, cx));
         })
         .when(!images.is_empty() || !files.is_empty(), |d| {
             d.child(h_flex().flex_wrap().gap_1p5().children(images.iter().map(|n| thumb(n, cx))).children(files.iter().map(|n| file_chip(n, cx))))
@@ -127,16 +139,24 @@ fn render_card(session: &Entity<SessionModel>, id: &str, text: &str, images: &[S
         })
         // 悬停时右下角出现:复制、编辑
         .child(
-            h_flex().absolute().right(px(8.)).bottom(px(6.)).gap_0p5().invisible().group_hover(group, |d| d.visible())
-                .child(icon_btn(format!("umsg-retry-{id}"), IconName::RotateCcw, "重试(原样重新发送)")
-                    .on_click(move |_, _, cx| { cx.stop_propagation(); s_retry.update(cx, |m, cx| m.retry_user(&id_retry, cx)); }))
-                .child(icon_btn(format!("umsg-copy-{id}"), IconName::Copy, "复制消息")
-                    .on_click(move |_, _, cx| { cx.stop_propagation(); cx.write_to_clipboard(ClipboardItem::new_string(copy_text.clone())); }))
-                .child(icon_btn(format!("umsg-edit-{id}"), IconName::SquarePen, "编辑并重新发送")
+            h_flex().absolute().right(px(8.)).bottom(px(6.)).gap_0p5().when(!(copied || retried), |d| d.invisible().group_hover(group, |d| d.visible()))
+                .child(action_btn(format!("umsg-retry-{id}"), IconName::RotateCcw, "重试(原样重新发送)", retried, cx)
+                    .on_click(move |_, _, cx| {
+                        cx.stop_propagation();
+                        s_retry_mark.update(cx, |m, cx| m.mark_copied(&format!("r-{id_retry_mark}"), cx));
+                        s_retry.update(cx, |m, cx| m.retry_user(&id_retry, cx));
+                    }))
+                .child(action_btn(format!("umsg-copy-{id}"), IconName::Copy, "复制消息", copied, cx)
+                    .on_click(move |_, _, cx| {
+                        cx.stop_propagation();
+                        cx.write_to_clipboard(ClipboardItem::new_string(copy_text.clone()));
+                        s_copy_mark.update(cx, |m, cx| m.mark_copied(&format!("c-{id_copy_mark}"), cx));
+                    }))
+                .child(action_btn(format!("umsg-edit-{id}"), IconName::SquarePen, "编辑并重新发送", false, cx)
                     .on_click(move |_, window, cx| {
                         cx.stop_propagation();
                         let (id, text) = (id_edit.clone(), text_edit.clone());
-                        s_edit.update(cx, |m, cx| m.begin_edit(&id, &text, false, window, cx));
+                        s_edit.update(cx, |m, cx| m.begin_edit(&id, &text, true, window, cx));
                     })),
         )
         .into_any_element()

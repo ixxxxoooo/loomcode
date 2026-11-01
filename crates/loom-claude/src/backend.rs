@@ -270,11 +270,11 @@ impl Actor {
                 self.write(&protocol::question_response(&p, &answers));
                 return self.emit(AgentEvent::QuestionAnswered { id, answers });
             }
-            AgentCommand::ResolvePlan { id, approve } => {
+            AgentCommand::ResolvePlan { id, approve, mode } => {
                 let Some(p) = self.translator.take_pending(&id) else { return true };
-                self.write(&protocol::plan_response(&p, approve));
+                self.write(&protocol::plan_response(&p, approve, mode));
                 let mut ok = self.emit(AgentEvent::PlanResolved { id, approved: approve });
-                if approve && let Some(mode) = suggested_mode(&p) {
+                if approve && let Some(mode) = mode.or_else(|| suggested_mode(&p)) {
                     ok &= self.emit(AgentEvent::ModeChanged(mode));
                 }
                 return ok;

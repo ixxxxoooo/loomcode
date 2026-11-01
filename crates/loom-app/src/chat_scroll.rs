@@ -53,7 +53,12 @@ impl ChatScroll {
         match self.list.bounds_for_item(row) {
             // 行内上方有 5px 间距,卡片顶边 = 行顶 + 5
             Some(b) => b.top() + px(5.) < self.list.viewport_bounds().top(),
-            None => self.list.logical_scroll_top().item_ix > row,
+            // 没有行位置时只在滚动位置有效(不是「末尾」占位)且确实在它之后才算滚过,
+            // 避免贴底跟随时滚动位置尚未落定,把可见的最新消息误判成已滚过
+            None => {
+                let o = self.list.logical_scroll_top();
+                o.item_ix < self.list.item_count() && o.item_ix > row
+            }
         }
     }
 

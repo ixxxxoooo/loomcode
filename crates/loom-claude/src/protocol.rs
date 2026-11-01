@@ -146,10 +146,13 @@ pub fn question_response(pending: &Pending, answers: &[Vec<String>]) -> Value {
     success_response(&pending.request_id, allow_body(pending, input, None))
 }
 
-/// ExitPlanMode 的应答:批准时沿用 claude 建议的模式切换,拒绝时让它继续规划。
-pub fn plan_response(pending: &Pending, approve: bool) -> Value {
+/// ExitPlanMode 的应答:批准时切到用户选的模式(没选就沿用 claude 建议的),拒绝时让它继续规划。
+pub fn plan_response(pending: &Pending, approve: bool, mode: Option<PermissionMode>) -> Value {
     let body = if approve {
-        let perms = (!pending.suggestions.is_empty()).then(|| Value::Array(pending.suggestions.clone()));
+        let perms = match mode {
+            Some(m) => Some(json!([{"type": "setMode", "mode": m.cli_value(), "destination": "session"}])),
+            None => (!pending.suggestions.is_empty()).then(|| Value::Array(pending.suggestions.clone())),
+        };
         allow_body(pending, pending.input.clone(), perms)
     } else {
         deny_body(pending, "用户没有批准该计划,请根据反馈继续完善计划")
@@ -162,7 +165,7 @@ pub fn reject_response(pending: &Pending) -> Value {
     match pending.kind {
         PendingKind::Permission => permission_response(pending, "reject"),
         PendingKind::Question => success_response(&pending.request_id, deny_body(pending, "用户取消了提问")),
-        PendingKind::Plan => plan_response(pending, false),
+        PendingKind::Plan => plan_response(pending, false, None),
     }
 }
 
@@ -236,10 +239,13 @@ mod tests {
     fn 计划批准与拒绝() {
         let mut p = pending(PendingKind::Plan);
         p.suggestions = vec![json!({"type": "setMode", "mode": "default", "destination": "session"})];
-        let yes = plan_response(&p, true);
+        let yes = plan_response(&p, true, None);
         assert_eq!(yes["response"]["response"]["behavior"], "allow");
         assert_eq!(yes["response"]["response"]["updatedPermissions"][0]["mode"], "default");
-        let no = plan_response(&p, false);
+        // 用户选了模式就以所选为准
+        let auto = plan_response(&p, true, Some(PermissionMode::Auto));
+        assert_eq!(auto["response"]["response"]["updatedPermissions"][0]["mode"], "auto");
+        let no = plan_response(&p, false, None);
         assert_eq!(no["response"]["response"]["behavior"], "deny");
     }
 

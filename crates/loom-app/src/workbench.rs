@@ -643,7 +643,7 @@ impl Workbench {
                     let _ = cx.update(|window, cx| {
                         let found = m.read(cx).state.items.iter().filter_map(|i| if let TimelineItem::User { id, text, .. } = i { Some((id.clone(), crate::user_message::display_text(text))) } else { None }).nth(n.saturating_sub(1));
                         if let Some((id, text)) = found {
-                            m.update(cx, |m, cx| m.begin_edit(&id, &text, false, window, cx));
+                            m.update(cx, |m, cx| m.begin_edit(&id, &text, true, window, cx));
                         }
                     });
                 })

@@ -224,8 +224,9 @@ impl SessionModel {
         self.remeasure_id(id, cx);
     }
 
-    pub fn resolve_plan(&mut self, id: &str, approve: bool, cx: &mut Context<Self>) {
-        self.handle.send(AgentCommand::ResolvePlan { id: id.into(), approve });
+    /// 处理计划:批准时 `mode` 是之后要用的权限模式(`None` 沿用 claude 的建议)。
+    pub fn resolve_plan(&mut self, id: &str, approve: bool, mode: Option<PermissionMode>, cx: &mut Context<Self>) {
+        self.handle.send(AgentCommand::ResolvePlan { id: id.into(), approve, mode });
         self.remeasure_id(id, cx);
     }
 

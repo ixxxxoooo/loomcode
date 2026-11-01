@@ -184,9 +184,12 @@ impl Player {
                 self.resolved.insert(id.clone());
                 self.send(AgentEvent::QuestionAnswered { id, answers });
             }
-            AgentCommand::ResolvePlan { id, approve } => {
+            AgentCommand::ResolvePlan { id, approve, mode } => {
                 self.resolved.insert(id.clone());
                 self.send(AgentEvent::PlanResolved { id, approved: approve });
+                if approve && let Some(mode) = mode {
+                    self.send(AgentEvent::ModeChanged(mode));
+                }
             }
             AgentCommand::Prompt { text, images, files, .. } => {
                 // 运行中的引导消息:直接作为用户条目追加

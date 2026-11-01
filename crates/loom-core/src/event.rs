@@ -91,7 +91,8 @@ pub enum AgentCommand {
     SetEffort(Effort),
     ResolvePermission { id: String, option: String },
     AnswerQuestion { id: String, answers: Vec<Vec<String>> },
-    ResolvePlan { id: String, approve: bool },
+    /// 计划批准;批准时 `mode` 是之后要切到的权限模式(`None` 沿用 claude 的建议)
+    ResolvePlan { id: String, approve: bool, mode: Option<PermissionMode> },
     /// 触发演示场景(仅演示后端识别)
     RunScenario(String),
     /// 关闭后端(结束子进程)

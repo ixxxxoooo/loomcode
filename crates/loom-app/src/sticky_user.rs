@@ -7,10 +7,10 @@
 use crate::chat_scroll::ChatScroll;
 use crate::model::SessionModel;
 use crate::row_groups::Row;
-use crate::ui::icon;
-use crate::user_message::display_text;
+use crate::user_message::{action_btn, display_text};
 use gpui_kit::assets::IconName;
 use gpui_kit::component::{ActiveTheme, h_flex};
+use gpui_kit::prelude::FluentBuilder as _;
 use gpui_kit::*;
 use loom_core::TimelineItem;
 
@@ -70,6 +70,14 @@ fn card_height(text: &str) -> f32 {
     if text.contains('\n') || text.chars().count() > 60 { 60. } else { 40. }
 }
 
+/// 正在编辑的用户消息所在的行下标。
+fn editing_row(session: &Entity<SessionModel>, cx: &App) -> Option<usize> {
+    let m = session.read(cx);
+    let eid = &m.editing.as_ref()?.id;
+    let item = m.state.items.iter().position(|i| matches!(i, TimelineItem::User { id, .. } if id == eid))?;
+    m.rows.iter().position(|r| matches!(r, Row::Item(i) if *i == item))
+}
+
 /// 渲染吸附层(绝对定位在会话流顶部);无需吸附且没有悬浮编辑时返回 None。
 ///
 /// 参数:`session` 会话;`scroller` 滚动状态。
@@ -81,15 +89,16 @@ pub fn render(session: &Entity<SessionModel>, scroller: &Entity<ChatScroll>, cx:
         div().absolute().top_0().left_0().right_0().h(px(h))
             .bg(linear_gradient(0., linear_color_stop(bg.opacity(0.), 0.), linear_color_stop(bg, 1.)))
     };
-    // 悬浮编辑:编辑卡盖在会话流顶部,向下展开
+    let sc = scroller.read(cx);
+    // 悬浮编辑:编辑卡盖在消息原来的位置上向下展开(吸附时盖在顶部),不推挤会话流
     if let Some(editor) = crate::user_message::render_pinned_editor(session, cx) {
+        let y = editing_row(session, cx).and_then(|r| sc.row_top(r)).unwrap_or(INSET).max(INSET);
         return Some(
-            div().absolute().top_0().left_0().right_0().child(backdrop(120.))
-                .child(div().w_full().px_3().pt(px(INSET)).flex().justify_center().child(div().w_full().max_w(max_w).child(editor)))
+            div().absolute().top(px(y)).left_0().right_0().px_3()
+                .child(div().w_full().px_1().flex().justify_center().child(div().w_full().max_w(max_w).child(editor)))
                 .into_any_element(),
         );
     }
-    let sc = scroller.read(cx);
     let top = sc.top().0;
     let target = {
         let m = session.read(cx);
@@ -103,13 +112,11 @@ pub fn render(session: &Entity<SessionModel>, scroller: &Entity<ChatScroll>, cx:
     };
     let (edit_click, edit_btn) = (edit.clone(), edit);
     let (s_retry, id_retry, copy_text) = (session.clone(), id.clone(), text.clone());
-    let btn = |bid: &'static str, ic: IconName, tip: &'static str| {
-        div().id(bid).size(px(24.)).flex().items_center().justify_center().rounded(px(6.)).cursor_pointer()
-            .on_mouse_down(MouseButton::Left, |_, _, cx| cx.stop_propagation())
-            .hover(|d| d.bg(t.foreground.opacity(0.08)))
-            .tooltip(move |window, cx| gpui_kit::component::tooltip::Tooltip::new(tip).build(window, cx))
-            .child(icon(ic, 12., t.muted_foreground))
+    let (copied, retried) = {
+        let c = session.read(cx).copied.as_deref();
+        (c == Some(format!("c-{id}").as_str()), c == Some(format!("r-{id}").as_str()))
     };
+    let (s_cm, id_cm, s_rm, id_rm) = (session.clone(), id.clone(), session.clone(), id.clone());
     Some(
         div().absolute().top(px(push)).left_0().right_0()
             // 卡片范围内与背景同色,下缘再渐隐,内容从卡片下面平滑淡入
@@ -122,12 +129,20 @@ pub fn render(session: &Entity<SessionModel>, scroller: &Entity<ChatScroll>, cx:
                         .on_click(move |_, window, cx| edit_click(window, cx))
                         .child(text)
                         .child(
-                            h_flex().absolute().right(px(8.)).top(px(7.)).gap_0p5().invisible().group_hover("sticky-user", |d| d.visible())
-                                .child(btn("sticky-retry", IconName::RotateCcw, "重试(原样重新发送)")
-                                    .on_click(move |_, _, cx| { cx.stop_propagation(); s_retry.update(cx, |m, cx| m.retry_user(&id_retry, cx)); }))
-                                .child(btn("sticky-copy", IconName::Copy, "复制消息")
-                                    .on_click(move |_, _, cx| { cx.stop_propagation(); cx.write_to_clipboard(ClipboardItem::new_string(copy_text.clone())); }))
-                                .child(btn("sticky-edit", IconName::SquarePen, "编辑并重新发送")
+                            h_flex().absolute().right(px(8.)).top(px(7.)).gap_0p5().when(!(copied || retried), |d| d.invisible().group_hover("sticky-user", |d| d.visible()))
+                                .child(action_btn("sticky-retry".into(), IconName::RotateCcw, "重试(原样重新发送)", retried, cx)
+                                    .on_click(move |_, _, cx| {
+                                        cx.stop_propagation();
+                                        s_rm.update(cx, |m, cx| m.mark_copied(&format!("r-{id_rm}"), cx));
+                                        s_retry.update(cx, |m, cx| m.retry_user(&id_retry, cx));
+                                    }))
+                                .child(action_btn("sticky-copy".into(), IconName::Copy, "复制消息", copied, cx)
+                                    .on_click(move |_, _, cx| {
+                                        cx.stop_propagation();
+                                        cx.write_to_clipboard(ClipboardItem::new_string(copy_text.clone()));
+                                        s_cm.update(cx, |m, cx| m.mark_copied(&format!("c-{id_cm}"), cx));
+                                    }))
+                                .child(action_btn("sticky-edit".into(), IconName::SquarePen, "编辑并重新发送", false, cx)
                                     .on_click(move |_, window, cx| { cx.stop_propagation(); edit_btn(window, cx); })),
                         ),
                 ),
