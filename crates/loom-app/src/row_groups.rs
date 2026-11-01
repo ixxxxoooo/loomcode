@@ -17,6 +17,8 @@ pub enum Row {
     Item(usize),
     /// 一段连续的工具调用(条目下标范围,至少 2 个)
     Tools(Range<usize>),
+    /// 一段连续的子 Agent 卡片(条目下标范围,至少 2 个):带「并行 N 个」汇总头
+    Agents(Range<usize>),
     /// 已结束回合的整段过程(思考、工具调用、中间叙述)折成的「已工作 12分8秒」一行
     Digest(Range<usize>),
     /// 末尾的「处理中」提示行(回合在进行、但没有任何条目正在流式输出时显示)
@@ -28,7 +30,7 @@ impl Row {
     pub fn range(&self) -> Range<usize> {
         match self {
             Row::Item(i) => *i..*i + 1,
-            Row::Tools(r) | Row::Digest(r) => r.clone(),
+            Row::Tools(r) | Row::Agents(r) | Row::Digest(r) => r.clone(),
             Row::Working => 0..0,
         }
     }
@@ -129,6 +131,16 @@ pub fn build_rows(items: &[TimelineItem], working: bool, density: ToolDensity, d
             i = d.end;
             continue;
         }
+        // 连续的子 Agent 卡片并成一组(并行派发时一眼看到整体进度)
+        if matches!(items[i], TimelineItem::Subagent(_)) {
+            let mut j = i + 1;
+            while j < items.len() && matches!(items[j], TimelineItem::Subagent(_)) {
+                j += 1;
+            }
+            rows.push(if j - i >= 2 { Row::Agents(i..j) } else { Row::Item(i) });
+            i = j;
+            continue;
+        }
         if foldable(&items[i], density).is_some() {
             let mut j = i + 1;
             while j < items.len() && foldable(&items[j], density).is_some() {
@@ -170,6 +182,7 @@ pub fn item_to_row(rows: &[Row], item_count: usize) -> Vec<usize> {
 ///
 /// 参数:`tools` 这一段里的工具。
 pub fn needs_attention(tools: &[&ToolCall]) -> bool {
+    // 失败要看到;被拒绝 / 被中断是用户自己的决定,不强行展开
     tools.iter().any(|t| !t.status.is_finished() || t.status == ToolStatus::Failed)
 }
 
@@ -190,9 +203,31 @@ pub fn summary(tools: &[&ToolCall]) -> String {
     parts.iter().filter(|(n, _, _)| *n > 0).map(|(n, verb, unit)| format!("{verb} {n} {unit}")).collect::<Vec<_>>().join("、")
 }
 
+/// 一组子 Agent 的汇总:(运行中, 已完成, 失败, 已停止)。
+pub fn agents_tally(cards: &[&loom_core::SubagentCard]) -> (usize, usize, usize, usize) {
+    use loom_core::SubagentStatus as S;
+    let n = |f: &dyn Fn(S) -> bool| cards.iter().filter(|c| f(c.status)).count();
+    (n(&|s| matches!(s, S::Starting | S::Running | S::Background)), n(&|s| s == S::Completed), n(&|s| s == S::Failed), n(&|s| s == S::Stopped))
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn 连续子agent合成一组() {
+        let card = |id: &str| TimelineItem::Subagent(loom_core::SubagentCard::new(id, "x", "d", loom_core::SubagentStatus::Completed));
+        let items = vec![text("a"), card("1"), card("2"), card("3"), text("b"), card("4")];
+        assert_eq!(build_rows(&items, false, ToolDensity::Standard, &Default::default()), vec![Row::Item(0), Row::Agents(1..4), Row::Item(4), Row::Item(5)]);
+    }
+
+    #[test]
+    fn 子agent汇总计数() {
+        use loom_core::{SubagentCard as C, SubagentStatus as S};
+        let cs = [C::new("1", "x", "d", S::Running), C::new("2", "x", "d", S::Background), C::new("3", "x", "d", S::Failed), C::new("4", "x", "d", S::Stopped), C::new("5", "x", "d", S::Completed)];
+        let refs: Vec<&C> = cs.iter().collect();
+        assert_eq!(agents_tally(&refs), (2, 1, 1, 1));
+    }
 
     fn tool(id: &str, kind: ToolKind, status: ToolStatus) -> TimelineItem {
         let mut t = ToolCall::new(id, "x", "x");

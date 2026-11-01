@@ -41,6 +41,9 @@ fn status_indicator(status: ToolStatus, cx: &App) -> AnyElement {
         // 成功不加勾,只在进行中 / 失败时标示状态
         ToolStatus::Completed => div().into_any_element(),
         ToolStatus::Failed => icon(IconName::X, 12., t.danger).into_any_element(),
+        // 被拒绝:用户自己的决定,不是出错;被中断:用户取消了回合
+        ToolStatus::Denied => icon(IconName::Ban, 12., t.warning).into_any_element(),
+        ToolStatus::Interrupted => icon(IconName::CirclePause, 12., t.muted_foreground).into_any_element(),
     }
 }
 

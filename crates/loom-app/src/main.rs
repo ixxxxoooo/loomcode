@@ -10,7 +10,10 @@
 mod ansi;
 mod ask_cards;
 mod dock_cards;
+mod agent_group;
 mod subagent_card;
+mod task_ui;
+mod tasks_tab;
 mod subagent_tab;
 mod tool_present;
 mod wizard_card;

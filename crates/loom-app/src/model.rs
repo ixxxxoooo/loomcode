@@ -36,6 +36,10 @@ pub struct SessionModel {
     pub wheel_acc: f32,
     pub wheel_pending: bool,
     wheel_last: f32,
+    /// 输入框上方的后台任务列表是否展开
+    pub tasks_open: bool,
+    /// 是否已启动「有任务在跑就每秒刷新一次」的计时(用来刷新用时与停滞提示)
+    task_ticking: bool,
 }
 
 impl SessionModel {
@@ -78,6 +82,8 @@ impl SessionModel {
             wheel_acc: 0.,
             wheel_pending: false,
             wheel_last: 0.,
+            tasks_open: false,
+            task_ticking: false,
         }
     }
 
@@ -99,6 +105,7 @@ impl SessionModel {
         }
         self.track_thinking();
         self.track_turn(cx);
+        self.track_tasks(cx);
         // 回合结束:最后一条助手消息下面会出现操作条,行高变了
         if turn_ended {
             if let Some(ix) = self.state.items.iter().rposition(|i| matches!(i, TimelineItem::Assistant { .. })) {
@@ -246,7 +253,7 @@ impl SessionModel {
 
     pub(crate) fn remeasure_id(&mut self, id: &str, cx: &mut Context<Self>) {
         // 折叠组的 key 是「grp:首个工具 id」
-        let id = id.strip_prefix("grp:").or_else(|| id.strip_prefix("dg:")).unwrap_or(id);
+        let id = id.strip_prefix("grp:").or_else(|| id.strip_prefix("dg:")).or_else(|| id.strip_prefix("ag:")).unwrap_or(id);
         if let Some(row) = self.state.row_of(id).and_then(|i| self.item_row.get(i).copied()) {
             self.scroller.update(cx, |s, cx| {
                 s.remeasure_items(row..row + 1, cx);
@@ -302,6 +309,47 @@ impl SessionModel {
                 }
             }
         }
+    }
+
+    /// 有后台任务或子 Agent 在运行时,每秒刷新一次界面(用时、停滞提示随之更新);都结束后自动停下。
+    fn track_tasks(&mut self, cx: &mut Context<Self>) {
+        let busy = self.has_live_work();
+        if busy && !self.task_ticking {
+            self.task_ticking = true;
+            cx.spawn(async move |this, cx| loop {
+                cx.background_executor().timer(std::time::Duration::from_secs(1)).await;
+                let alive = this.update(cx, |m, cx| {
+                    let on = m.has_live_work();
+                    if on {
+                        cx.notify();
+                    } else {
+                        m.task_ticking = false;
+                    }
+                    on
+                });
+                if !alive.unwrap_or(false) {
+                    break;
+                }
+            })
+            .detach();
+        }
+    }
+
+    /// 是否有仍在运行的后台任务或子 Agent。
+    pub fn has_live_work(&self) -> bool {
+        self.state.running_task_count() > 0 || self.state.items.iter().any(|i| matches!(i, TimelineItem::Subagent(c) if c.is_active()))
+    }
+
+    /// 停止一个后台任务(命令、监听、子 Agent 都用同一条命令)。
+    pub fn stop_task(&mut self, task_id: &str, cx: &mut Context<Self>) {
+        self.handle.send(AgentCommand::StopTask { task_id: task_id.into() });
+        cx.notify();
+    }
+
+    /// 展开 / 收起输入框上方的后台任务列表。
+    pub fn toggle_tasks(&mut self, cx: &mut Context<Self>) {
+        self.tasks_open = !self.tasks_open;
+        cx.notify();
     }
 
     /// 思考用时(秒);没有实时计时(历史回放)或还没结束返回 `None`。
@@ -382,6 +430,8 @@ pub enum UiRequest {
     OpenSubagent(String),
     /// 在右侧「文件」里预览某个文件
     OpenFile(String),
+    /// 打开右侧「任务」标签,并选中某个任务(`None` 只打开)
+    OpenTasks(Option<String>),
 }
 
 impl EventEmitter<UiRequest> for SessionModel {}

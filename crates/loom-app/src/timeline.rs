@@ -43,6 +43,7 @@ pub fn render_row(session: &Entity<SessionModel>, ix: usize, window: &mut Window
             }
         }
         crate::row_groups::Row::Tools(range) => crate::tool_group::render_group(session, range, cx),
+        crate::row_groups::Row::Agents(range) => crate::agent_group::render_group(session, range, window, cx),
         crate::row_groups::Row::Digest(range) => crate::turn_digest::render_digest(session, range, window, cx),
         crate::row_groups::Row::Working => render_working(session, cx),
     };
@@ -85,6 +86,7 @@ pub fn render_item(session: &Entity<SessionModel>, item: &TimelineItem, depth: u
         TimelineItem::Notice { level, text, .. } => cards::render_notice(*level, text, cx),
         TimelineItem::Canvas { id, title } => cards::render_canvas(session, id, title, cx),
         TimelineItem::Changes { files, .. } => cards::render_changes(session, files, cx),
+        TimelineItem::TaskNote { task_id, kind, status, text, .. } => crate::task_ui::render_note(session, task_id, *kind, *status, text, cx),
     }
 }
 

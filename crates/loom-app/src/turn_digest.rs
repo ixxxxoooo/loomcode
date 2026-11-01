@@ -60,6 +60,7 @@ pub fn render_digest(session: &Entity<SessionModel>, range: Range<usize>, window
             let body: Vec<AnyElement> = sub.into_iter().map(|row| match row {
                 Row::Item(i) => crate::timeline::render_item(session, &items[i], 0, window, cx),
                 Row::Tools(r) => crate::tool_group::render_group(session, range.start + r.start..range.start + r.end, cx),
+                Row::Agents(r) => crate::agent_group::render_group(session, range.start + r.start..range.start + r.end, window, cx),
                 Row::Digest(_) | Row::Working => div().into_any_element(),
             }).collect();
             d.child(v_flex().w_full().pl(px(14.)).gap_1().children(body))

@@ -57,10 +57,12 @@ pub enum RightTab {
     Output,
     /// 子 Agent 的完整对话(只能从时间线里的子 Agent 卡片打开,不在「+」菜单里)
     Subagent,
+    /// 后台任务:命令、监听、子 Agent 的列表、输出与停止
+    Tasks,
 }
 
 impl RightTab {
-    pub const ALL: [RightTab; 5] = [Self::Changes, Self::Files, Self::Terminal, Self::Plan, Self::Output];
+    pub const ALL: [RightTab; 6] = [Self::Changes, Self::Files, Self::Terminal, Self::Plan, Self::Output, Self::Tasks];
 
     /// 英文键(环境变量、持久化用)。
     pub fn key(self) -> &'static str {
@@ -71,6 +73,7 @@ impl RightTab {
             Self::Plan => "plan",
             Self::Output => "output",
             Self::Subagent => "subagent",
+            Self::Tasks => "tasks",
         }
     }
 
@@ -82,6 +85,7 @@ impl RightTab {
             Self::Plan => "计划",
             Self::Output => "输出",
             Self::Subagent => "子 Agent",
+            Self::Tasks => "任务",
         }
     }
 
@@ -93,6 +97,7 @@ impl RightTab {
             Self::Plan => IconName::ListTodo,
             Self::Output => IconName::ScrollText,
             Self::Subagent => IconName::Bot,
+            Self::Tasks => IconName::Activity,
         }
     }
 }
@@ -946,6 +951,11 @@ impl Workbench {
                 let id = id.clone();
                 self.panel.update(cx, |p, cx| p.open_subagent(id, cx));
             }
+            UiRequest::OpenTasks(id) => {
+                self.right_open = true;
+                let id = id.clone();
+                self.panel.update(cx, |p, cx| p.open_tasks(id, cx));
+            }
             UiRequest::OpenFile(path) => {
                 self.right_open = true;
                 let path = path.clone();
@@ -1210,6 +1220,7 @@ pub fn chat_panel_with_footer(parts: Option<(Entity<SessionModel>, Entity<Compos
             ),
         )
         .children(crate::dock_cards::render(&model_for_dock, cx))
+        .children(crate::task_ui::dock(&model_for_dock, cx))
         .child(composer)
         .child(footer)
         .into_any_element()
