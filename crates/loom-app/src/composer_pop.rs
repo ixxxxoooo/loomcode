@@ -77,11 +77,11 @@ pub fn model_popup(picker: &Picker, running: bool, effort: Effort, this: Entity<
                     this.update(cx, |c, cx| if is_active { c.choose_model(&id, cx) } else { c.choose_provider_model(gid, id, cx) });
                 }))
                 .when(!enabled, |d| d.opacity(0.45))
-                .child(div().w(px(14.)).child(if on { icon(IconName::Check, 12., t.primary).into_any_element() } else { div().into_any_element() }))
+                // 名字完整显示(不压缩),说明占剩余宽度、过长截断
+                .child(div().w(px(14.)).flex_none().child(if on { icon(IconName::Check, 12., t.primary).into_any_element() } else { div().into_any_element() }))
                 .child(crate::brand_icons::brand_icon(&m.id, &m.name, 14., if on { t.foreground } else { t.muted_foreground }))
-                .child(div().text_size(px(13.)).truncate().child(m.name.clone()))
-                .child(div().flex_1())
-                .child(div().text_size(px(11.)).text_color(t.muted_foreground).child(m.description.clone()));
+                .child(div().flex_none().whitespace_nowrap().text_size(px(13.)).child(m.name.clone()))
+                .child(div().flex_1().min_w_0().text_right().truncate().text_size(px(11.)).text_color(t.muted_foreground).child(m.description.clone()));
             list.push(row.into_any_element());
         }
     };
@@ -98,7 +98,7 @@ pub fn model_popup(picker: &Picker, running: bool, effort: Effort, this: Entity<
             .on_click(move |_, _, cx| { this.update(cx, |c, cx| c.choose_effort(e, cx)); })
             .child(e.label())
     }));
-    v_flex().absolute().bottom(px(44.)).left(px(8.)).w(px(300.)).p_1().rounded(px(10.)).border_1().border_color(t.border).bg(t.popover).shadow_lg()
+    v_flex().absolute().bottom(px(44.)).left(px(8.)).w(px(340.)).p_1().rounded(px(10.)).border_1().border_color(t.border).bg(t.popover).shadow_lg()
         .child(v_flex().id("pick-model-list").max_h(px(380.)).overflow_y_scroll().children(list))
         .child(div().h(px(1.)).my_1().bg(t.border))
         .child(div().px_2().pt_1().pb_0p5().text_size(px(11.)).text_color(t.muted_foreground).child("思考强度"))
