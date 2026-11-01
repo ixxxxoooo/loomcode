@@ -1,9 +1,9 @@
 //! 引用预览窗的渲染(尺寸与配色照 VS Code:`peekView*` 主题色、树行高 23、预览与树 7:3、18 行高)。
 
-use crate::code_hl::{overlay_background, split_by_line, styles};
 use crate::ide::IdeView;
 use crate::ide_overlay::Overlay;
-use crate::ide_peek::PeekState;
+use crate::ide_peek::{PLine, PeekState, TreeRow};
+use std::sync::Arc;
 use crate::ui::MONO;
 use gpui_kit::component::{ActiveTheme, h_flex, v_flex};
 use gpui_kit::prelude::FluentBuilder as _;
@@ -17,8 +17,6 @@ const HEIGHT_LINES: f32 = 18.;
 const HEAD_H: f32 = 27.;
 /// 树的行高(VS Code 的 `ref-tree` 行高 23)。
 const ROW_H: f32 = 23.;
-/// 预览里最多渲染目标行前后各多少行。
-const WINDOW: usize = 400;
 
 /// VS Code 默认主题里 peekView 相关的颜色(浅色 / 深色各一套)。
 struct Colors {
@@ -33,6 +31,11 @@ struct Colors {
     result_match: Hsla,
     editor_bg: Hsla,
     editor_match: Hsla,
+}
+
+/// 预览里引用命中处的底色(`peekViewEditor.matchHighlightBackground`)。
+pub fn match_background(dark: bool) -> Hsla {
+    colors(dark).editor_match
 }
 
 fn colors(dark: bool) -> Colors {
@@ -81,71 +84,55 @@ fn peek_zone(st: &PeekState, width: f32, lh: f32, cx: &mut Context<IdeView>) -> 
     let preview_w = (width * RATIO).floor();
     let body = h_flex().w_full().h(px(body_h)).flex_none().overflow_hidden().border_t_1().border_color(c.border.opacity(0.4))
         .child(div().w(px(preview_w)).h_full().flex_none().bg(c.editor_bg).child(preview_pane(st, &c, lh, cx)))
-        .child(div().id("peek-tree").flex_1().min_w_0().h_full().overflow_y_scroll().bg(c.result_bg).child(tree_pane(st, &c, cx)));
+        .child(div().id("peek-tree").flex_1().min_w_0().h_full().overflow_hidden().bg(c.result_bg).child(tree_pane(st, &c, cx)));
     v_flex().w(px(width)).border_t_1().border_b_1().border_color(c.border).shadow_lg().occlude()
         .on_mouse_down(MouseButton::Left, |_, _, cx| cx.stop_propagation())
         .child(head).child(body).into_any_element()
 }
 
-/// 右边的引用树:单文件时直接列引用;多文件时按文件分组(文件名 + 目录 + 引用数徽标)。
+/// 右边的引用树(虚拟列表,只画可见行):单文件时直接列引用;多文件时按文件分组(文件名 + 目录 + 引用数徽标)。
 fn tree_pane(st: &PeekState, c: &Colors, cx: &mut Context<IdeView>) -> AnyElement {
-    let multi = st.file_count() > 1;
-    let mut col = v_flex().w_full().text_size(px(13.));
-    let mut last = None;
-    for (i, it) in st.items.iter().enumerate() {
-        if multi && last != Some(&it.path) {
-            last = Some(&it.path);
-            let fname = it.path.file_name().map(|n| n.to_string_lossy().to_string()).unwrap_or_default();
-            let dir = it.path.parent().and_then(|p| p.file_name()).map(|n| n.to_string_lossy().to_string()).unwrap_or_default();
-            let count = st.items.iter().filter(|x| x.path == it.path).count();
-            col = col.child(
-                h_flex().h(px(ROW_H)).w_full().flex_none().px_2().gap_1p5().items_center().text_color(c.result_file)
-                    .child(crate::file_icons::file_icon_img(&fname, false, false, 14.))
-                    .child(div().flex_none().child(fname))
-                    .child(div().flex_1().min_w_0().truncate().text_size(px(11.7)).opacity(0.7).child(dir))
-                    .child(div().mr(px(12.)).px_1p5().rounded_full().bg(c.selection).text_size(px(11.)).child(count.to_string())),
-            );
-        }
-        let sel = i == st.selected;
-        let hl = HighlightStyle { color: Some(c.result_file), background_color: Some(c.result_match), ..Default::default() };
-        col = col.child(
-            h_flex().id(("peek-ref", i)).h(px(ROW_H)).w_full().flex_none().when(multi, |d| d.pl(px(26.))).when(!multi, |d| d.pl_2()).pr_2().items_center().cursor_pointer().overflow_hidden()
-                .text_color(c.result_line).when(sel, |d| d.bg(c.selection).text_color(c.result_file))
-                .on_click(cx.listener(move |this, ev: &ClickEvent, window, cx| if ev.click_count() >= 2 { this.peek_open(i, window, cx) } else { this.peek_select(i, cx) }))
-                .child(div().min_w_0().whitespace_nowrap().child(StyledText::new(it.text.clone()).with_highlights(vec![(it.hit.clone(), hl)]))),
-        );
-    }
-    col.into_any_element()
+    let rows = st.rows.clone();
+    let items = Arc::new(st.items.iter().map(|i| (i.text.clone(), i.hit.clone())).collect::<Vec<_>>());
+    let (multi, selected) = (st.file_count > 1, st.selected);
+    let view = cx.weak_entity();
+    let (sel_bg, file_fg, line_fg, badge_bg, match_bg) = (c.selection, c.result_file, c.result_line, c.selection, c.result_match);
+    uniform_list("peek-tree-list", rows.len(), move |range, _, _| {
+        range.map(|ix| match &rows[ix] {
+            TreeRow::File { name, dir, count } => h_flex().h(px(ROW_H)).w_full().px_2().gap_1p5().items_center().text_size(px(13.)).text_color(file_fg)
+                .child(crate::file_icons::file_icon_img(name, false, false, 14.))
+                .child(div().flex_none().child(name.clone()))
+                .child(div().flex_1().min_w_0().truncate().text_size(px(11.7)).opacity(0.7).child(dir.clone()))
+                .child(div().mr(px(12.)).px_1p5().rounded_full().bg(badge_bg).text_size(px(11.)).child(count.to_string()))
+                .into_any_element(),
+            TreeRow::Ref(i) => {
+                let i = *i;
+                let (text, hit) = &items[i];
+                let hl = HighlightStyle { color: Some(file_fg), background_color: Some(match_bg), ..Default::default() };
+                let v = view.clone();
+                h_flex().id(("peek-ref", ix)).h(px(ROW_H)).w_full().when(multi, |d| d.pl(px(26.))).when(!multi, |d| d.pl_2()).pr_2().items_center().cursor_pointer().overflow_hidden().text_size(px(13.))
+                    .text_color(line_fg).when(i == selected, |d| d.bg(sel_bg).text_color(file_fg))
+                    .on_click(move |ev, window, cx| { let _ = v.update(cx, |this, cx| if ev.click_count() >= 2 { this.peek_open(i, window, cx) } else { this.peek_select(i, cx) }); })
+                    .child(div().min_w_0().whitespace_nowrap().child(StyledText::new(text.clone()).with_highlights(vec![(hit.clone(), hl)])))
+                    .into_any_element()
+            }
+        }).collect::<Vec<_>>()
+    }).track_scroll(&st.scroll_tree).size_full().into_any_element()
 }
 
-/// 左边的代码预览:选中引用所在文件(目标行前后各 `WINDOW` 行),语法高亮、行号、本文件里所有引用加底色、目标行滚到中间。
+/// 左边的代码预览(虚拟列表):语法高亮与引用底色在载入时已算好,这里只按可见范围画行。
 fn preview_pane(st: &PeekState, c: &Colors, lh: f32, cx: &mut Context<IdeView>) -> AnyElement {
-    let (Some(p), Some(it)) = (&st.preview, st.items.get(st.selected)) else {
+    let Some(p) = &st.preview else {
         return div().p_3().text_size(px(12.)).text_color(c.title_desc).child("没有可用的预览").into_any_element();
     };
-    let first = (it.line as usize).saturating_sub(WINDOW);
-    let last = (it.line as usize + WINDOW).min(p.lines.len());
-    let slice: Vec<&str> = p.lines[first..last].iter().map(String::as_str).collect();
-    let all = styles(&slice.join("\n"), crate::file_tree::language_for(&p.path), cx);
-    let per = split_by_line(&slice, &all);
-    let fg = cx.theme().foreground;
-    let muted = cx.theme().muted_foreground;
-    let rows = slice.iter().enumerate().map(|(k, l)| {
-        let ln = first + k;
-        let mut hl = per[k].clone();
-        // 本文件里的每处引用都加底色(VS Code 的 reference-decoration)
-        for r in st.items.iter().filter(|r| r.path == p.path && r.line as usize == ln) {
-            let (a, b) = (l.char_indices().nth(r.col as usize).map_or(l.len(), |(i, _)| i), l.char_indices().nth(r.end_col as usize).map_or(l.len(), |(i, _)| i));
-            hl = overlay_background(&hl, a..b.max(a), c.editor_match);
-        }
-        h_flex().h(px(lh)).flex_none().items_center()
-            .child(div().w(px(48.)).flex_none().pr_3().text_right().text_size(px(12.)).text_color(muted).font_family(MONO).child((ln + 1).to_string()))
-            .child(div().flex_1().min_w_0().overflow_hidden().whitespace_nowrap().text_size(px(13.)).text_color(fg).font_family(MONO).child(StyledText::new(if l.is_empty() { " ".to_string() } else { (*l).to_string() }).with_highlights(hl)))
-    }).collect::<Vec<_>>();
-    // 目标行滚到视口中间:往上留约半个窗口的行数
-    if st.scrolled_for.get() != st.selected {
-        st.scrolled_for.set(st.selected);
-        st.scroll.scroll_to_top_of_item((it.line as usize - first).saturating_sub((HEIGHT_LINES / 2.) as usize));
-    }
-    div().id("peek-preview").size_full().overflow_y_scroll().track_scroll(&st.scroll).children(rows).into_any_element()
+    let lines: Arc<Vec<PLine>> = p.lines.clone();
+    let (fg, muted) = (cx.theme().foreground, cx.theme().muted_foreground);
+    uniform_list("peek-preview-list", lines.len(), move |range, _, _| {
+        range.filter_map(|ix| lines.get(ix)).map(|l| {
+            h_flex().h(px(lh)).w_full().items_center()
+                .child(div().w(px(48.)).flex_none().pr_3().text_right().text_size(px(12.)).text_color(muted).font_family(MONO).child((l.ln + 1).to_string()))
+                .child(div().flex_1().min_w_0().overflow_hidden().whitespace_nowrap().text_size(px(13.)).text_color(fg).font_family(MONO)
+                    .child(StyledText::new(if l.text.is_empty() { " ".to_string() } else { l.text.clone() }).with_highlights(l.hl.clone())))
+        }).collect::<Vec<_>>()
+    }).track_scroll(&st.scroll_preview).size_full().into_any_element()
 }

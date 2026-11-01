@@ -11,7 +11,7 @@ use crate::lsp_actions::apply_edits;
 use anyhow::{Result, anyhow};
 use gpui_kit::component::input::{InputEvent, InputState};
 use gpui_kit::component::notification::Notification;
-use gpui_kit::component::{Rope, RopeExt as _, WindowExt as _};
+use gpui_kit::component::{ActiveTheme as _, Rope, RopeExt as _, WindowExt as _};
 use gpui_kit::*;
 use serde_json::{Value, json};
 use std::collections::HashMap;
@@ -65,19 +65,24 @@ impl IdeView {
                         return Ok(vec![]);
                     }
                     let locs: Vec<lsp_types::Location> = serde_json::from_value(v)?;
-                    let mut files: HashMap<String, String> = HashMap::new();
-                    let mut items = Vec::new();
+                    // 按文件分组:每个文件只读一次、只切一次行(以前每条引用都重切整份文件,引用多时很慢)
+                    let mut by_file: std::collections::BTreeMap<String, Vec<lsp_types::Location>> = Default::default();
                     for l in locs.into_iter().take(MAX_REFS) {
-                        let Some(path) = loom_lsp::uri::to_path(l.uri.as_str()) else { continue };
-                        let key = l.uri.to_string();
-                        let text = files.entry(key.clone()).or_insert_with(|| if key == sync.uri { full.clone() } else { std::fs::read_to_string(&path).unwrap_or_default() });
-                        let file_lines = split_lines(text);
-                        let (mut start, mut end) = (l.range.start, l.range.end);
-                        fix_pos(&mut start, &file_lines);
-                        fix_pos(&mut end, &file_lines);
-                        let line_text = file_lines.get(start.line as usize).map(|s| s.to_string()).unwrap_or_default();
-                        let end_col = if end.line == start.line { end.character } else { line_text.chars().count() as u32 };
-                        items.push(RawRef { path, line: start.line, col: start.character, end_col, line_text });
+                        by_file.entry(l.uri.to_string()).or_default().push(l);
+                    }
+                    let mut items = Vec::new();
+                    for (key, group) in by_file {
+                        let Some(path) = loom_lsp::uri::to_path(group[0].uri.as_str()) else { continue };
+                        let text = if key == sync.uri { full.clone() } else { std::fs::read_to_string(&path).unwrap_or_default() };
+                        let file_lines = split_lines(&text);
+                        for l in group {
+                            let (mut start, mut end) = (l.range.start, l.range.end);
+                            fix_pos(&mut start, &file_lines);
+                            fix_pos(&mut end, &file_lines);
+                            let line_text = file_lines.get(start.line as usize).map(|s| s.to_string()).unwrap_or_default();
+                            let end_col = if end.line == start.line { end.character } else { line_text.chars().count() as u32 };
+                            items.push(RawRef { path: path.clone(), line: start.line, col: start.character, end_col, line_text });
+                        }
                     }
                     Ok(items)
                 })
@@ -88,7 +93,7 @@ impl IdeView {
                     this.open_at(r.path, r.line, r.col, window, cx);
                 }
                 Ok(items) if !items.is_empty() => {
-                    let st = PeekState::new(items, offset);
+                    let st = PeekState::new(items, offset, cx.theme().is_dark(), cx);
                     this.set_overlay(Overlay::Refs(st), cx);
                 }
                 Ok(_) => Self::notify_ui(window, cx, Notification::info("没有找到引用")),
