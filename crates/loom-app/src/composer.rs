@@ -437,7 +437,11 @@ impl Render for Composer {
                 if this.suggestions.is_empty() { cx.propagate(); } else { this.accept_suggestion(this.sel, window, cx); }
             }))
             .capture_action(cx.listener(|this, _: &crate::workbench::Escape, _, cx| {
-                if this.suggestions.is_empty() && this.open.is_none() { cx.propagate(); } else { this.suggestions.clear(); this.open = None; cx.notify(); }
+                if this.suggestions.is_empty() && this.open.is_none() {
+                    // 回合运行中按 Esc 中断(与等待行的「按 Esc 中断」提示一致)
+                    let running = this.session.read(cx).state.phase == loom_core::Phase::Running;
+                    if running { this.session.update(cx, |m, cx| m.cancel(cx)); } else { cx.propagate(); }
+                } else { this.suggestions.clear(); this.open = None; cx.notify(); }
             }))
             .on_drop(cx.listener(|this, paths: &ExternalPaths, window, cx| {
                 for p in paths.paths() {

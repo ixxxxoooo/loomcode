@@ -81,3 +81,34 @@ pub fn glyph_anim(id: &str, style: SpinnerStyle, color: Hsla, size: f32) -> AnyE
 pub fn glyph_spinner(id: &str, color: Hsla, cx: &App) -> AnyElement {
     glyph_anim(id, current(cx).style, color, 14.)
 }
+
+/// 耗时文字:`12s` / `1m 05s` / `1h 02m`。
+pub fn elapsed_text(secs: u64) -> String {
+    match secs {
+        0..=59 => format!("{secs}s"),
+        60..=3599 => format!("{}m {:02}s", secs / 60, secs % 60),
+        _ => format!("{}h {:02}m", secs / 3600, (secs % 3600) / 60),
+    }
+}
+
+/// 整行等待文案:`思考中… (12s · 按 Esc 中断)`。
+///
+/// 参数:`verb` 带省略号的动词;`started` 回合开始时间(没有则不显示耗时与提示)。
+pub fn status_line(verb: String, started: Option<std::time::Instant>) -> String {
+    match started {
+        Some(t) => format!("{verb} ({} · 按 Esc 中断)", elapsed_text(t.elapsed().as_secs())),
+        None => verb,
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[::core::prelude::v1::test]
+    fn formats_elapsed() {
+        assert_eq!(elapsed_text(5), "5s");
+        assert_eq!(elapsed_text(65), "1m 05s");
+        assert_eq!(elapsed_text(3720), "1h 02m");
+    }
+}

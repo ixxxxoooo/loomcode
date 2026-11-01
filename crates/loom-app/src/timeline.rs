@@ -43,7 +43,7 @@ pub fn render_row(session: &Entity<SessionModel>, ix: usize, window: &mut Window
             }
         }
         crate::row_groups::Row::Tools(range) => crate::tool_group::render_group(session, range, cx),
-        crate::row_groups::Row::Working => render_working(session.entity_id().as_u64(), cx),
+        crate::row_groups::Row::Working => render_working(session, cx),
     };
     div()
         .w_full()
@@ -59,11 +59,12 @@ pub fn render_row(session: &Entity<SessionModel>, ix: usize, window: &mut Window
 }
 
 /// 回合进行中、暂时没有内容在流出时的「处理中」提示行。
-fn render_working(seed: u64, cx: &App) -> AnyElement {
+fn render_working(session: &Entity<SessionModel>, cx: &App) -> AnyElement {
+    let (seed, started) = (session.entity_id().as_u64(), session.read(cx).turn_started);
     let t = cx.theme();
     h_flex().h(px(26.)).px_2().gap_2().items_center()
         .child(crate::appearance::glyph_spinner("working", t.primary, cx))
-        .child(ShimmerText::new(crate::appearance::verb_text(cx, &seed.to_string())).id("working-shimmer"))
+        .child(ShimmerText::new(crate::appearance::status_line(crate::appearance::verb_text(cx, &seed.to_string()), started)).id("working-shimmer"))
         .text_size(px(13.)).text_color(t.muted_foreground)
         .into_any_element()
 }
@@ -160,7 +161,7 @@ fn render_thinking(session: &Entity<SessionModel>, id: &str, text: &str, streami
                 .on_click(move |_, _, cx| { s.update(cx, |m, cx| m.toggle(&sid, cx)); })
                 .child(if streaming { crate::appearance::glyph_spinner(&format!("think-{id}"), t.primary, cx) } else { icon(IconName::Brain, 14., t.muted_foreground).into_any_element() })
                 .child(if streaming {
-                    ShimmerText::new(crate::appearance::verb_text(cx, id)).id(SharedString::from(format!("think-shimmer-{id}"))).into_any_element()
+                    ShimmerText::new(crate::appearance::status_line(crate::appearance::verb_text(cx, id), session.read(cx).turn_started)).id(SharedString::from(format!("think-shimmer-{id}"))).into_any_element()
                 } else {
                     div().text_size(px(13.)).text_color(t.muted_foreground).child(thought_label(session.read(cx).thinking_secs(id))).into_any_element()
                 })

@@ -24,6 +24,8 @@ pub struct SessionModel {
     /// 刚点过「复制」的助手条目 id(1.5 秒后清掉,用来显示「已复制」)
     pub copied: Option<String>,
     /// 思考条目的计时:id → (开始, 结束)。只有实时看到的思考才有时长,历史回放没有
+    /// 当前回合开始时间(运行中才有);界面用它显示「12s · 按 Esc 中断」
+    pub turn_started: Option<std::time::Instant>,
     pub thinking_times: std::collections::HashMap<String, (std::time::Instant, Option<std::time::Instant>)>,
     pub item_row: Vec<usize>,
     pub wheel_acc: f32,
@@ -62,6 +64,7 @@ impl SessionModel {
             wizard_draft: Default::default(),
             rows: Vec::new(),
             copied: None,
+            turn_started: None,
             thinking_times: Default::default(),
             item_row: Vec::new(),
             wheel_acc: 0.,
@@ -87,6 +90,7 @@ impl SessionModel {
             }
         }
         self.track_thinking();
+        self.track_turn(cx);
         // 回合结束:最后一条助手消息下面会出现操作条,行高变了
         if turn_ended {
             if let Some(ix) = self.state.items.iter().rposition(|i| matches!(i, TimelineItem::Assistant { .. })) {
@@ -243,6 +247,30 @@ impl SessionModel {
         })
         .detach();
         cx.notify();
+    }
+
+    /// 跟踪回合计时:开始运行时记下时间并启动每秒一次的刷新,结束时清掉。
+    fn track_turn(&mut self, cx: &mut Context<Self>) {
+        let running = self.state.phase == Phase::Running;
+        if running && self.turn_started.is_none() {
+            self.turn_started = Some(std::time::Instant::now());
+            cx.spawn(async move |this, cx| loop {
+                cx.background_executor().timer(std::time::Duration::from_secs(1)).await;
+                let alive = this.update(cx, |m, cx| {
+                    let on = m.turn_started.is_some();
+                    if on {
+                        cx.notify();
+                    }
+                    on
+                });
+                if !alive.unwrap_or(false) {
+                    break;
+                }
+            })
+            .detach();
+        } else if !running {
+            self.turn_started = None;
+        }
     }
 
     /// 思考用时(秒);没有实时计时(历史回放)或还没结束返回 `None`。
