@@ -125,6 +125,8 @@ pub struct Workbench {
     pub settings_path: PathBuf,
     /// 侧栏的用户选择(置顶 / 归档 / 改名),落盘在 `state.json`
     pub ui_state: UiState,
+    /// 应用更新流程状态
+    pub update: crate::updater::UpdateState,
     pub ui_state_path: PathBuf,
     /// 侧栏是否显示已归档会话
     pub show_archived: bool,
@@ -252,6 +254,7 @@ impl Workbench {
             settings,
             settings_path,
             ui_state,
+            update: Default::default(),
             ui_state_path,
             show_archived: false,
             unread: HashSet::new(),
@@ -314,6 +317,7 @@ impl Workbench {
         cx.set_global(crate::Prefs(wb.settings.clone()));
         if !demo {
             wb.detect_claude(cx);
+            wb.startup_update(cx);
         }
         if let Ok(tab) = std::env::var("LOOM_SETTINGS") {
             wb.page = Page::Settings;

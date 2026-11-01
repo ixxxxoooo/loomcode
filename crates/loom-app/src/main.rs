@@ -79,6 +79,7 @@ mod theme;
 mod timeline;
 mod tool_card;
 mod ui;
+mod updater;
 mod view_cache;
 mod workspace_actions;
 mod worktree_actions;

@@ -239,6 +239,8 @@ pub struct AppSettings {
     pub notify_on_finish: bool,
     /// 在菜单栏显示图标
     pub tray_icon: bool,
+    /// 启动时自动检查更新(只提示,不自动安装)
+    pub auto_update_check: bool,
     /// 主题强调色(十六进制 RRGGBB);空则用主题默认
     pub accent: Option<String>,
     /// 追加到 Claude Code 系统提示末尾的内容(所有新会话)
@@ -281,6 +283,7 @@ impl Default for AppSettings {
             send_with_cmd_enter: false,
             notify_on_finish: true,
             tray_icon: true,
+            auto_update_check: true,
             accent: None,
             append_prompt: String::new(),
             load_claude_md: true,

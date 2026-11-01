@@ -2,9 +2,10 @@
 //!
 //! @author ixxxxoooo
 
-use super::widgets::{block_row, group, page_header, row, rows, segmented};
+use super::widgets::{block_row, group, page_header, row, rows, segmented, switch_row};
 use crate::ui::{MONO, pill};
 use crate::workbench::Workbench;
+use gpui_kit::component::Disableable as _;
 use gpui_kit::component::button::{Button, ButtonVariants};
 use gpui_kit::component::input::Input;
 use gpui_kit::component::switch::Switch;
@@ -183,6 +184,10 @@ pub fn about(wb: &Workbench, cx: &mut Context<Workbench>) -> AnyElement {
             row("运行模式", "演示模式用脚本化后端与沙盒项目", pill(if wb.demo { "演示" } else { "真实" }, if wb.demo { t.warning } else { t.success }, t.muted), cx),
             row("系统", "", div().font_family(MONO).text_size(px(12.5)).child(format!("{} · {}", std::env::consts::OS, std::env::consts::ARCH)), cx),
         ], cx))
+        .child(group("更新", rows![
+            row("当前状态", &wb.update_text(), update_buttons(wb, cx), cx),
+            switch_row("about-auto-update", "启动时自动检查更新", "只提示新版本,下载与重启更新由你点击确认", wb.settings.auto_update_check, cx, |this, v, cx| this.update_settings(cx, |s| s.auto_update_check = v)),
+        ], cx))
         .child(group("文件", rows![
             row("配置文件", "客户端偏好;Claude 自己的配置在 ~/.claude", div().font_family(MONO).text_size(px(12.)).text_color(t.muted_foreground).child(wb.settings_path.display().to_string()), cx),
             row("数据目录", "设置、服务商、日志与诊断包所在目录", Button::new("about-reveal").small().ghost().label("在 Finder 中显示")
@@ -193,4 +198,17 @@ pub fn about(wb: &Workbench, cx: &mut Context<Workbench>) -> AnyElement {
             row("Material Icon Theme", "文件图标,取自 OhMyAgent 的图标集", div(), cx),
         ], cx))
         .into_any_element()
+}
+
+/// 更新区右侧按钮:按状态显示「检查更新 / 下载 / 重启更新」,并提供发布页入口。
+fn update_buttons(wb: &Workbench, cx: &mut Context<Workbench>) -> Div {
+    use crate::updater::UpdateState as U;
+    let busy = matches!(wb.update, U::Checking | U::Downloading(_));
+    let main = match &wb.update {
+        U::Available(_) => Button::new("up-download").small().primary().label("下载更新").on_click(cx.listener(|this, _, _, cx| this.download_update(cx))),
+        U::Ready(_) => Button::new("up-install").small().primary().label("重启更新").on_click(cx.listener(|this, _, _, cx| this.install_update(cx))),
+        _ => Button::new("up-check").small().outline().label(if busy { "请稍候…" } else { "检查更新" }).disabled(busy).on_click(cx.listener(|this, _, _, cx| this.check_update(cx))),
+    };
+    h_flex().gap_2().child(main)
+        .child(Button::new("up-releases").small().ghost().label("发布页").on_click(|_, _, _| { let _ = std::process::Command::new("open").arg(format!("{}/releases", loom_config::update::REPOSITORY_URL)).spawn(); }))
 }
