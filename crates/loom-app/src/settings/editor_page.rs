@@ -26,7 +26,7 @@ pub fn render(wb: &Workbench, cx: &mut Context<Workbench>) -> AnyElement {
             switch_row("ed-syntax", "语法高亮", "之后新打开的文件生效;关闭可以让超大文件更流畅", e.syntax_highlight, cx, |this, v, cx| this.update_settings(cx, |s| s.editor.syntax_highlight = v)),
         ], cx))
         .child(group("编辑", rows![
-            row("缩进宽度", "Tab 键与缩进参考线使用的列数", segmented("ed-tab", vec![(2u8, "2"), (4u8, "4"), (8u8, "8")], e.tab_size, cx,
+            row("缩进宽度", "Tab 键缩进使用的列数", segmented("ed-tab", vec![(2u8, "2"), (4u8, "4"), (8u8, "8")], e.tab_size, cx,
                 |this, v, cx| this.update_settings(cx, |s| s.editor.tab_size = v)), cx),
             row("自动保存", "关闭 / 停止输入 1 秒后 / 切换标签或窗口失焦时", segmented("ed-autosave", vec![(AutoSave::Off, "关闭"), (AutoSave::Delay, "延迟"), (AutoSave::Blur, "失焦")], e.auto_save, cx,
                 |this, v, cx| this.update_settings(cx, |s| s.editor.auto_save = v)), cx),

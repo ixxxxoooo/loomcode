@@ -28,7 +28,7 @@ cargo run -p loom-app               # 真实模式:读 ~/.claude/projects,按需
 scripts/package.sh [--dmg]           # 打包 dist/LoomCode.app
 ```
 
-调试用环境变量(只用于截图与验证):`LOOM_SESSION`、`LOOM_TAB`、`LOOM_FILE`、`LOOM_IDE`、`LOOM_PAGE`(canvas / automation / browser / customize)、`LOOM_URL`、`LOOM_SETTINGS`、`LOOM_PALETTE`、`LOOM_POPUP`(model / context,输入框弹层)、`LOOM_THEME`、`LOOM_DIALOG`、`LOOM_TERM_SELECT`、`LOOM_CHANGES`、`LOOM_CUSTOMIZE`(plugins / mcp / skills / commands / agents / rules / hooks,选中自定义页标签)、`LOOM_IDE_TERM`、`LOOM_WINDOW_SIZE`、`LOOM_PREFILL`、`LOOM_AUTOSEND`、`LOOM_TERM_CMD`、`LOOM_CANVAS_SKIP`、`LOOM_DEV`(开发版标识,由 `scripts/dev.sh` 设置)。截图:`scripts/shots.sh <场景id>`(输出 `/tmp/loom-<id>.png`)。
+调试用环境变量(只用于截图与验证):`LOOM_SESSION`、`LOOM_TAB`、`LOOM_FILE`、`LOOM_IDE`、`LOOM_PAGE`(canvas / automation / browser / customize)、`LOOM_URL`、`LOOM_SETTINGS`(取值见 `SettingsTab::key`:general / appearance / editor / terminal / trust 等 23 个)、`LOOM_PALETTE`、`LOOM_POPUP`(model / context,输入框弹层)、`LOOM_THEME`(light / dark / system / one-light / one-dark)、`LOOM_DIALOG`、`LOOM_TERM_SELECT`、`LOOM_CHANGES`、`LOOM_CUSTOMIZE`(plugins / mcp / skills / commands / agents / rules / hooks,选中自定义页标签)、`LOOM_IDE_TERM`、`LOOM_WINDOW_SIZE`、`LOOM_PREFILL`、`LOOM_AUTOSEND`、`LOOM_TERM_CMD`、`LOOM_CANVAS_SKIP`、`LOOM_DEV`(开发版标识,由 `scripts/dev.sh` 设置)。截图:`scripts/shots.sh <场景id>`(输出 `/tmp/loom-<id>.png`)。
 
 ## 开发流程规则(每次改动都必须执行)
 
@@ -45,6 +45,7 @@ scripts/package.sh [--dmg]           # 打包 dist/LoomCode.app
 - 不读取、不输出、不提交任何密钥或钥匙串内容;环境变量只展示名称,值遮盖。
 - 不提交构建产物(`target`、`dist`)。
 - 在 `loom-app` 里 `use gpui_kit::*` 会遮蔽内置 `#[test]`,单元测试请写 `#[::core::prelude::v1::test]`;其他 crate 用普通 `#[test]`。
+- 设置页分四组(客户端 / Claude Code / 工作台 / 其他),分类枚举与导航在 `settings/mod.rs`、`settings/nav.rs`;编辑器 / 终端 / 浏览器 / 源代码管理 / 代码智能偏好存在 `AppSettings` 里,界面用全局 `crate::prefs(cx)` 读取。每个项目的 IDE 标签记忆存 `~/.loomcode/state.json` 的 `ide`(`ide_memory.rs`);迷你地图的纯模型在 `minimap_model.rs`。
 - Agent 窗口右侧只有一个固定可折叠面板,用分段切换(改动/文件/终端/计划/输出);「终端」分段允许多个终端标签(`term_store.rs` 按项目根分组、各窗口共用,标签条在 `term_panel.rs`,第一个固定标签是只读的「Agent 命令」);IDE 编辑器支持多标签(逻辑在 `ide_tabs.rs`,参考 Zed Pane:预览标签、就近插入、关闭回到最近使用)。
 - 编译零警告;改动后跑 `cargo test --workspace`。
 

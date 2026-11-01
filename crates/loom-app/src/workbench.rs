@@ -955,7 +955,17 @@ impl Workbench {
             options.window_bounds = Some(WindowBounds::Windowed(Bounds::centered(None, size(px(1280.), px(820.)), cx)));
             options.window_min_size = Some(size(px(640.), px(480.)));
             let owner = wb.clone();
-            match open_window(options, cx, move |window, cx| cx.new(|cx| IdeWindow::new(wb, demo, root, window, cx))) {
+            match open_window(options, cx, move |window, cx| {
+                let base = root.clone();
+                let ide = cx.new(|cx| IdeWindow::new(wb, demo, root, window, cx));
+                // 调试用:LOOM_FILE 在独立 IDE 窗口里直接打开该文件(相对路径按项目根补全)
+                if let Ok(f) = std::env::var("LOOM_FILE") {
+                    let p = PathBuf::from(&f);
+                    let full = if p.is_absolute() { p } else { PathBuf::from(base).join(p) };
+                    ide.update(cx, |w, cx| w.open_file(full, window, cx));
+                }
+                ide
+            }) {
                 Ok((handle, _)) => owner.update(cx, |this, _| this.ide_window = Some(handle)),
                 Err(e) => eprintln!("打开 IDE 窗口失败:{e}"),
             }

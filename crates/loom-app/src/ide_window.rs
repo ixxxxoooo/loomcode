@@ -199,12 +199,15 @@ impl IdeWindow {
 
     /// 在编辑器里打开文件(文件树点选,或融合模式下由工作台转发)。
     pub fn open_file(&mut self, path: std::path::PathBuf, window: &mut Window, cx: &mut Context<Self>) {
+        // 先对齐项目:否则首次渲染时的换根会清掉刚打开的标签
+        self.sync_state(cx);
         self.panel.update(cx, |p, _| p.files.reveal(&path));
         self.ide.update(cx, |v, cx| v.open(path, true, window, cx));
     }
 
     /// 打开对话里点击的文件(固定标签,不是预览)。
     pub(crate) fn open_path(&mut self, path: &str, window: &mut Window, cx: &mut Context<Self>) {
+        self.sync_state(cx);
         let p = std::path::PathBuf::from(path);
         let full = if p.is_absolute() { p } else { std::path::PathBuf::from(self.wb.read(cx).active_project_path().unwrap_or_default()).join(p) };
         self.panel.update(cx, |p, _| p.files.reveal(&full));
