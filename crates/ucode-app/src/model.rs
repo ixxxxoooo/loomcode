@@ -18,6 +18,10 @@ pub struct SessionModel {
     pub wizard_step: std::collections::HashMap<String, usize>,
     /// 提问向导已选答案草稿(按提问 id → 每题的已选项)
     pub wizard_draft: std::collections::HashMap<String, Vec<Vec<String>>>,
+    /// 一次滚轮手势里累计的垂直位移与防抖任务是否已排队(用来吸附误触的微小滚动)
+    pub wheel_acc: f32,
+    pub wheel_pending: bool,
+    wheel_last: f32,
 }
 
 impl SessionModel {
@@ -49,6 +53,9 @@ impl SessionModel {
             queued: Vec::new(),
             wizard_step: Default::default(),
             wizard_draft: Default::default(),
+            wheel_acc: 0.,
+            wheel_pending: false,
+            wheel_last: 0.,
         }
     }
 
@@ -194,6 +201,44 @@ impl SessionModel {
             });
         }
         cx.notify();
+    }
+
+    /// 滚轮事件:累计位移,手势停下 150ms 后,若只是在贴底处轻微晃动(净位移 < 40px)
+    /// 就吸附回底部并恢复跟随,避免触控板误触让会话流脱离底部。
+    ///
+    /// 参数:`dy` 本次滚轮的垂直位移(像素)。
+    pub fn on_wheel(&mut self, dy: f32, cx: &mut Context<Self>) {
+        self.wheel_acc += dy;
+        if self.wheel_pending {
+            return;
+        }
+        self.wheel_pending = true;
+        cx.spawn(async move |this, cx| loop {
+            cx.background_executor().timer(std::time::Duration::from_millis(150)).await;
+            let done = this.update(cx, |m, cx| {
+                // 上一个 150ms 内还有滚轮事件就继续等:用累计值是否变化判断
+                let settled = (m.wheel_acc - m.wheel_last).abs() < f32::EPSILON;
+                m.wheel_last = m.wheel_acc;
+                if !settled {
+                    return false;
+                }
+                let net = m.wheel_acc.abs();
+                m.wheel_acc = 0.;
+                m.wheel_last = 0.;
+                m.wheel_pending = false;
+                let near = net < 40.;
+                m.scroller.update(cx, |s, cx| {
+                    if near && s.is_scrolled_up() {
+                        s.scroll_to_end(cx);
+                    }
+                });
+                true
+            });
+            if done.unwrap_or(true) {
+                break;
+            }
+        })
+        .detach();
     }
 
     /// 整体重新测量(主题或字号变化后调用)。

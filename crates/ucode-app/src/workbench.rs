@@ -1050,9 +1050,15 @@ pub fn chat_panel_with_footer(parts: Option<(Entity<SessionModel>, Entity<Compos
         return empty_state(IconName::MessageSquare, "选择或新建一个会话", "左侧选择会话,或点击「新会话」", cx).into_any_element();
     };
     let scroller_state = model.read(cx).scroller.clone();
+    let wheel_model = model.clone();
     v_flex().size_full().bg(t.background)
         .child(
-            div().flex_1().min_h_0().w_full().child(
+            div().flex_1().min_h_0().w_full()
+                .on_scroll_wheel(move |ev, _, cx| {
+                    let dy = f32::from(ev.delta.pixel_delta(px(20.)).y);
+                    wheel_model.update(cx, |m, cx| m.on_wheel(dy, cx));
+                })
+                .child(
                 MessageScroller::new("timeline", scroller_state, move |ix, window, cx| timeline::render_row(&model, ix, window, cx))
                     .size_full()
                     .jump_button(true)
