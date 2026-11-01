@@ -14,9 +14,12 @@ pub fn render(wb: &Workbench, cx: &mut Context<Workbench>) -> AnyElement {
     v_flex().w_full()
         .child(page_header("编辑器", "IDE 窗口里文件编辑器的显示与行为;改动立即作用于已打开的文件", div(), cx))
         .child(group("迷你地图", rows![
-            switch_row("ed-minimap", "显示迷你地图", "编辑器右侧的缩略图,带语法颜色、可点击或拖动滚动;编辑器过窄时自动隐藏", e.minimap, cx, |this, v, cx| this.update_settings(cx, |s| s.editor.minimap = v)),
+            switch_row("ed-minimap", "显示迷你地图", "编辑器右侧的缩略图,同时充当滚动条(开启后隐藏原滚动条;自动换行时保留);编辑器过窄时自动隐藏", e.minimap, cx, |this, v, cx| this.update_settings(cx, |s| s.editor.minimap = v)),
             row("滑块", "视口滑块何时显示", segmented("ed-slider", vec![(false, "悬停时"), (true, "始终")], e.minimap_slider_always, cx,
                 |this, v, cx| this.update_settings(cx, |s| s.editor.minimap_slider_always = v)), cx),
+            row("宽度", "迷你地图的宽度,宽一点能看清更多列", stepper("ed-mm-width", e.minimap_width as i64, (60, 160, 10), " px", cx,
+                |this, v, cx| this.update_settings(cx, |s| s.editor.minimap_width = v.clamp(60, 160) as u16)), cx),
+            switch_row("ed-mm-git", "Git 改动刻度", "在迷你地图右缘用细条标出新增 / 修改 / 删除的行", e.minimap_git, cx, |this, v, cx| this.update_settings(cx, |s| s.editor.minimap_git = v)),
         ], cx))
         .child(group("显示", rows![
             switch_row("ed-lines", "行号", "", e.line_numbers, cx, |this, v, cx| this.update_settings(cx, |s| s.editor.line_numbers = v)),

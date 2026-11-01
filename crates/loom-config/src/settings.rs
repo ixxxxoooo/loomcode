@@ -54,6 +54,10 @@ pub struct EditorPrefs {
     pub minimap: bool,
     /// 迷你地图滑块:真为始终显示,假为悬停时显示
     pub minimap_slider_always: bool,
+    /// 迷你地图宽度(像素,60–160)
+    pub minimap_width: u16,
+    /// 迷你地图右缘显示 Git 改动刻度
+    pub minimap_git: bool,
     pub line_numbers: bool,
     pub folding: bool,
     pub soft_wrap: bool,
@@ -70,7 +74,7 @@ pub struct EditorPrefs {
 
 impl Default for EditorPrefs {
     fn default() -> Self {
-        Self { minimap: true, minimap_slider_always: false, line_numbers: true, folding: true, soft_wrap: false, tab_size: 4, bracket_match: true, auto_save: AutoSave::Off, max_file_kb: 1024, syntax_highlight: true }
+        Self { minimap: true, minimap_slider_always: false, minimap_width: 100, minimap_git: true, line_numbers: true, folding: true, soft_wrap: false, tab_size: 4, bracket_match: true, auto_save: AutoSave::Off, max_file_kb: 1024, syntax_highlight: true }
     }
 }
 

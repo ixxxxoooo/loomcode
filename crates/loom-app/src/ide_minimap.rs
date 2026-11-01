@@ -8,7 +8,7 @@
 
 use crate::git_status::GitMark;
 use crate::ide::IdeView;
-use crate::minimap_model::{Geo, MiniMap, build};
+use crate::minimap_model::{Geo, MAX_COLS, MiniMap, build};
 use gpui_kit::component::ActiveTheme;
 use gpui_kit::component::highlighter::{HighlightTheme, SyntaxHighlighter};
 use gpui_kit::component::input::EditorState;
@@ -19,12 +19,10 @@ use std::ops::Range;
 use std::rc::Rc;
 use std::time::Duration;
 
-/// 缩略图宽度。
-pub const WIDTH: f32 = 92.;
 /// 每行像素高度。
 const ROW_H: f32 = 2.;
-/// 每列像素宽度(120 列刚好放进 [`WIDTH`])。
-const COL_W: f32 = 0.66;
+/// 左右留白。
+const PAD: f32 = 8.;
 /// 编辑区(含缩略图)窄于这个宽度时自动隐藏缩略图。
 pub const MIN_EDITOR_W: f32 = 520.;
 /// 超过这个字节数的文件不做语法着色(单色缩略图),避免每次编辑重新解析太久。
@@ -41,6 +39,24 @@ pub struct MinimapUi {
     pub hover: Cell<bool>,
     /// 编辑区(编辑器 + 缩略图)上次的宽度;0 表示还没量过
     pub row_width: Cell<f32>,
+}
+
+/// 迷你地图的显示选项(来自设置)。
+#[derive(Clone, Copy)]
+pub struct MinimapOpts {
+    /// 宽度(像素)
+    pub width: f32,
+    /// 滑块始终显示
+    pub slider_always: bool,
+    /// 显示 Git 改动刻度
+    pub git: bool,
+}
+
+impl MinimapOpts {
+    /// 由编辑器偏好得到选项,宽度限制在 60–160。
+    pub fn from_prefs(p: &loom_config::EditorPrefs) -> Self {
+        Self { width: f32::from(p.minimap_width.clamp(60, 160)), slider_always: p.minimap_slider_always, git: p.minimap_git }
+    }
 }
 
 /// 生成一个文档的缩略数据。
@@ -80,32 +96,33 @@ fn apply_drag(editor: &Entity<EditorState>, ui: &MinimapUi, rows: usize, y: Pixe
 /// 迷你地图元素。
 ///
 /// 参数:`editor` 当前文档编辑器;`mm` 缩略数据;`hunks` Git 改动行区间;`ui` 共享界面状态;
-/// `slider_always` 为真时滑块一直显示,否则只在悬停或拖动时显示。
+/// `opts` 宽度、滑块与 Git 刻度显示选项(滑块非常驻时只在悬停或拖动时显示)。
 pub fn minimap(
     editor: &Entity<EditorState>,
     mm: Rc<MiniMap<Hsla>>,
     hunks: Rc<Vec<(Range<usize>, GitMark)>>,
     ui: Rc<MinimapUi>,
-    slider_always: bool,
+    opts: MinimapOpts,
     cx: &mut Context<IdeView>,
 ) -> impl IntoElement {
     let t = cx.theme().clone();
     let rows = mm.rows.len();
     let (vis_start, vis_len) = editor.read(cx).visible_row_range().map_or((0, 1), |r| (r.start, r.len().max(1)));
     let cursor_row = editor.read(cx).cursor_position().line as usize;
-    let show_slider = slider_always || ui.hover.get() || ui.grab.get().is_some();
-    let (bar, slider_fill) = (t.muted_foreground.opacity(0.5), t.foreground.opacity(if ui.grab.get().is_some() { 0.16 } else { 0.1 }));
+    let (width, col_w) = (opts.width, (opts.width - PAD * 2.) / MAX_COLS as f32);
+    let show_slider = opts.slider_always || ui.hover.get() || ui.grab.get().is_some();
+    let (bar, slider_fill, slider_edge) = (t.muted_foreground.opacity(0.5), t.foreground.opacity(if ui.grab.get().is_some() { 0.18 } else { 0.1 }), t.foreground.opacity(0.18));
     let (added, modified, deleted, cursor_c) = (t.success, t.warning, t.danger, t.primary);
     let (ed_down, ed_move, ed_wheel) = (editor.clone(), editor.clone(), editor.clone());
     let (ui_down, ui_move, ui_up, ui_hover, ui_wheel, ui_prepaint) = (ui.clone(), ui.clone(), ui.clone(), ui.clone(), ui.clone(), ui);
     div()
         .id("ide-minimap")
-        .w(px(WIDTH))
+        .w(px(width))
         .h_full()
         .flex_none()
         .border_l_1()
-        .border_color(t.border)
-        .bg(t.background)
+        .border_color(t.border.opacity(0.6))
+        .bg(t.muted.opacity(0.25))
         .cursor_pointer()
         .on_mouse_down(MouseButton::Left, cx.listener(move |_, ev: &MouseDownEvent, _, cx| {
             let Some(g) = geo_for(&ed_down, &ui_down, rows, cx) else { return };
@@ -160,18 +177,23 @@ pub fn minimap(
                     let last = (((off + h) / ROW_H).ceil() as usize + 1).min(rows);
                     for i in first..last {
                         let y = bounds.origin.y + px(g.row_y(i as f32));
+                        // 视口内的行画得更实,视口外的淡一点,一眼看出当前位置
+                        let in_view = i >= vis_start && i < vis_start + vis_len;
+                        let alpha = if in_view { 0.95 } else { 0.7 };
                         for r in &mm.rows[i] {
-                            let x = bounds.origin.x + px(6. + f32::from(r.start) * COL_W);
-                            let color = r.color.map_or(bar, |c| c.opacity(0.9));
-                            window.paint_quad(fill(Bounds::new(point(x, y), size(px(f32::from(r.len) * COL_W), px(ROW_H * 0.75))), color));
+                            let x = bounds.origin.x + px(PAD + f32::from(r.start) * col_w);
+                            let color = r.color.map_or(bar, |c| c.opacity(alpha));
+                            let rect = Bounds::new(point(x, y), size(px((f32::from(r.len) * col_w).max(1.)), px(ROW_H * 0.8)));
+                            window.paint_quad(quad(rect, px(0.6), color, 0., transparent_black(), BorderStyle::default()));
                         }
                     }
                     if show_slider {
                         let (top, sh) = g.slider();
-                        window.paint_quad(fill(Bounds::new(point(bounds.origin.x, bounds.origin.y + px(top)), size(bounds.size.width, px(sh))), slider_fill));
+                        let rect = Bounds::new(point(bounds.origin.x + px(1.), bounds.origin.y + px(top)), size(bounds.size.width - px(2.), px(sh)));
+                        window.paint_quad(quad(rect, px(3.), slider_fill, 1., slider_edge, BorderStyle::default()));
                     }
                     // Git 改动刻度:贴右缘的细条
-                    for (range, mark) in hunks.iter() {
+                    for (range, mark) in hunks.iter().filter(|_| opts.git) {
                         let color = match mark {
                             GitMark::Added => added,
                             GitMark::Modified => modified,
@@ -186,7 +208,7 @@ pub fn minimap(
                     // 光标所在行的刻度
                     let cy = g.row_y(cursor_row as f32);
                     if cy >= 0. && cy <= h {
-                        window.paint_quad(fill(Bounds::new(point(bounds.origin.x, bounds.origin.y + px(cy)), size(bounds.size.width, px(1.))), cursor_c.opacity(0.7)));
+                        window.paint_quad(quad(Bounds::new(point(bounds.origin.x + px(2.), bounds.origin.y + px(cy)), size(bounds.size.width - px(4.), px(1.5))), px(1.), cursor_c.opacity(0.8), 0., transparent_black(), BorderStyle::default()));
                     }
                 },
             )

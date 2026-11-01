@@ -405,10 +405,16 @@ impl Render for IdeView {
                 let ui = self.minimap_ui.clone();
                 // 编辑区太窄时自动隐藏迷你地图(宽度取自上一帧的测量)
                 let wide = ui.row_width.get() == 0. || ui.row_width.get() >= crate::ide_minimap::MIN_EDITOR_W;
-                let mm = (prefs.minimap && wide).then(|| crate::ide_minimap::minimap(&editor, doc.minimap.clone(), doc.hunks.clone(), ui.clone(), prefs.minimap_slider_always, cx));
+                let mm = (prefs.minimap && wide).then(|| crate::ide_minimap::minimap(&editor, doc.minimap.clone(), doc.hunks.clone(), ui.clone(), crate::ide_minimap::MinimapOpts::from_prefs(&prefs), cx));
                 h_flex().relative().flex_1().min_h_0().w_full()
                     .child(canvas(move |b, _, _| ui.row_width.set(f32::from(b.size.width)), |_, _, _, _| {}).absolute().size_full())
-                    .child(div().flex_1().min_w_0().h_full().child(Editor::new(&editor).bordered(false).appearance(false).size_full()))
+                    // 迷你地图兼作滚动条:把编辑器多撑出 16px 并裁掉,盖住它自带的纵向滚动条(自动换行时保留,否则折行会被裁)
+                    .child({
+                        let hide = mm.is_some() && !prefs.soft_wrap;
+                        div().flex_1().min_w_0().h_full().relative().overflow_hidden()
+                            .child(div().absolute().top_0().left_0().bottom_0().right(px(if hide { -16. } else { 0. }))
+                                .child(Editor::new(&editor).bordered(false).appearance(false).size_full()))
+                    })
                     .children(mm)
             })
             .into_any_element()
