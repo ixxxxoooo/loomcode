@@ -87,7 +87,7 @@ impl RightPanel {
 mod tests {
     use super::*;
 
-    #[test]
+    #[::core::prelude::v1::test]
     fn 放置规划() {
         let dir = std::env::temp_dir().join(format!("loom-dnd-{}", std::process::id()));
         let _ = std::fs::remove_dir_all(&dir);
