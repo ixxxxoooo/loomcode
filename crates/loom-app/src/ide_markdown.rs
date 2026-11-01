@@ -37,9 +37,11 @@ pub struct MdDocView {
     pub editor: Entity<EditorState>,
     pub mode: MdMode,
     block: Entity<BlockEditorState>,
-    scroll: ScrollHandle,
+    pub(crate) scroll: ScrollHandle,
     /// 写回后同步保存到这个路径(右侧面板用;IDE 自己管保存时为 `None`)
     save_to: Option<PathBuf>,
+    /// 分栏同步滚动:上次看到的 (源码已滚距离, 预览已滚距离)
+    pub(crate) sync_last: (f32, f32),
     _subs: Vec<Subscription>,
 }
 
@@ -78,7 +80,13 @@ impl MdDocView {
                 this.block.update(cx, |b, cx| { let _ = b.set_source(&text, cx); });
             }
         });
-        Self { editor, mode: MdMode::Preview, block, scroll, save_to, _subs: vec![to_editor, to_block] }
+        // 分栏时,源码滚动 / 光标变化要让本视图重绘一次,好把滚动同步给预览
+        let follow = cx.observe(&editor, |this: &mut MdDocView, _, cx| {
+            if this.mode == MdMode::Split {
+                cx.notify();
+            }
+        });
+        Self { editor, mode: MdMode::Preview, block, scroll, save_to, sync_last: (0., 0.), _subs: vec![to_editor, to_block, follow] }
     }
 
     /// 切换显示模式。
@@ -90,6 +98,9 @@ impl MdDocView {
 
 impl Render for MdDocView {
     fn render(&mut self, _window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
+        if self.mode == MdMode::Split {
+            self.sync_scroll(cx);
+        }
         div().id("md-wysiwyg").flex_1().min_w_0().h_full().overflow_y_scroll().track_scroll(&self.scroll)
             .child(div().w_full().max_w(px(860.)).mx_auto().min_h_full().child(BlockEditor::new(&self.block).min_h_full().px_6().py_4()))
             .bg(cx.theme().background)

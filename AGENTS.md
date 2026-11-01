@@ -11,6 +11,7 @@ Rust + gpui-kit 0.8 的 Claude Code 工作台。只支持 Claude Code,直连本�
 | `loom-claude` | 真实后端:启动参数(含额外环境变量)、stream-json 翻译器、权限应答、历史读取与回放、`LazyBackend`、用量统计 `usage`(扫描 `~/.claude/projects` 带增量缓存) |
 | `loom-demo` | 演示后端:脚本化场景(55 个,含 `showcase-all` 全场景会话)、后台任务模拟器(`BgJob`:任务独立于回合继续推进、可被 `StopTask` 停止)与沙盒项目;侧栏每个场景一个会话,`scenario-lab` 项目收纳其余场景;沙盒里的 `home/` 是演示用的假 `~/.claude` 与 `~/.claude.json`,设置页的读写都落在这里 |
 | `loom-config` | `~/.loomcode/settings.json` 与 Claude 配置读写;`update`(应用更新:读 GitHub Release 的 appcast.json、下载校验 sha256、挂载暂存、退出后脚本替换重启):`claude`(用户 / 项目 / 本地三层的权限、MCP、钩子、env,原子写 + 备份)、`items`(命令、子 Agent、Skills、记忆文件)、`plugins`(插件与市场的读取、启停、CLI 参数校验)、`providers`(模型服务商与映射,密钥单独 0600 文件)、`diag`(诊断包、连通性、进程资源;日志本身已移到 `loom-diag`,这里只是薄封装) |
+| `loom-sheet` | 表格文件(csv / tsv / xlsx / xls / ods)的读取与浏览逻辑(与界面无关):CSV 解析(引号 / 转义 / 分隔符识别 / BOM / GBK 等编码识别)、`calamine` 读工作簿(按需读单张表)、列筛选与排序(`FilterState`,首行可作表头)、内容搜索;上限 10 万行 × 512 列 |
 | `loom-canvas` | Canvas 画布文档模型、校验与存储 |
 | `loom-automation` | 自动化的计划、存储与运行器 |
 | `loom-browser` | 内置阅读模式浏览器的抓取与正文提取 |
@@ -61,6 +62,7 @@ scripts/publish.sh                  # 发布:先在根 Cargo.toml 提升版本�
 - **窗口必须始终有焦点元素**:窗口级快捷键(⌃`、⌘J、⌃⇧G 等)依赖焦点链;面板被隐藏时其中的焦点会消失,导致后续快捷键无响应。`Workbench` / `IdeWindow` 的根节点在 render 里保证有焦点,收起带焦点的面板(`toggle_term`、`toggle_terminal`)时要把焦点还给根。
 - **不要在工作台更新期间回读它**:`Workbench` 的方法、`Workbench::new`、`IdeWindow::new` 里创建子视图 / 调用子实体方法时,子实体不能再 `wb.read(cx)` / `wb.update(cx)`(重复借用会 panic,在 `extern "C"` 回调里直接 abort);需要的数据由调用方作为参数传入,或用 `cx.defer` 推迟。`ide_window.rs` 里有源码级回归测试。
 - **编辑器与终端全工作台唯一**:`Workbench.editor`(`Entity<IdeView>`)是唯一的编辑器,Agent 右栏「文件」标签(`files_workspace.rs`)、融合 IDE、独立 IDE 窗口都嵌入它,标签 / 预览标签 / 面包屑 / Markdown / 迷你地图 / 导航历史只有一份实现;项目切换与标签记忆由 `Workbench::sync_editor_root`、`save_editor_memory` 统一处理;打开文件统一走 `Workbench::open_file` / `open_in_editor`。独立 IDE 窗口开着时 Agent「文件」标签只放占位(不让同一个编辑器在两个窗口同时渲染)。新建任何文本编辑器一律用 `ide_prefs::new_editor`(偏好一致)。终端由全局 `ProjectTerminals` 按**规范化的项目根**(`term_store::normalize_root`)分组,Agent 与 IDE 共用;标签样式在 `term_tabs.rs`;同一终端被两个窗口同时显示时,只听 `claim_size` 认领的窗口的尺寸;切换运行模式的确认框会提示正在运行命令的终端(`Terminal::is_busy`)。
+- **表格视图**:csv / tsv / xlsx / xls / ods 在编辑器区域里以网格打开(`sheet_view.rs` 状态与读取、`sheet_grid.rs` 虚拟网格、`sheet_bar.rs` 编辑栏与底栏、`sheet_find.rs` ⌘F 查找、`sheet_filter_panel.rs` 列筛选面板,标签接入见 `ide_sheet.rs`);csv 底栏有「以文本打开」改用代码编辑器。Diff 默认左右对比(`diff_split.rs`,偏好 `scm.diff_split`,差异块顶部可切换)。悬停卡片自绘(`ide_hover.rs`,对齐 Zed:300ms 延迟、粘性收起、光标移动 / 滚动收起)。语法高亮:库里 Swift / C# / CMake / Protobuf 的高亮查询是空串,由 `lang_hl.rs` 补注册;富文本行内代码跟随主题色(`md_theme.rs`);Markdown 分栏同步滚动见 `ide_md_sync.rs`。
 - 编译零警告;改动后跑 `cargo test --workspace`。
 
 ## Claude 协议要点(已对真实 claude 2.1.x 验证)

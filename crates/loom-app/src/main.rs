@@ -70,6 +70,7 @@ mod ide_blame;
 mod ide_hover;
 mod lang_hl;
 mod diff_split;
+mod ide_md_sync;
 mod ide_sheet;
 mod md_theme;
 mod sheet_bar;
