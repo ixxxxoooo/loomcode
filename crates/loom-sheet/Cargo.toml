@@ -1,0 +1,9 @@
+[package]
+name = "loom-sheet"
+version.workspace = true
+edition.workspace = true
+
+[dependencies]
+calamine = { version = "0.30", features = ["dates"] }
+chardetng = "0.1"
+encoding_rs = "0.8"
