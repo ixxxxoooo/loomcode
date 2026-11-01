@@ -18,12 +18,16 @@ pub const CONTENT_MAX_W: f32 = 820.;
 pub fn render_row(session: &Entity<SessionModel>, ix: usize, window: &mut Window, cx: &mut App) -> AnyElement {
     let item = session.read(cx).state.items.get(ix).cloned();
     let Some(item) = item else { return div().into_any_element() };
+    let count = session.read(cx).state.items.len();
     div()
         .w_full()
         .flex()
         .justify_center()
         .px_1()
         .py(px(5.))
+        // 首行顶部、末行底部留白(不能用列表内边距,见 workbench 里的说明);要放在 py 之后才生效
+        .when(ix == 0, |d| d.pt(px(13.)))
+        .when(ix + 1 == count, |d| d.pb(px(25.)))
         .child(div().w_full().max_w(px(CONTENT_MAX_W)).child(render_item(session, &item, 0, window, cx)))
         .into_any_element()
 }

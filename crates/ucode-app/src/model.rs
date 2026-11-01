@@ -1,6 +1,6 @@
 //! 会话模型:把后端事件泵进 `SessionState`,并驱动时间线的虚拟列表。
 
-use gpui_kit::component::message_scroller::MessageScrollerState;
+use crate::chat_scroll::ChatScroll;
 use gpui_kit::*;
 use std::collections::HashSet;
 use ucode_core::*;
@@ -9,7 +9,7 @@ use ucode_core::*;
 pub struct SessionModel {
     pub state: SessionState,
     pub handle: BackendHandle,
-    pub scroller: Entity<MessageScrollerState>,
+    pub scroller: Entity<ChatScroll>,
     /// 已展开的条目 id(工具卡、思考、子 Agent、计划等)
     pub expanded: HashSet<String>,
     /// 运行中排队的消息(回合结束后依次发送)
@@ -27,7 +27,7 @@ pub struct SessionModel {
 impl SessionModel {
     /// 创建会话并启动事件泵。
     pub fn new(handle: BackendHandle, cx: &mut Context<Self>) -> Self {
-        let scroller = cx.new(|cx| MessageScrollerState::new(0, cx));
+        let scroller = cx.new(|cx| ChatScroll::new(0, cx));
         let rx = handle.events.clone();
         cx.spawn(async move |this, cx| {
             // 批量消费:一次唤醒尽量取空队列,只通知一次界面
@@ -228,7 +228,7 @@ impl SessionModel {
                 m.wheel_pending = false;
                 let near = net < 40.;
                 m.scroller.update(cx, |s, cx| {
-                    if near && s.is_scrolled_up() {
+                    if near && s.is_away_from_bottom() {
                         s.scroll_to_end(cx);
                     }
                 });

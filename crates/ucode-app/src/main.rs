@@ -36,6 +36,7 @@ mod ide_brackets;
 mod ide_chrome;
 mod ide_close;
 mod ide_tabs;
+mod chat_scroll;
 mod ide_window;
 mod layout_rules;
 mod palette;
