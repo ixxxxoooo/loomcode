@@ -1,25 +1,15 @@
-//! 输入框里的文件引用:从文件树、编辑器标签或访达拖进来的文件 / 文件夹,显示成带文件图标的小胶囊(悬停出现 ×),
-//! 发送时自动写成 `@相对路径` 提及放在消息前面。胶囊不占输入框里的文字,删掉胶囊就是取消引用。
+//! 输入框正文里的文件引用:从文件树、编辑器标签或访达拖进来的文件 / 文件夹,作为「原子行内标记」插在光标处,
+//! 渲染成带文件图标的小胶囊,和文字一起编辑(光标可以移过它、退格整颗删除)。标记在文本里的内容是 `@路径`,
+//! 所以发送、历史、`@` 提及解析都和手敲 `@路径` 完全一样。
 //!
 //! @author ixxxxoooo
 
 use crate::composer::Composer;
 use crate::file_icons::file_icon_img;
-use crate::ui::icon;
-use gpui_kit::assets::IconName;
+use gpui_kit::component::input::{InlineToken, InlineTokenContext};
 use gpui_kit::component::{ActiveTheme, h_flex};
 use gpui_kit::*;
 use std::path::{Path, PathBuf};
-
-/// 一个待发送的文件引用。
-#[derive(Clone, Debug, PartialEq)]
-pub struct FileRef {
-    /// 绝对路径
-    pub path: PathBuf,
-    /// 写进消息里的路径:在项目里是相对项目根的路径,否则是绝对路径
-    pub mention: String,
-    pub is_dir: bool,
-}
 
 /// 算出写进消息的路径:在 `root` 之下取相对路径,否则用绝对路径。
 ///
@@ -28,49 +18,50 @@ pub fn mention_for(path: &Path, root: Option<&str>) -> String {
     root.and_then(|r| path.strip_prefix(r).ok()).map(|p| p.to_string_lossy().to_string()).filter(|s| !s.is_empty()).unwrap_or_else(|| path.to_string_lossy().to_string())
 }
 
-/// 把待发送的引用写成消息前缀:每个引用 `@路径 `。
-pub fn prefix_for(refs: &[FileRef]) -> String {
-    refs.iter().map(|r| format!("@{} ", r.mention)).collect()
+/// 一个文件引用标记:文本是 `@路径`(含空白的路径会被拒绝,因为提及按空白切分),显示用文件名。
+///
+/// 参数:`path` 绝对路径(标记 id);`mention` 写进消息的路径。返回:`None` 表示路径不能作为提及。
+pub fn file_token(path: &Path, mention: &str) -> Option<InlineToken> {
+    if mention.is_empty() || mention.chars().any(|c| c.is_whitespace() || c.is_control()) {
+        return None;
+    }
+    let name = path.file_name().map(|n| n.to_string_lossy().to_string()).unwrap_or_else(|| mention.to_string());
+    Some(InlineToken::new(path.to_string_lossy().to_string(), format!("@{mention}")).with_label(name))
+}
+
+/// 标记的渲染:文件类型图标 + 文件名的圆角小胶囊(选中时描主题色边)。
+pub fn token_view(ctx: &InlineTokenContext, _: &mut Window, cx: &mut App) -> AnyElement {
+    let t = cx.theme();
+    let (path, name) = (PathBuf::from(ctx.token().id().to_string()), ctx.token().label().to_string());
+    let is_dir = path.is_dir();
+    h_flex().h(px(22.)).px_1p5().gap_1().items_center().rounded(px(5.)).border_1().border_color(if ctx.is_selected() { t.primary } else { t.border }).bg(t.muted.opacity(0.7)).text_size(px(13.))
+        .child(file_icon_img(&name, is_dir, false, 14.))
+        .child(div().max_w(px(240.)).truncate().child(name))
+        .into_any_element()
 }
 
 impl Composer {
-    /// 添加一个文件 / 文件夹引用(已有同一路径的不重复)。`mention` 为空时按当前项目根推算。
-    pub(crate) fn add_file_ref(&mut self, path: PathBuf, mention: Option<String>, cx: &mut Context<Self>) {
-        if self.file_refs.iter().any(|r| r.path == path) {
-            return;
-        }
+    /// 把一个文件 / 文件夹作为引用标记插在光标处(替换选区),后面补一个空格并聚焦输入框。
+    /// `mention` 为空时按当前项目根推算路径。
+    pub(crate) fn insert_file_token(&mut self, path: PathBuf, mention: Option<String>, window: &mut Window, cx: &mut Context<Self>) {
         let mention = mention.unwrap_or_else(|| {
             let root = cx.try_global::<crate::WorkbenchRef>().and_then(|r| r.0.upgrade()).and_then(|wb| wb.read(cx).active_project_path());
             mention_for(&path, root.as_deref())
         });
-        let is_dir = path.is_dir();
-        self.file_refs.push(FileRef { path, mention, is_dir });
-        cx.notify();
-    }
-
-    /// 文件引用胶囊行(没有引用返回 `None`)。
-    pub(crate) fn file_chips(&self, cx: &mut Context<Self>) -> Option<AnyElement> {
-        if self.file_refs.is_empty() {
-            return None;
-        }
-        let t = cx.theme().clone();
-        let this = cx.entity().downgrade();
-        let chips = self.file_refs.iter().enumerate().map(|(i, r)| {
-            let name = r.path.file_name().map(|n| n.to_string_lossy().to_string()).unwrap_or_else(|| r.mention.clone());
-            let group = SharedString::from(format!("fref-g-{i}"));
-            let this = this.clone();
-            h_flex().id(("fref", i)).group(group.clone()).h(px(24.)).pl_1p5().pr_1().gap_1p5().items_center().rounded(px(6.)).border_1().border_color(t.border).bg(t.muted.opacity(0.6)).text_size(px(12.5))
-                .tooltip({ let m = r.mention.clone(); move |window, cx| gpui_kit::component::tooltip::Tooltip::new(m.clone()).build(window, cx) })
-                .child(file_icon_img(&name, r.is_dir, false, 14.))
-                .child(div().max_w(px(220.)).truncate().child(name))
-                .child(
-                    div().id(("fref-x", i)).size(px(16.)).flex().items_center().justify_center().rounded(px(4.)).cursor_pointer().hover(|d| d.bg(t.border))
-                        .invisible().group_hover(group, |d| d.visible())
-                        .on_click(move |_, _, cx| { let _ = this.update(cx, |c, cx| { if i < c.file_refs.len() { c.file_refs.remove(i); } cx.notify(); }); })
-                        .child(icon(IconName::X, 10., t.muted_foreground)),
-                )
+        let Some(token) = file_token(&path, &mention) else {
+            // 带空格的路径做不成标记:退回成纯文字 `@路径`
+            let cur = self.input.read(cx).value().to_string();
+            let sep = if cur.is_empty() || cur.ends_with(' ') || cur.ends_with('\n') { "" } else { " " };
+            self.set_text(&format!("{cur}{sep}@{mention} "), window, cx);
+            return;
+        };
+        self.input.update(cx, |i, cx| {
+            let _ = i.replace_with_token(token, window, cx);
+            // 标记后补一个空格,接着打字不会粘在胶囊上
+            i.insert(" ", window, cx);
+            i.focus(window, cx);
         });
-        Some(h_flex().flex_wrap().gap_1p5().px_3().pt_3().children(chips).into_any_element())
+        cx.notify();
     }
 }
 
@@ -87,9 +78,16 @@ mod tests {
     }
 
     #[::core::prelude::v1::test]
-    fn 前缀按顺序写成提及() {
-        let r = |m: &str| FileRef { path: PathBuf::from(m), mention: m.into(), is_dir: false };
-        assert_eq!(prefix_for(&[r("a.rs"), r("src/b.rs")]), "@a.rs @src/b.rs ");
-        assert_eq!(prefix_for(&[]), "");
+    fn 标记文本是_at_路径_显示名是文件名() {
+        let t = file_token(Path::new("/p/src/a.rs"), "src/a.rs").unwrap();
+        assert_eq!(t.text().as_ref(), "@src/a.rs");
+        assert_eq!(t.label().as_ref(), "a.rs");
+        assert_eq!(t.id().as_ref(), "/p/src/a.rs");
+    }
+
+    #[::core::prelude::v1::test]
+    fn 带空白的路径不能做标记() {
+        assert!(file_token(Path::new("/p/a b.rs"), "a b.rs").is_none());
+        assert!(file_token(Path::new("/p/a.rs"), "").is_none());
     }
 }
