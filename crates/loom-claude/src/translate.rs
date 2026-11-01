@@ -87,9 +87,17 @@ pub struct Translator {
     usage: Usage,
     /// 用户是否请求过中断(用于把回合结束原因标成「已取消」)
     pub interrupted: bool,
+    /// 本回合里 claude 发来的 API 错误合成消息的文字(它随后的 `result` 会带同样的文字,只显示一份)
+    api_error: Option<String>,
     seq: u64,
     /// 实时条目 id 的代号:同一会话的进程重启后序号从头开始,靠它区分,避免与旧进程的条目撞 id
     pub id_gen: u64,
+}
+
+/// 是不是 claude 为 API 错误合成的 assistant 消息:带 `isApiErrorMessage` 标记,或模型是 `<synthetic>` 且文字以 `API Error` 开头。
+fn is_api_error_message(v: &Value, text: &str) -> bool {
+    let flagged = v.get("isApiErrorMessage").or_else(|| v["message"].get("isApiErrorMessage")).and_then(Value::as_bool).unwrap_or(false);
+    flagged || (str_of(&v["message"], "model") == "<synthetic>" && text.trim_start().starts_with("API Error"))
 }
 
 impl Translator {
@@ -106,6 +114,7 @@ impl Translator {
             pending: HashMap::new(),
             usage: Usage::default(),
             interrupted: false,
+            api_error: None,
             seq: 0,
             id_gen: 0,
         }
@@ -378,6 +387,12 @@ impl Translator {
                 "text" => {
                     let text = str_of(block, "text");
                     if text.trim().is_empty() || self.claim_streamed(&msg_id, BlockKind::Text) {
+                        continue;
+                    }
+                    // API 错误:claude 先发一条合成的 assistant 消息,回合结束的 `result` 又带同样的文字。
+                    // 实时流里只留 `result` 那条错误提示(见 `result`),这里记下并跳过;回放历史没有 `result`,照常显示
+                    if !self.replay && is_api_error_message(v, text) {
+                        self.api_error = Some(text.to_string());
                         continue;
                     }
                     let id = self.next_id("a");
@@ -680,6 +695,10 @@ impl Translator {
         out.push(AgentEvent::Usage(self.usage.clone()));
 
         let is_error = v.get("is_error").and_then(Value::as_bool).unwrap_or(false);
+        // 合成的 API 错误消息被跳过了,而这次 `result` 又没标错误:把错误文字补成提示,不能丢
+        if let Some(text) = self.api_error.take().filter(|_| !is_error) {
+            out.push(notice(NoticeLevel::Error, &text));
+        }
         let reason = if std::mem::take(&mut self.interrupted) {
             StopReason::Cancelled
         } else if is_error {
@@ -1246,6 +1265,24 @@ mod tests {
         let cancelled = t.cancel_request("r10");
         assert!(matches!(&cancelled[0], AgentEvent::PermissionResolved { id, option } if id == "b1" && option == "reject"));
         assert!(!t.has_pending());
+    }
+
+    #[test]
+    fn api_错误只显示一份() {
+        let mut t = Translator::new("/w");
+        let synthetic = json!({"type":"assistant","isApiErrorMessage":true,"message":{"id":"m1","model":"<synthetic>","content":[{"type":"text","text":"API Error: 422 boom"}]}});
+        assert!(t.handle(&synthetic).is_empty(), "合成的错误消息不应再作为助手回复显示");
+        let ev = t.handle(&json!({"type":"result","subtype":"success","is_error":true,"result":"API Error: 422 boom"}));
+        assert_eq!(ev.iter().filter(|e| matches!(e, AgentEvent::Notice { level: NoticeLevel::Error, .. })).count(), 1);
+        // 合成消息之后的 result 没标错误:文字不能丢
+        let mut t = Translator::new("/w");
+        t.handle(&synthetic);
+        let ev = t.handle(&json!({"type":"result","subtype":"success","is_error":false,"result":""}));
+        assert!(ev.iter().any(|e| matches!(e, AgentEvent::Notice { text, .. } if text.contains("422"))));
+        // 回放历史没有 result,合成消息照常显示
+        let mut t = Translator::new("/w");
+        t.replay = true;
+        assert!(!t.handle(&synthetic).is_empty());
     }
 
     #[test]
