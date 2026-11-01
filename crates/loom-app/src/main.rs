@@ -21,6 +21,7 @@ mod composer;
 mod composer_pop;
 mod composer_send;
 mod diff;
+mod mode_style;
 mod model;
 mod file_dnd;
 mod files_workspace;

@@ -126,6 +126,7 @@ impl Composer {
         let open = match std::env::var("LOOM_POPUP").as_deref() {
             Ok("model") => Some(Pick::Model),
             Ok("context") => Some(Pick::Context),
+            Ok("mode") => Some(Pick::Mode),
             _ => None,
         };
         let mut this = Self { session, input, open, outside_closed: None, suggestions: Vec::new(), sel: 0, attachments: Vec::new(), attach_counter: 0, demo, rewrite: None, optimizing: false, optimize_error: None, custom_commands: Vec::new(), custom_agents: Vec::new(), _sub: sub };
@@ -360,13 +361,7 @@ impl Render for Composer {
             (m.state.phase, m.state.mode, m.state.model.clone(), name, m.state.effort, m.queued.len(), m.state.usage.clone())
         };
         let running = phase == Phase::Running;
-        let mode_color = match mode {
-            PermissionMode::Plan => t.info,
-            PermissionMode::AcceptEdits => t.success,
-            PermissionMode::BypassPermissions => t.danger,
-            PermissionMode::Auto => t.primary,
-            _ => t.muted_foreground,
-        };
+        let mode_color = crate::mode_style::mode_color(mode, cx);
         let this = cx.entity();
 
         let chip = |id: &'static str, label: String, color: Hsla, kind: Pick, lead: Option<AnyElement>, this: Entity<Self>| {
@@ -390,13 +385,17 @@ impl Render for Composer {
                 v_flex().absolute().bottom(px(44.)).left(px(8.)).min_w(px(200.)).p_1().rounded(px(10.)).border_1().border_color(t.border)
                     .bg(t.popover).shadow_lg().children(items.into_iter().enumerate().map(|(i, (label, detail, on, value))| {
                         let this = this.clone();
-                        h_flex().id(SharedString::from(format!("pick-{i}"))).gap_2().px_2().h(px(28.)).items_center().rounded(px(6.)).cursor_pointer()
+                        // 每个模式一个带颜色的图标;当前模式的文字也用它的颜色,右侧打勾
+                        let m = PermissionMode::from_cli(&value).unwrap_or_default();
+                        let color = crate::mode_style::mode_color(m, cx);
+                        h_flex().id(SharedString::from(format!("pick-{i}"))).gap_2().px_2().h(px(30.)).items_center().rounded(px(6.)).cursor_pointer()
                             .hover(|d| d.bg(t.list_hover))
                             .on_click(move |_, _, cx| { let v = value.clone(); this.update(cx, |c, cx| c.choose(kind, &v, cx)); })
-                            .child(div().w(px(14.)).child(if on { icon(IconName::Check, 12., t.primary).into_any_element() } else { div().into_any_element() }))
-                            .child(div().text_size(px(13.)).child(label))
+                            .child(icon(crate::mode_style::mode_icon(m), 14., color))
+                            .child(div().text_size(px(13.)).when(on, |d| d.text_color(color).font_weight(FontWeight::MEDIUM)).child(label))
                             .child(div().flex_1())
                             .child(div().text_size(px(11.)).text_color(t.muted_foreground).child(detail))
+                            .child(div().w(px(14.)).child(if on { icon(IconName::Check, 12., color).into_any_element() } else { div().into_any_element() }))
                     }))
             }
         });
@@ -495,7 +494,7 @@ impl Render for Composer {
                         })))
                         .child(
                             h_flex().h(px(36.)).px_2().gap_1().items_center()
-                                .child(chip("chip-mode", mode.label().to_string(), mode_color, Pick::Mode, None, this.clone()))
+                                .child(chip("chip-mode", mode.label().to_string(), mode_color, Pick::Mode, Some(icon(crate::mode_style::mode_icon(mode), 13., mode_color).into_any_element()), this.clone()))
                                 .child(chip("chip-model", format!("{model_name} · {}", effort.label()), t.foreground, Pick::Model, Some(crate::brand_icons::brand_icon(&model_id, &model_name, 13., t.foreground)), this.clone()))
                                 .when(queued > 0, |d| d.child(pill(format!("排队 {queued}"), t.warning, t.muted)))
                                 .child(div().flex_1())

@@ -143,6 +143,8 @@ struct Actor {
     stderr_tail: VecDeque<String>,
     /// 界面主动关闭时,进程退出不再当作异常
     shutting_down: bool,
+    /// 后端确认过的权限模式(切换失败时回退到它,界面不能停在没生效的模式上)
+    confirmed_mode: PermissionMode,
 }
 
 impl Actor {
@@ -160,6 +162,7 @@ impl Actor {
             turn_active: false,
             stderr_tail: VecDeque::new(),
             shutting_down: false,
+            confirmed_mode: PermissionMode::Default,
         }
     }
 
@@ -361,6 +364,7 @@ impl Actor {
                     .or_else(|| body.get("current_permission_mode").and_then(Value::as_str).and_then(PermissionMode::from_cli))
                     .unwrap_or_default();
                 let model = self.opts.model.clone().unwrap_or_else(|| "default".into());
+                self.confirmed_mode = mode;
                 let mut events = vec![AgentEvent::Ready { session_id: self.opts.effective_session_id(), models, model, mode }];
                 if !ok {
                     events.push(warn("初始化"));
@@ -371,7 +375,14 @@ impl Actor {
                 if ok { self.emit(AgentEvent::ModelChanged(m)) } else { self.emit(warn("切换模型")) }
             }
             ReqKind::SetMode(m) => {
-                if ok { self.emit(AgentEvent::ModeChanged(m)) } else { self.emit(warn("切换权限模式")) }
+                if ok {
+                    self.confirmed_mode = m;
+                    self.emit(AgentEvent::ModeChanged(m))
+                } else {
+                    // 没切成功:提示原因,并把界面退回到仍然生效的那个模式
+                    let back = self.confirmed_mode;
+                    self.emit_all(vec![warn("切换权限模式"), AgentEvent::ModeChanged(back)])
+                }
             }
             ReqKind::Other(what) => {
                 // 中断失败时撤销取消标记,避免下一个回合被误判为已取消

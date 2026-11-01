@@ -298,7 +298,8 @@ pub fn render_notice(level: NoticeLevel, text: &str, cx: &App) -> AnyElement {
     };
     h_flex().w_full().gap_2().px_3().py_1p5().rounded(px(8.)).bg(t.muted).items_start()
         .child(div().mt(px(2.)).child(icon(ic, 14., color)))
-        .child(div().flex_1().text_size(px(13.)).text_color(color).child(text.to_string()))
+        // min_w_0:长英文报错在卡片内折行,不再溢出右侧
+        .child(div().flex_1().min_w_0().text_size(px(13.)).text_color(color).child(text.to_string()))
         .into_any_element()
 }
 
