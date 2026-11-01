@@ -123,10 +123,11 @@ impl LspProvider {
 
 impl HoverProvider for LspProvider {
     /// 向语言服务器要悬停内容,结果写进文档由 `ide_hover` 渲染;返回 `None` 让编辑器自带的气泡不出现。
-    fn hover(&self, text: &Rope, offset: usize, _window: &mut Window, cx: &mut App) -> Task<Result<Option<lsp_types::Hover>>> {
+    fn hover(&self, text: &Rope, offset: usize, window: &mut Window, cx: &mut App) -> Task<Result<Option<lsp_types::Hover>>> {
         let sync = self.sync.clone();
         let (full, rope) = (text.to_string(), text.clone());
         let (view, path) = (self.view.clone(), self.path.clone());
+        let mouse = window.mouse_position();
         cx.spawn(async move |cx| {
             let started = std::time::Instant::now();
             // 当前卡片已经覆盖这个位置:不重复请求
@@ -165,7 +166,7 @@ impl HoverProvider for LspProvider {
                         Some(r) => rope.position_to_offset(&r.start)..rope.position_to_offset(&r.end),
                         None => rope.word_range(offset).unwrap_or(offset..offset),
                     };
-                    crate::ide_hover::HoverCard { range, markdown: md.into(), anchor: (0, 0, 0) }
+                    crate::ide_hover::HoverCard { range, markdown: md.into(), anchor: (0, 0, 0), mouse }
                 }),
                 _ => None,
             };

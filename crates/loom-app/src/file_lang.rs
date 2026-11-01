@@ -6,22 +6,46 @@ use std::path::{Path, PathBuf};
 
 /// 按扩展名推断语法高亮语言。
 pub fn language_for(path: &Path) -> &'static str {
-    match path.extension().and_then(|e| e.to_str()).unwrap_or("") {
+    // 没有扩展名的特殊文件名(Makefile、CMakeLists.txt 等)
+    match path.file_name().and_then(|n| n.to_str()).unwrap_or("") {
+        "Makefile" | "makefile" | "GNUmakefile" => return "make",
+        "CMakeLists.txt" => return "cmake",
+        "Gemfile" | "Rakefile" | "Podfile" => return "ruby",
+        "Package.swift" => return "swift",
+        ".zshrc" | ".bashrc" | ".bash_profile" | ".zprofile" | ".profile" => return "bash",
+        _ => {}
+    }
+    match path.extension().and_then(|e| e.to_str()).unwrap_or("").to_ascii_lowercase().as_str() {
         "rs" => "rust",
-        "py" => "python",
+        "py" | "pyi" | "pyw" => "python",
         "js" | "mjs" | "cjs" | "jsx" => "javascript",
-        "ts" => "typescript",
+        "ts" | "mts" | "cts" => "typescript",
         "tsx" => "tsx",
-        "sh" | "zsh" | "bash" => "bash",
-        "md" | "markdown" => "markdown",
+        "sh" | "zsh" | "bash" | "command" => "bash",
+        "md" | "markdown" | "mdx" => "markdown",
         "toml" => "toml",
         "yml" | "yaml" => "yaml",
-        "json" | "jsonc" => "json",
-        "css" => "css",
-        "html" | "htm" => "html",
+        "json" | "jsonc" | "json5" | "geojson" => "json",
+        "css" | "scss" | "less" => "css",
+        "html" | "htm" | "xhtml" | "vue" => "html",
         "go" => "go",
         "diff" | "patch" => "diff",
         "swift" => "swift",
+        "c" | "h" => "c",
+        "cc" | "cpp" | "cxx" | "c++" | "hh" | "hpp" | "hxx" | "ipp" | "mm" | "m" => "cpp",
+        "cs" => "csharp",
+        "java" => "java",
+        "kt" | "kts" => "kotlin",
+        "rb" | "rake" | "gemspec" => "ruby",
+        "php" | "phtml" => "php",
+        "sql" => "sql",
+        "lua" => "lua",
+        "mk" | "mak" => "make",
+        "cmake" => "cmake",
+        "graphql" | "gql" => "graphql",
+        "proto" => "proto",
+        "zig" => "zig",
+        "scala" | "sc" => "scala",
         _ => "text",
     }
 }

@@ -10,7 +10,7 @@ authors = ["ixxxxoooo"]
 license = "Apache-2.0"
 
 [workspace.dependencies]
-gpui-kit = { version = "0.8.0", features = ["tree-sitter", "tree-sitter-rust", "tree-sitter-python", "tree-sitter-javascript", "tree-sitter-typescript", "tree-sitter-tsx", "tree-sitter-bash", "tree-sitter-markdown", "tree-sitter-toml", "tree-sitter-yaml", "tree-sitter-css", "tree-sitter-html", "tree-sitter-go", "tree-sitter-diff", "tree-sitter-swift"] }
+gpui-kit = { version = "0.8.0", features = ["tree-sitter", "tree-sitter-rust", "tree-sitter-python", "tree-sitter-javascript", "tree-sitter-typescript", "tree-sitter-tsx", "tree-sitter-bash", "tree-sitter-markdown", "tree-sitter-toml", "tree-sitter-yaml", "tree-sitter-css", "tree-sitter-html", "tree-sitter-go", "tree-sitter-diff", "tree-sitter-swift", "tree-sitter-c", "tree-sitter-cpp", "tree-sitter-csharp", "tree-sitter-java", "tree-sitter-kotlin", "tree-sitter-ruby", "tree-sitter-php", "tree-sitter-lua", "tree-sitter-make", "tree-sitter-cmake", "tree-sitter-graphql", "tree-sitter-proto", "tree-sitter-zig", "tree-sitter-scala"] }
 serde = { version = "1", features = ["derive"] }
 serde_json = { version = "1", features = ["preserve_order"] }
 thiserror = "2"

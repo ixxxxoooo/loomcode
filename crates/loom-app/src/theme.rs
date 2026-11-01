@@ -80,6 +80,7 @@ pub fn apply(kind: ThemeKind, window: Option<&mut Window>, cx: &mut App) {
             t.link = base;
         });
     }
+    crate::md_theme::install(cx);
     crate::app_icon::set_dock_icon(cx.theme().is_dark());
 }
 

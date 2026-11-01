@@ -21,8 +21,8 @@ const MAX_W: f32 = 520.;
 const MAX_H: f32 = 320.;
 /// 悬停内容字节上限(与 Zed 的 `MAX_HOVER_BYTES` 一致),超出截断。
 pub const MAX_HOVER_BYTES: usize = 100_000;
-/// 卡片与符号之间的间距(与 Zed 的 `HOVER_POPOVER_GAP` 一致)。
-const GAP: f32 = 10.;
+/// 卡片与符号之间的间距(Zed 是 10,这里贴近鼠标取 4)。
+const GAP: f32 = 4.;
 
 /// 悬停卡片的界面状态:收起计时、鼠标到卡片的最近距离(判断是否在靠近卡片)。
 #[derive(Default)]
@@ -40,6 +40,8 @@ pub struct HoverCard {
     pub markdown: SharedString,
     /// 卡片出现时的 (选区起, 选区止, 视口首行):之后任何一项变了(光标移动 / 滚动)就收起
     pub anchor: (usize, usize, usize),
+    /// 请求悬停时的鼠标位置:卡片横向贴着鼠标出现
+    pub mouse: Point<Pixels>,
 }
 
 /// 编辑器当前的 (选区起, 选区止, 视口首行)。
@@ -166,11 +168,13 @@ pub fn hover_card(doc: &IdeDoc, path: &Path, view: WeakEntity<IdeView>, window: 
     let ed = doc.editor.read(cx);
     let at = ed.range_to_bounds(&card.range)?;
     let t = cx.theme();
+    // 横向贴着鼠标(略偏左一点),而不是符号起点
+    let left = (card.mouse.x - px(14.)).max(px(8.));
     let above = at.origin.y > window.bounds().size.height * 0.35;
     let (pos, anchor) = if above {
-        (point(at.origin.x, at.origin.y - px(GAP)), Anchor::BottomLeft)
+        (point(left, at.origin.y - px(GAP)), Anchor::BottomLeft)
     } else {
-        (point(at.origin.x, at.origin.y + at.size.height + px(GAP)), Anchor::TopLeft)
+        (point(left, at.origin.y + at.size.height + px(GAP)), Anchor::TopLeft)
     };
     let (view, path) = (view, path.to_path_buf());
     let guard = canvas(
@@ -204,7 +208,7 @@ pub fn hover_card(doc: &IdeDoc, path: &Path, view: WeakEntity<IdeView>, window: 
     )
     .absolute()
     .size_full();
-    let style = TextViewStyle::default().paragraph_gap(rems(0.5)).code_block(
+    let style = TextViewStyle::default().paragraph_gap(rems(0.5)).inline_code(crate::md_theme::inline_code(cx)).code_block(
         StyleRefinement::default().bg(t.muted.opacity(0.55)).border_0().rounded(px(6.)).px_2().py_1p5().text_size(px(12.)),
     );
     // 给代码块一个空的「操作区」,库就不会在右上角画语言标签
@@ -212,7 +216,8 @@ pub fn hover_card(doc: &IdeDoc, path: &Path, view: WeakEntity<IdeView>, window: 
     Some(
         deferred(
             anchored().position(pos).anchor(anchor).snap_to_window_with_margin(px(8.)).child(
-                div().id("ide-hover-card").relative().occlude().max_w(px(MAX_W)).max_h(px(MAX_H)).overflow_y_scroll()
+                // 卡片里滚到头就停,不把滚轮事件传给下面的编辑器(内置的卡片滚动先处理,这里再截断冒泡)
+                div().id("ide-hover-card").relative().occlude().on_scroll_wheel(|_, _, cx| cx.stop_propagation()).max_w(px(MAX_W)).max_h(px(MAX_H)).overflow_y_scroll()
                     .px_3().py_2().rounded(t.radius).border_1().border_color(t.border).bg(t.popover).text_color(t.popover_foreground)
                     .text_size(px(12.5)).shadow_md()
                     .child(guard)
