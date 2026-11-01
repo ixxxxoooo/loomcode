@@ -69,6 +69,8 @@ pub struct Composer {
     /// 补全列表当前高亮项
     sel: usize,
     attachments: Vec<Attachment>,
+    /// 拖进来的文件 / 文件夹引用(显示成胶囊,发送时写成 `@路径`)
+    pub(crate) file_refs: Vec<crate::composer_refs::FileRef>,
     attach_counter: usize,
     pub(crate) demo: bool,
     /// 优化提示词的运行环境(真实模式由工作台注入)
@@ -129,17 +131,23 @@ impl Composer {
             Ok("mode") => Some(Pick::Mode),
             _ => None,
         };
-        let mut this = Self { session, input, open, outside_closed: None, suggestions: Vec::new(), sel: 0, attachments: Vec::new(), attach_counter: 0, demo, rewrite: None, optimizing: false, optimize_error: None, custom_commands: Vec::new(), custom_agents: Vec::new(), _sub: sub };
+        let mut this = Self { session, input, open, outside_closed: None, suggestions: Vec::new(), sel: 0, attachments: Vec::new(), file_refs: Vec::new(), attach_counter: 0, demo, rewrite: None, optimizing: false, optimize_error: None, custom_commands: Vec::new(), custom_agents: Vec::new(), _sub: sub };
         // 调试用:LOOM_ATTACH=图片路径 启动即带一张附件,方便截图检查缩略图
         if let Ok(p) = std::env::var("LOOM_ATTACH") {
             this.add_image_path(std::path::Path::new(&p), cx);
+        }
+        // 调试用:LOOM_REFS=路径1,路径2 启动即带上文件引用胶囊(截图验证样式)
+        if let Ok(list) = std::env::var("LOOM_REFS") {
+            for p in list.split(',').filter(|s| !s.is_empty()) {
+                this.add_file_ref(std::path::PathBuf::from(p), None, cx);
+            }
         }
         this
     }
 
     /// 输入框里有没有未发送的内容(文字或附件);淘汰会话视图前要保护草稿。
     pub fn has_draft(&self, cx: &App) -> bool {
-        !self.input.read(cx).value().trim().is_empty() || !self.attachments.is_empty()
+        !self.input.read(cx).value().trim().is_empty() || !self.attachments.is_empty() || !self.file_refs.is_empty()
     }
 
     /// 把一个文件引用(如 `src/a.rs#5-10`)以 `@` 提及的形式追加到输入框末尾并聚焦。
@@ -265,10 +273,13 @@ impl Composer {
     }
 
     pub(crate) fn submit(&mut self, window: &mut Window, cx: &mut Context<Self>) {
-        let text = self.input.read(cx).value().trim().to_string();
-        if text.is_empty() && self.attachments.is_empty() {
+        let typed = self.input.read(cx).value().trim().to_string();
+        if typed.is_empty() && self.attachments.is_empty() && self.file_refs.is_empty() {
             return;
         }
+        // 文件引用胶囊写成 `@路径` 放在消息最前面
+        let text = format!("{}{}", crate::composer_refs::prefix_for(&self.file_refs), typed).trim().to_string();
+        self.file_refs.clear();
         self.input.update(cx, |i, cx| i.set_value(String::new(), window, cx));
         self.suggestions.clear();
         let images: Vec<String> = self.attachments.drain(..).map(|a| a.path).collect();
@@ -425,7 +436,7 @@ impl Render for Composer {
         let has_text = !self.input.read(cx).value().trim().is_empty();
         let send_btn = {
             let (s, this) = (self.session.clone(), this.clone());
-            crate::composer_send::send_button(running, has_text || !self.attachments.is_empty(), move |window, cx| {
+            crate::composer_send::send_button(running, has_text || !self.attachments.is_empty() || !self.file_refs.is_empty(), move |window, cx| {
                 if running { s.update(cx, |m, cx| m.cancel(cx)); } else { this.update(cx, |c, cx| c.submit(window, cx)); }
             }, cx)
         };
@@ -445,6 +456,8 @@ impl Render for Composer {
             }))
         });
 
+        let file_chips = self.file_chips(cx);
+        let drop_hint = t.primary;
         div().key_context("Composer").on_action(cx.listener(|this, _: &CycleEffort, _, cx| this.cycle_effort(cx)))
             .w_full().flex().justify_center().px_4().pb_3().pt_1()
             // 补全列表打开时,上下键 / Tab / Esc 归补全列表;否则放行给输入框
@@ -464,21 +477,16 @@ impl Render for Composer {
                     if running { this.session.update(cx, |m, cx| m.cancel(cx)); } else { cx.propagate(); }
                 } else { this.suggestions.clear(); this.open = None; cx.notify(); }
             }))
-            // 从文件树拖进来:引用 @相对路径
-            .on_drop(cx.listener(|this, d: &crate::file_dnd::DraggedPath, window, cx| {
-                let cur = this.input.read(cx).value().to_string();
-                let sep = if cur.is_empty() || cur.ends_with(' ') || cur.ends_with('\n') { "" } else { " " };
-                this.set_text(&format!("{cur}{sep}@{} ", d.rel), window, cx);
-            }))
-            .on_drop(cx.listener(|this, paths: &ExternalPaths, window, cx| {
+            // 从文件树 / 编辑器标签拖进来:变成文件引用胶囊(带图标);从访达拖进来:图片作附件,其余也是引用
+            .on_drop(cx.listener(|this, d: &crate::file_dnd::DraggedPath, _, cx| this.add_file_ref(d.path.clone(), Some(d.rel.clone()), cx)))
+            .on_drop(cx.listener(|this, d: &crate::ide_chrome::DraggedTab, _, cx| this.add_file_ref(d.path.clone(), None, cx)))
+            .on_drop(cx.listener(|this, paths: &ExternalPaths, _, cx| {
                 for p in paths.paths() {
                     let ext = p.extension().and_then(|e| e.to_str()).unwrap_or("").to_lowercase();
                     if matches!(ext.as_str(), "png" | "jpg" | "jpeg" | "gif" | "webp") {
                         this.add_image_path(p, cx);
                     } else {
-                        let cur = this.input.read(cx).value().to_string();
-                        let sep = if cur.is_empty() || cur.ends_with(' ') { "" } else { " " };
-                        this.set_text(&format!("{cur}{sep}@{} ", p.display()), window, cx);
+                        this.add_file_ref(p.to_path_buf(), None, cx);
                     }
                 }
             }))
@@ -487,6 +495,9 @@ impl Render for Composer {
                 .when_some(suggestions, |d, s| d.child(s))
                 .child(
                     v_flex().w_full().rounded(px(14.)).border_1().border_color(t.border).bg(t.popover).shadow_sm()
+                        .drag_over::<crate::file_dnd::DraggedPath>(move |s, _, _, _| s.border_color(drop_hint))
+                        .drag_over::<crate::ide_chrome::DraggedTab>(move |s, _, _, _| s.border_color(drop_hint))
+                        .when_some(file_chips, |d, c| d.child(c))
                         .when_some(attach_chips, |d, c| d.child(c))
                         .child(div().px_3().pt_2().child(Textarea::new(&self.input).appearance(false).bordered(false).on_paste(move |item, _, cx| {
                             // 粘贴图片:作为附件;其余(文本)走默认逻辑
