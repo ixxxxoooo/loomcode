@@ -9,7 +9,7 @@ use crate::ui::{mode_switch, no_drag};
 use crate::workbench::{Page, Workbench};
 use gpui_kit::assets::IconName;
 use gpui_kit::component::button::{Button, ButtonVariants};
-use gpui_kit::component::{ActiveTheme, Sizable, h_flex};
+use gpui_kit::component::{ActiveTheme, InteractiveElementExt as _, Sizable, h_flex};
 use gpui_kit::prelude::FluentBuilder as _;
 use gpui_kit::*;
 
@@ -21,9 +21,30 @@ const TRAFFIC_PAD: f32 = 80.;
 #[cfg(not(target_os = "macos"))]
 const TRAFFIC_PAD: f32 = 12.;
 
-/// 一个可拖动窗口的顶部行(固定高度)。
-fn header_row() -> Div {
-    h_flex().w_full().h(px(HEADER_H)).flex_none().items_center().gap_1().window_control_area(WindowControlArea::Drag)
+thread_local! {
+    /// 鼠标在可拖动区域按下后「待拖动」:随后第一次移动才真正开始移动窗口(同 TitleBar 的做法,
+    /// 这样单击、双击不会被当成拖动)。
+    static DRAG_ARMED: std::cell::Cell<bool> = const { std::cell::Cell::new(false) };
+}
+
+/// 把一个有 id 的元素变成可拖动窗口的区域:按下后移动即拖动,双击等同标题栏双击(缩放 / 最大化)。
+/// 里面的按钮要用 [`no_drag`] 包住,否则点按钮也会触发拖动。
+pub fn draggable(el: Stateful<Div>) -> Stateful<Div> {
+    el.window_control_area(WindowControlArea::Drag)
+        .on_mouse_down(MouseButton::Left, |_, _, _| DRAG_ARMED.with(|a| a.set(true)))
+        .on_mouse_up(MouseButton::Left, |_, _, _| DRAG_ARMED.with(|a| a.set(false)))
+        .on_mouse_down_out(|_, _, _| DRAG_ARMED.with(|a| a.set(false)))
+        .on_mouse_move(|_, window, _| {
+            if DRAG_ARMED.with(|a| a.replace(false)) {
+                window.start_window_move();
+            }
+        })
+        .on_double_click(|_, window, _| window.titlebar_double_click())
+}
+
+/// 一个可拖动窗口的顶部行(固定高度)。`id` 在同一窗口内要唯一。
+fn header_row(id: &'static str) -> Stateful<Div> {
+    draggable(h_flex().id(id).w_full().h(px(HEADER_H)).flex_none().items_center().gap_1())
 }
 
 /// 「侧栏开关 + 搜索」两个按钮。
@@ -38,7 +59,7 @@ fn left_buttons(cx: &mut Context<Workbench>) -> impl IntoElement {
 impl Workbench {
     /// 侧栏顶部行:红绿灯位置 + 侧栏开关 + 搜索。
     pub fn left_header(&self, cx: &mut Context<Self>) -> impl IntoElement {
-        header_row().pl(px(TRAFFIC_PAD)).pr_2().child(left_buttons(cx))
+        header_row("hd-left-row").pl(px(TRAFFIC_PAD)).pr_2().child(left_buttons(cx))
     }
 
     /// 对话区顶部行:侧栏收起时承接红绿灯与按钮,中间是当前会话标题,右面板收起时右端放面板开关与 IDE 入口。
@@ -53,7 +74,7 @@ impl Workbench {
             Page::Browser => Some("浏览器".to_string()),
         };
         let right_hidden = !self.right_visible();
-        header_row().pl(px(if left_hidden { TRAFFIC_PAD } else { 12. })).pr_2()
+        header_row("hd-center-row").pl(px(if left_hidden { TRAFFIC_PAD } else { 12. })).pr_2()
             .when(left_hidden, |d| d.child(left_buttons(cx)))
             .when(self.page != Page::Chat, |d| d.child(no_drag(Button::new("hd-back").small().ghost().icon(IconName::ArrowLeft).tooltip("返回会话")
                 .on_click(cx.listener(|this, _, _, cx| this.set_page(Page::Chat, cx))))))

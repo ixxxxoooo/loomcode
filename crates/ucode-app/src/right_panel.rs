@@ -204,8 +204,7 @@ impl RightPanel {
         let t = cx.theme().clone();
         let tab = self.tab;
         let trailing = self.trailing.clone();
-        h_flex().h(px(crate::window_header::HEADER_H)).flex_none().px_2().gap_0p5().items_center()
-            .window_control_area(WindowControlArea::Drag)
+        crate::window_header::draggable(h_flex().id("rt-tabbar").h(px(crate::window_header::HEADER_H)).flex_none().px_2().gap_0p5().items_center())
             .children(RightTab::ALL.into_iter().map(|rt| {
                 let on = rt == tab;
                 h_flex().id(SharedString::from(format!("rt-{}", rt.label()))).h(px(26.)).px_2().gap_1().items_center().rounded(px(6.)).cursor_pointer()
