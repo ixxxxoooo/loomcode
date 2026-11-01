@@ -5,7 +5,7 @@
 //! @author ixxxxoooo
 
 use crate::ide_status;
-use crate::ide::{CloseTab, FindInProject, GoToLine, IdeView, NavBack, NavForward, NextTab, PrevTab, QuickOpen};
+use crate::ide::{CloseTab, FindInProject, GoToLine, IdeView, NavBack, NavForward, NextTab, PrevTab, QuickOpen, ShowScm, TogglePanel};
 use crate::right_panel::{PanelEvent, RightPanel};
 use crate::ui::{icon, no_drag};
 use gpui_kit::component::Disableable as _;
@@ -66,10 +66,10 @@ impl IdeWindow {
     /// 创建窗口视图。`demo`、`root`、`wb_tabs` 由调用方传入:创建发生在工作台的更新期间,这里不能再回读它(会重复借用而崩溃)。
     ///
     /// 参数:`ide` 工作台里唯一的编辑器(与 Agent 的「文件」标签共用);`wb_tabs` 上次关闭时对话栏的会话标签。
-    pub fn new(wb: Entity<Workbench>, ide: Entity<IdeView>, demo: bool, _root: String, wb_tabs: Vec<String>, window: &mut Window, cx: &mut Context<Self>) -> Self {
+    pub fn new(wb: Entity<Workbench>, ide: Entity<IdeView>, scm: Entity<crate::scm::ScmView>, demo: bool, _root: String, wb_tabs: Vec<String>, window: &mut Window, cx: &mut Context<Self>) -> Self {
         bind_ide_keys(cx);
         crate::window_memory::track("ide", window, cx);
-        let panel = cx.new(|cx| RightPanel::new(_root.clone(), demo, None, window, cx));
+        let panel = cx.new(|cx| RightPanel::new(_root.clone(), demo, None, scm, window, cx));
         panel.update(cx, |p, cx| {
             p.show_tabs = false;
             p.set_tab(RightTab::Files, cx);
@@ -237,6 +237,10 @@ impl IdeWindow {
 
 impl Render for IdeWindow {
     fn render(&mut self, window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
+        // 窗口里没有任何焦点时(刚切到 IDE、关掉了有焦点的终端…)把焦点放回根:否则 ⌃` 等快捷键找不到处理者
+        if window.focused(cx).is_none() {
+            window.focus(&self.focus, cx);
+        }
         self.sync_state(cx);
         self.sync_chat_tabs(cx);
         self.apply_responsive(f32::from(window.viewport_size().width));
@@ -266,6 +270,8 @@ impl Render for IdeWindow {
             .on_action(cx.listener(|this, _: &NavForward, window, cx| this.ide_navigate(true, window, cx)))
             .on_action(cx.listener(|this, _: &FindInProject, window, cx| this.show_search(window, cx)))
             .on_action(cx.listener(|this, _: &crate::ide_reference::QuoteSelection, window, cx| this.quote_selection(window, cx)))
+            .on_action(cx.listener(|this, _: &ShowScm, window, cx| this.show_scm(window, cx)))
+            .on_action(cx.listener(|this, _: &TogglePanel, window, cx| this.toggle_term(window, cx)))
             .on_action(cx.listener(|this, _: &crate::term_actions::ToggleTerminal, window, cx| this.toggle_term(window, cx)))
             .on_action(cx.listener(|this, _: &crate::term_actions::NewTerminal, window, cx| this.open_new_term(window, cx)))
             .on_action(cx.listener(|this, _: &ToggleIde, _, cx| this.back_to_agent(cx)))
@@ -315,6 +321,8 @@ fn bind_ide_keys(cx: &mut App) {
             KeyBinding::new("ctrl--", NavBack, Some("IdeWindow")),
             KeyBinding::new("ctrl-_", NavForward, Some("IdeWindow")),
             KeyBinding::new("cmd-shift-f", FindInProject, Some("IdeWindow")),
+            KeyBinding::new("ctrl-shift-g", ShowScm, Some("IdeWindow")),
+            KeyBinding::new("cmd-j", TogglePanel, Some("IdeWindow")),
             KeyBinding::new("cmd-l", crate::ide_reference::QuoteSelection, Some("IdeWindow")),
             KeyBinding::new("cmd-alt-right", NextTab, Some("IdeView")),
             KeyBinding::new("cmd-alt-left", PrevTab, Some("IdeView")),

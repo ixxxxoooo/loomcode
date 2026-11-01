@@ -14,7 +14,7 @@ use gpui_kit::*;
 use std::collections::HashMap;
 use std::path::{Path, PathBuf};
 
-actions!(ide, [CloseTab, NextTab, PrevTab, QuickOpen, GoToLine, FindInProject, NavBack, NavForward]);
+actions!(ide, [CloseTab, NextTab, PrevTab, QuickOpen, GoToLine, FindInProject, NavBack, NavForward, ShowScm, TogglePanel]);
 
 /// 超过这个大小的文件不在编辑器里打开。
 

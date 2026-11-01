@@ -8,6 +8,7 @@
 pub mod backend;
 pub mod event;
 pub mod git;
+pub mod git_scm;
 pub mod modes;
 pub mod session;
 pub mod task;

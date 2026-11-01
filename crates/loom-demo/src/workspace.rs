@@ -95,11 +95,35 @@ fn make_project(root: &Path, name: &str, files: Vec<(&'static str, String)>, dir
     Ok(dir)
 }
 
+/// 给 router-demo 铺出「源代码管理」各组都有内容的状态:
+/// 暂存区(README、测试文件)、工作区(utils 已改、测试文件暂存后又改)、未跟踪(新文件、新目录)、已删除。
+fn seed_scm_state(dir: &Path) {
+    if !dir.join(".git").exists() {
+        return;
+    }
+    let append = |rel: &str, extra: &str| {
+        let p = dir.join(rel);
+        let old = fs::read_to_string(&p).unwrap_or_default();
+        let _ = fs::write(&p, format!("{old}{extra}"));
+    };
+    append("README.md", "\n## 许可\n\nMIT\n");
+    append("tests/router_test.rs", "\n#[test]\nfn ignores_case() {\n    assert!(match_route(\"/USERS\").is_some());\n}\n");
+    let _ = git(dir, &["add", "README.md", "tests/router_test.rs"]);
+    // 暂存之后再改一次:同一个文件同时出现在「暂存的更改」与「更改」
+    append("tests/router_test.rs", "\n// TODO: 补充 404 用例\n");
+    let _ = fs::write(dir.join("src/middleware.rs"), "pub fn log(path: &str) {\n    println!(\"GET {path}\");\n}\n");
+    let _ = fs::create_dir_all(dir.join("examples"));
+    let _ = fs::write(dir.join("examples/basic.rs"), "fn main() {\n    println!(\"{:?}\", router_demo::match_route(\"/users\"));\n}\n");
+    let _ = fs::remove_file(dir.join("CLAUDE.md"));
+}
+
 /// 生成全部演示项目,返回其路径列表。
 pub fn seed(root: &Path) -> io::Result<Vec<PathBuf>> {
     fs::create_dir_all(root)?;
+    let router = make_project(root, "router-demo", router_files(), Some(("src/utils.rs", "\npub fn is_root(p: &str) -> bool {\n    p == \"/\"\n}\n")))?;
+    seed_scm_state(&router);
     Ok(vec![
-        make_project(root, "router-demo", router_files(), Some(("src/utils.rs", "\npub fn is_root(p: &str) -> bool {\n    p == \"/\"\n}\n")))?,
+        router,
         make_project(root, "web-dashboard", dashboard_files(), None)?,
         make_project(root, "docs-site", docs_files(), Some(("docs/guide.md", "3. 部署\n")))?,
         make_project(root, "scenario-lab", lab_files(), None)?,

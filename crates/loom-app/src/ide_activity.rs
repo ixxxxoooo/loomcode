@@ -13,12 +13,20 @@ use gpui_kit::*;
 /// 活动栏条目:(图标, 提示, 对应的面板分段)。
 const ACTIVITIES: [(IconName, &str, RightTab); 4] = [
     (IconName::Folder, "文件", RightTab::Files),
-    (IconName::GitBranch, "改动", RightTab::Changes),
+    (IconName::GitBranch, "源代码管理(⌃⇧G)", RightTab::Changes),
     (IconName::Terminal, "终端", RightTab::Terminal),
     (IconName::ListTodo, "计划", RightTab::Plan),
 ];
 
 impl IdeWindow {
+    /// ⌃⇧G:切到左栏的「源代码管理」(和 VS Code 一致)。
+    pub(crate) fn show_scm(&mut self, _window: &mut Window, cx: &mut Context<Self>) {
+        self.left_open = true;
+        self.search_open = false;
+        self.panel.update(cx, |p, cx| p.set_tab(RightTab::Changes, cx));
+        cx.notify();
+    }
+
     /// 切到左栏的「搜索」并聚焦输入框(⌘⇧F)。
     pub(crate) fn show_search(&mut self, window: &mut Window, cx: &mut Context<Self>) {
         self.left_open = true;
@@ -34,10 +42,19 @@ impl IdeWindow {
         let cur = self.panel.read(cx).tab;
         let (left_open, search_open, primary) = (self.left_open, self.search_open, t.primary);
         // 活动栏的一项:图标按钮 + 选中时左侧竖条
+        let scm_count = self.panel.read(cx).scm.read(cx).count();
+        let badge_bg = t.primary;
+        let badge_fg = t.primary_foreground;
         let item = move |id: SharedString, ic: IconName, tip: &'static str, active: bool| {
+            // 源代码管理图标右上角显示改动文件数(和 VS Code 一致)
+            let badge = (ic == IconName::GitBranch && scm_count > 0).then(|| {
+                div().absolute().right(px(4.)).top(px(2.)).min_w(px(15.)).h(px(15.)).px(px(3.)).flex().items_center().justify_center().rounded(px(8.)).bg(badge_bg).text_color(badge_fg).text_size(px(9.5)).font_weight(FontWeight::BOLD)
+                    .child(if scm_count > 99 { "99+".to_string() } else { scm_count.to_string() })
+            });
             div().relative().w_full().flex().justify_center()
                 .when(active, |d| d.child(div().absolute().left_0().top(px(6.)).bottom(px(6.)).w(px(2.)).rounded_r(px(2.)).bg(primary)))
                 .child(Button::new(id).ghost().icon(ic).tooltip(tip).selected(active))
+                .children(badge)
         };
         let mut col = v_flex().w(px(44.)).h_full().flex_none().items_center().pt_2().gap_1().border_r_1().border_color(t.border).bg(t.sidebar);
         for (ic, tip, tab) in ACTIVITIES.into_iter().take(1) {

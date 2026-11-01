@@ -196,6 +196,8 @@ pub struct Workbench {
     pending_open: Option<String>,
     /// 全工作台唯一的编辑器:Agent 的「文件」标签、融合 IDE、独立 IDE 窗口都嵌入它,标签与文档只有一份
     pub editor: Entity<crate::ide::IdeView>,
+    /// 源代码管理视图(全工作台唯一,Agent 的「Git 更改」与 IDE 的「源代码管理」共用)
+    pub scm: Entity<crate::scm::ScmView>,
     /// 编辑器记忆保存的防抖序号
     editor_mem_gen: u64,
     /// 融合 / 独立 IDE 里的文件面板(取展开目录用);没有 IDE 时用 Agent 的面板
@@ -236,7 +238,9 @@ impl Workbench {
         let panel_root = if demo { demo_root.to_string_lossy().to_string() } else { std::env::var("HOME").unwrap_or_default() };
         let editor = cx.new(|_| crate::ide::IdeView::new());
         editor.update(cx, |v, cx| v.start_watch(window, cx));
-        let panel = cx.new(|cx| RightPanel::new(panel_root, demo, Some(editor.clone()), window, cx));
+        // 源代码管理视图:全工作台唯一,Agent 右栏与 IDE 共用
+        let scm = cx.new(|cx| crate::scm::ScmView::new(String::new(), window, cx));
+        let panel = cx.new(|cx| RightPanel::new(panel_root, demo, Some(editor.clone()), scm.clone(), window, cx));
         // 右面板标签行末尾放「面板开关 + IDE 入口」(没有整条标题栏后它们跟着右栏走)
         {
             let weak = cx.entity().downgrade();
@@ -320,6 +324,7 @@ impl Workbench {
             forks: HashMap::new(),
             pending_open: None,
             editor: editor.clone(),
+            scm: scm.clone(),
             editor_mem_gen: 0,
             ide_tree: None,
             restore_expanded: Vec::new(),
@@ -328,6 +333,13 @@ impl Workbench {
         // 编辑器状态变化(开关标签、光标移动)→ 防抖保存标签记忆
         let editor_sub = cx.observe(&editor, |this, _, cx| this.schedule_editor_memory(cx));
         wb._subs.push(editor_sub);
+        // 源代码管理里打开文件 → 共享编辑器(Agent 与 IDE 同一入口)
+        let scm_sub = cx.subscribe_in(&scm, window, |this, _, ev: &crate::scm::ScmEvent, window, cx| {
+            if let crate::scm::ScmEvent::OpenFile(path, pinned) = ev {
+                this.open_in_editor(path.clone(), *pinned, window, cx);
+            }
+        });
+        wb._subs.push(scm_sub);
         wb.apply_ui_state();
         let panel_sub = cx.subscribe_in(&wb.panel, window, |this, _, ev: &PanelEvent, window, cx| this.on_panel_event(ev, window, cx));
         wb._subs.push(panel_sub);
@@ -1246,7 +1258,8 @@ impl Workbench {
                 let demo = self.demo;
                 let tabs = self.ui_state.last.chat_tabs.clone();
                 let editor = self.editor.clone();
-                self.ide_shell = Some(cx.new(|cx| IdeWindow::new(wb, editor, demo, root, tabs, window, cx)));
+                let scm = self.scm.clone();
+                self.ide_shell = Some(cx.new(|cx| IdeWindow::new(wb, editor, scm, demo, root, tabs, window, cx)));
             }
         } else {
             window.focus(&self.focus, cx);
@@ -1267,6 +1280,7 @@ impl Workbench {
         let root = self.active_project_path().unwrap_or_default();
         let tabs = self.ui_state.last.chat_tabs.clone();
         let editor = self.editor.clone();
+        let scm = self.scm.clone();
         // 新窗口首帧会回读本工作台,必须等当前更新结束后再创建
         cx.defer(move |cx| {
             let mut options = TitleBar::window_options();
@@ -1277,7 +1291,7 @@ impl Workbench {
             let owner = wb.clone();
             match open_window(options, cx, move |window, cx| {
                 let base = root.clone();
-                let ide = cx.new(|cx| IdeWindow::new(wb, editor, demo, root, tabs, window, cx));
+                let ide = cx.new(|cx| IdeWindow::new(wb, editor, scm, demo, root, tabs, window, cx));
                 // 调试用:LOOM_FILE 在独立 IDE 窗口里直接打开该文件(相对路径按项目根补全)
                 if let Ok(f) = std::env::var("LOOM_FILE") {
                     let p = PathBuf::from(&f);
@@ -1440,6 +1454,11 @@ impl Workbench {
         // 没有窗口句柄时挂起的打开请求(UiRequest)在这里执行
         if let Some((path, pinned)) = self.pending_editor_open.take() {
             self.open_in_editor(path, pinned, window, cx);
+        }
+        // 窗口里没有任何焦点时(切页面、关掉有焦点的面板…)把焦点放回根,否则 ⌃` 等快捷键找不到处理者;
+        // 融合 IDE 显示时由 IdeWindow 自己的根接管,这里不抢
+        if window.focused(cx).is_none() && !(self.ide && self.ide_shell.is_some()) {
+            window.focus(&self.focus, cx);
         }
         // 独立 IDE 窗口开着时,Agent 的「文件」标签只放占位,避免同一个编辑器在两个窗口里同时渲染
         let elsewhere = self.editor_elsewhere(cx);

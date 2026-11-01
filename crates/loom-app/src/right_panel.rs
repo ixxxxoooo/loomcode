@@ -135,14 +135,25 @@ pub struct RightPanel {
     pub(crate) root: String,
     /// 终端集合变化时重绘面板
     _term_hub_sub: Subscription,
-    /// 「改动」分段里的 Git 更改
-    pub(crate) git: crate::git_changes::GitPane,
+    /// 「改动」分段当前显示 Claude 改动还是 Git 更改
+    pub(crate) changes_mode: crate::git_changes::ChangesMode,
+    /// 源代码管理视图(全工作台唯一,Agent 的「Git 更改」与 IDE 的「源代码管理」共用)
+    pub(crate) scm: Entity<crate::scm::ScmView>,
+    /// 仓库状态变化(暂存 / 提交…)时刷新文件树的 Git 标记
+    _scm_subs: Vec<Subscription>,
 }
 
 impl RightPanel {
-    pub fn new(root: String, _demo: bool, editor: Option<Entity<crate::ide::IdeView>>, _window: &mut Window, cx: &mut Context<Self>) -> Self {
+    pub fn new(root: String, _demo: bool, editor: Option<Entity<crate::ide::IdeView>>, scm: Entity<crate::scm::ScmView>, _window: &mut Window, cx: &mut Context<Self>) -> Self {
         let hub = crate::term_store::ProjectTerminals::hub(cx);
         let sub = cx.observe(&hub, |_, _, cx| cx.notify());
+        let scm_sub = cx.subscribe(&scm, |this, _, ev: &crate::scm::ScmEvent, cx| {
+            if matches!(ev, crate::scm::ScmEvent::Changed) {
+                this.reload_files(cx);
+            }
+        });
+        // 角标(改动数)随源代码管理状态变化
+        let scm_obs = cx.observe(&scm, |_, _, cx| cx.notify());
         Self {
             tab: RightTab::Changes,
             open: crate::right_tabs::DEFAULT_TABS.to_vec(),
@@ -161,7 +172,9 @@ impl RightPanel {
             task_sel: None,
             root,
             _term_hub_sub: sub,
-            git: crate::git_changes::GitPane::new(),
+            changes_mode: crate::git_changes::ChangesMode::initial(),
+            scm,
+            _scm_subs: vec![scm_sub, scm_obs],
         }
     }
 
@@ -177,8 +190,8 @@ impl RightPanel {
         self.open_changes.clear();
         self.run_tabs.clear();
         self.active_run = None;
-        self.git.reset();
         self.root = root.clone();
+        self.scm.update(cx, |s, cx| s.set_root(&root, cx));
         self.files.set_root(root.clone());
         self.reload_files(cx);
         cx.notify();
@@ -324,9 +337,6 @@ impl Render for RightPanel {
     fn render(&mut self, window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
         let t = cx.theme().clone();
         let items = self.items(cx);
-        if self.tab == RightTab::Changes && self.git.mode == crate::git_changes::ChangesMode::Git {
-            self.git_auto_refresh(items.len(), cx);
-        }
         let change_count = collect_changes(&items).len();
         let body = if self.open.is_empty() { self.empty_tabs_view(cx) } else { match self.tab {
             RightTab::Changes => self.changes_tab(&items, cx),

@@ -34,6 +34,8 @@ pub struct StatusEntry {
     pub index: char,
     /// 工作区状态(第二列),空格表示没有
     pub worktree: char,
+    /// 重命名 / 复制时的原路径(相对仓库根目录)
+    pub orig: Option<String>,
 }
 
 impl StatusEntry {
@@ -50,6 +52,24 @@ impl StatusEntry {
     /// 是否是未跟踪的新文件(HEAD 里没有它)。
     pub fn untracked(&self) -> bool {
         self.index == '?' && self.worktree == '?'
+    }
+
+    /// 是否是合并冲突(双方修改、双方新增 / 删除等)。
+    pub fn conflict(&self) -> bool {
+        matches!((self.index, self.worktree), ('U', _) | (_, 'U') | ('A', 'A') | ('D', 'D'))
+    }
+
+    /// 暂存区里的改动类型(`M` `A` `D` `R` `C`);没有暂存改动、未跟踪或冲突时为 `None`。
+    pub fn staged_kind(&self) -> Option<char> {
+        (!self.conflict() && self.index != ' ' && self.index != '?').then_some(self.index)
+    }
+
+    /// 工作区里的改动类型(`M` `D` `U`=未跟踪);没有未暂存改动或冲突时为 `None`。
+    pub fn unstaged_kind(&self) -> Option<char> {
+        if self.conflict() || self.worktree == ' ' {
+            return None;
+        }
+        Some(if self.worktree == '?' { 'U' } else { self.worktree })
     }
 
     /// 是否已经完全暂存(工作区没有进一步改动)。
@@ -69,10 +89,8 @@ pub fn parse_status(out: &str) -> Vec<StatusEntry> {
         if path.is_empty() {
             continue;
         }
-        if matches!(index, 'R' | 'C') || matches!(worktree, 'R' | 'C') {
-            fields.next();
-        }
-        list.push(StatusEntry { path: path.to_string(), index, worktree });
+        let orig = if matches!(index, 'R' | 'C') || matches!(worktree, 'R' | 'C') { fields.next().map(str::to_string) } else { None };
+        list.push(StatusEntry { path: path.to_string(), index, worktree, orig });
     }
     list
 }
@@ -161,8 +179,10 @@ pub fn worktree_path(root: &Path, repo_root: &str, branch: &str) -> PathBuf {
 }
 
 /// 执行 git 命令,成功返回 stdout,失败返回 stderr 的首行(给用户看)。
-fn git(dir: &str, args: &[&str]) -> Result<String, String> {
-    let out = Command::new("git").arg("-C").arg(dir).args(args).output().map_err(|e| format!("无法运行 git:{e}"))?;
+///
+/// 不允许 git 在终端上询问凭据(`GIT_TERMINAL_PROMPT=0`),拉取 / 推送缺凭据时立刻失败而不是卡住。
+pub(crate) fn git(dir: &str, args: &[&str]) -> Result<String, String> {
+    let out = Command::new("git").arg("-C").arg(dir).args(args).env("GIT_TERMINAL_PROMPT", "0").output().map_err(|e| format!("无法运行 git:{e}"))?;
     if out.status.success() {
         return Ok(String::from_utf8_lossy(&out.stdout).to_string());
     }
@@ -187,7 +207,7 @@ pub fn worktrees(dir: &str) -> Result<Vec<Worktree>, String> {
 
 /// 工作区有改动的文件(含未跟踪的单个文件)。路径相对仓库根目录。
 pub fn status(dir: &str) -> Result<Vec<StatusEntry>, String> {
-    git(dir, &["status", "--porcelain=v1", "-z", "--untracked-files=all"]).map(|o| parse_status(&o))
+    git(dir, &["--no-optional-locks", "status", "--porcelain=v1", "-z", "--untracked-files=all"]).map(|o| parse_status(&o))
 }
 
 /// 某个文件在 HEAD 里的内容;HEAD 里没有(新文件、空仓库)或不是文本时返回 `None`。
@@ -263,6 +283,7 @@ mod tests {
         assert_eq!(label("gone.rs"), 'D');
         assert_eq!(label("added.rs"), 'M', "已暂存的新文件又被改过:显示工作区的 M");
         assert_eq!(label("conflict.rs"), '!');
+        assert_eq!(e.iter().find(|x| x.path == "new.rs").unwrap().orig.as_deref(), Some("old.rs"));
         assert!(e[2].untracked() && !e[0].untracked());
         assert!(e[0].staged() && !e[1].staged());
     }
