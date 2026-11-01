@@ -1,0 +1,10 @@
+[package]
+name = "loom-config"
+version.workspace = true
+edition.workspace = true
+
+[dependencies]
+loom-core = { path = "../loom-core" }
+serde.workspace = true
+serde_json.workspace = true
+thiserror.workspace = true

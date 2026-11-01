@@ -1,0 +1,12 @@
+[package]
+name = "loom-claude"
+version.workspace = true
+edition.workspace = true
+
+[dependencies]
+loom-core = { path = "../loom-core" }
+serde_json.workspace = true
+thiserror.workspace = true
+async-channel = "2"
+base64 = "0.22"
+uuid = { version = "1", features = ["v4"] }

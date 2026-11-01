@@ -1,10 +1,10 @@
 #!/usr/bin/env python3
-"""按进程名截取 UCode 窗口(不抢焦点)。用法:scripts/shot.py [输出路径] [进程名]"""
+"""按进程名截取 LoomCode 窗口(不抢焦点)。用法:scripts/shot.py [输出路径] [进程名]"""
 import subprocess, sys
 import Quartz
 
-out = sys.argv[1] if len(sys.argv) > 1 else "/tmp/ucode-shot.png"
-name = sys.argv[2] if len(sys.argv) > 2 else "ucode"
+out = sys.argv[1] if len(sys.argv) > 1 else "/tmp/loom-shot.png"
+name = sys.argv[2] if len(sys.argv) > 2 else "loomcode"
 wins = Quartz.CGWindowListCopyWindowInfo(Quartz.kCGWindowListOptionAll, Quartz.kCGNullWindowID)
 cands = [w for w in wins if (w.get("kCGWindowOwnerName") or "").lower() == name and w.get("kCGWindowIsOnscreen")]
 if not cands:

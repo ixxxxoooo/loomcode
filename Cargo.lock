@@ -3532,6 +3532,102 @@ dependencies = [
 ]
 
 [[package]]
+name = "loom-app"
+version = "0.1.0"
+dependencies = [
+ "async-channel",
+ "gpui-kit",
+ "loom-automation",
+ "loom-browser",
+ "loom-canvas",
+ "loom-claude",
+ "loom-config",
+ "loom-core",
+ "loom-demo",
+ "loom-term",
+ "serde_json",
+ "similar",
+ "uuid",
+]
+
+[[package]]
+name = "loom-automation"
+version = "0.1.0"
+dependencies = [
+ "chrono",
+ "serde",
+ "serde_json",
+ "thiserror 2.0.21",
+]
+
+[[package]]
+name = "loom-browser"
+version = "0.1.0"
+dependencies = [
+ "thiserror 2.0.21",
+ "ureq",
+ "url",
+]
+
+[[package]]
+name = "loom-canvas"
+version = "0.1.0"
+dependencies = [
+ "serde",
+ "serde_json",
+ "thiserror 2.0.21",
+]
+
+[[package]]
+name = "loom-claude"
+version = "0.1.0"
+dependencies = [
+ "async-channel",
+ "base64 0.22.1",
+ "loom-core",
+ "serde_json",
+ "thiserror 2.0.21",
+ "uuid",
+]
+
+[[package]]
+name = "loom-config"
+version = "0.1.0"
+dependencies = [
+ "loom-core",
+ "serde",
+ "serde_json",
+ "thiserror 2.0.21",
+]
+
+[[package]]
+name = "loom-core"
+version = "0.1.0"
+dependencies = [
+ "async-channel",
+ "serde",
+ "serde_json",
+ "thiserror 2.0.21",
+]
+
+[[package]]
+name = "loom-demo"
+version = "0.1.0"
+dependencies = [
+ "async-channel",
+ "loom-core",
+ "serde_json",
+]
+
+[[package]]
+name = "loom-term"
+version = "0.1.0"
+dependencies = [
+ "alacritty_terminal",
+ "portable-pty",
+]
+
+[[package]]
 name = "loop9"
 version = "0.1.5"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -6876,102 +6972,6 @@ name = "typenum"
 version = "1.20.1"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "b6f5e870be6c3b371b77fe0ee0bafb859fa4964b4404c27de1d380043c4dda20"
-
-[[package]]
-name = "ucode-app"
-version = "0.1.0"
-dependencies = [
- "async-channel",
- "gpui-kit",
- "serde_json",
- "similar",
- "ucode-automation",
- "ucode-browser",
- "ucode-canvas",
- "ucode-claude",
- "ucode-config",
- "ucode-core",
- "ucode-demo",
- "ucode-term",
- "uuid",
-]
-
-[[package]]
-name = "ucode-automation"
-version = "0.1.0"
-dependencies = [
- "chrono",
- "serde",
- "serde_json",
- "thiserror 2.0.21",
-]
-
-[[package]]
-name = "ucode-browser"
-version = "0.1.0"
-dependencies = [
- "thiserror 2.0.21",
- "ureq",
- "url",
-]
-
-[[package]]
-name = "ucode-canvas"
-version = "0.1.0"
-dependencies = [
- "serde",
- "serde_json",
- "thiserror 2.0.21",
-]
-
-[[package]]
-name = "ucode-claude"
-version = "0.1.0"
-dependencies = [
- "async-channel",
- "base64 0.22.1",
- "serde_json",
- "thiserror 2.0.21",
- "ucode-core",
- "uuid",
-]
-
-[[package]]
-name = "ucode-config"
-version = "0.1.0"
-dependencies = [
- "serde",
- "serde_json",
- "thiserror 2.0.21",
- "ucode-core",
-]
-
-[[package]]
-name = "ucode-core"
-version = "0.1.0"
-dependencies = [
- "async-channel",
- "serde",
- "serde_json",
- "thiserror 2.0.21",
-]
-
-[[package]]
-name = "ucode-demo"
-version = "0.1.0"
-dependencies = [
- "async-channel",
- "serde_json",
- "ucode-core",
-]
-
-[[package]]
-name = "ucode-term"
-version = "0.1.0"
-dependencies = [
- "alacritty_terminal",
- "portable-pty",
-]
 
 [[package]]
 name = "uds_windows"

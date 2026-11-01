@@ -1,0 +1,23 @@
+[package]
+name = "loom-app"
+version.workspace = true
+edition.workspace = true
+
+[[bin]]
+name = "loomcode"
+path = "src/main.rs"
+
+[dependencies]
+gpui-kit.workspace = true
+loom-core = { path = "../loom-core" }
+loom-term = { path = "../loom-term" }
+loom-demo = { path = "../loom-demo" }
+loom-config = { path = "../loom-config" }
+loom-canvas = { path = "../loom-canvas" }
+loom-automation = { path = "../loom-automation" }
+loom-browser = { path = "../loom-browser" }
+loom-claude = { path = "../loom-claude" }
+serde_json.workspace = true
+async-channel = "2"
+similar = "2"
+uuid = { version = "1", features = ["v4"] }

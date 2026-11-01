@@ -1,9 +1,0 @@
-[package]
-name = "ucode-demo"
-version.workspace = true
-edition.workspace = true
-
-[dependencies]
-ucode-core = { path = "../ucode-core" }
-serde_json.workspace = true
-async-channel = "2"

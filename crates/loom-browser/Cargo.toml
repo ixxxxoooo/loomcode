@@ -1,0 +1,9 @@
+[package]
+name = "loom-browser"
+version.workspace = true
+edition.workspace = true
+
+[dependencies]
+thiserror.workspace = true
+url = "2"
+ureq = "2"

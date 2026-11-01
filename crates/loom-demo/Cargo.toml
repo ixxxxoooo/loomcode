@@ -1,0 +1,9 @@
+[package]
+name = "loom-demo"
+version.workspace = true
+edition.workspace = true
+
+[dependencies]
+loom-core = { path = "../loom-core" }
+serde_json.workspace = true
+async-channel = "2"

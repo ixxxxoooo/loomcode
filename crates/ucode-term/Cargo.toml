@@ -1,8 +1,0 @@
-[package]
-name = "ucode-term"
-version.workspace = true
-edition.workspace = true
-
-[dependencies]
-portable-pty = "0.9"
-alacritty_terminal = "0.25"

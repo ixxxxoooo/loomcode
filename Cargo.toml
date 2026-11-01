@@ -1,4 +1,4 @@
-# UCode:Rust + gpui-kit 重写的 Claude Code 工作台
+# LoomCode:Rust + gpui-kit 重写的 Claude Code 工作台
 [workspace]
 resolver = "2"
 members = ["crates/*"]
