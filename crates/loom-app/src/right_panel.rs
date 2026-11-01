@@ -305,7 +305,7 @@ impl RightPanel {
                                     .child(div().text_size(px(11.)).font_family(MONO).text_color(t.success).child(format!("+{a}")))
                                     .child(div().text_size(px(11.)).font_family(MONO).text_color(t.danger).child(format!("−{r}"))),
                             )
-                            .when(open, |d| d.child(div().border_t_1().border_color(t.border).pb_1().child(diff::render_flat(&lines, 400, cx))))
+                            .when(open, |d| d.child(div().border_t_1().border_color(t.border).pb_1().child(diff::render_flat(&lines, 400, crate::file_tree::language_for(std::path::Path::new(&c.path)), cx))))
                     })),
             )
             .into_any_element()

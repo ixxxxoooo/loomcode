@@ -218,6 +218,7 @@ impl RightPanel {
                         _ => t.muted_foreground,
                     };
                     let (rel, abs) = (e.path.clone(), PathBuf::from(&top).join(&e.path));
+                    let lang_path = PathBuf::from(&e.path);
                     let can_open = label != 'D' && abs.is_file();
                     v_flex().w_full().rounded(px(8.)).border_1().border_color(t.border)
                         .child(
@@ -236,7 +237,7 @@ impl RightPanel {
                         .when_some(open, |d, state| d.child(div().p_1().child(match state {
                             None => div().p_2().text_size(px(11.)).text_color(t.muted_foreground).child("正在计算差异…"),
                             Some((lines, _, _)) if lines.is_empty() => div().p_2().text_size(px(11.)).text_color(t.muted_foreground).child("没有可显示的文本差异(二进制、过大或空文件)"),
-                            Some((lines, _, _)) => diff::render(lines, 400, cx),
+                            Some((lines, _, _)) => diff::render(lines, 400, crate::file_tree::language_for(&lang_path), cx),
                         })))
                 }))
         ).into_any_element()

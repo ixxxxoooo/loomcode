@@ -244,7 +244,7 @@ pub fn render_content(content: &ToolContent, run_id: Option<&str>, cx: &App) -> 
                         .child(div().text_color(t.success).child(format!("+{added}")))
                         .child(div().text_color(t.danger).child(format!("−{removed}"))),
                 )
-                .child(diff::render(&lines, 120, cx))
+                .child(diff::render(&lines, 120, crate::file_tree::language_for(std::path::Path::new(path)), cx))
                 .into_any_element()
         }
         ToolContent::Image { label, path: Some(path) } if std::path::Path::new(path).is_file() => v_flex()

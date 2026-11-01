@@ -5,6 +5,8 @@ use crate::ui::MONO;
 use gpui_kit::component::{ActiveTheme, h_flex, v_flex};
 use gpui_kit::prelude::FluentBuilder as _;
 use gpui_kit::*;
+use gpui_kit::component::highlighter::SyntaxHighlighter;
+use gpui_kit::component::Rope;
 use similar::{ChangeTag, TextDiff};
 
 /// 一行 Diff。
@@ -40,22 +42,49 @@ pub fn compute(old: &str, new: &str) -> (Vec<DiffLine>, usize, usize) {
 }
 
 /// 渲染 Diff;`max_lines` 限制渲染行数(超长 Diff 先显示前 N 行)。
-pub fn render(lines: &[DiffLine], max_lines: usize, cx: &App) -> Div {
-    render_with(lines, max_lines, true, cx)
+pub fn render(lines: &[DiffLine], max_lines: usize, lang: &str, cx: &App) -> Div {
+    render_with(lines, max_lines, true, lang, cx)
 }
 
 /// 无外框版本(嵌在已有卡片里时用,避免框中框):整行底色直接铺到卡片边缘。
-pub fn render_flat(lines: &[DiffLine], max_lines: usize, cx: &App) -> Div {
-    render_with(lines, max_lines, false, cx)
+pub fn render_flat(lines: &[DiffLine], max_lines: usize, lang: &str, cx: &App) -> Div {
+    render_with(lines, max_lines, false, lang, cx)
 }
 
-fn render_with(lines: &[DiffLine], max_lines: usize, bordered: bool, cx: &App) -> Div {
+/// 给要显示的各行算语法高亮:把这些行拼成一份文本整体解析,再按行切回(每行一组相对偏移的样式)。
+///
+/// 参数:`lines` 要显示的行;`lang` 语言名(`text` 或解析失败则不着色);`cx` 取语法主题。
+fn line_styles(lines: &[DiffLine], lang: &str, cx: &App) -> Vec<Vec<(std::ops::Range<usize>, HighlightStyle)>> {
+    let mut out = vec![Vec::new(); lines.len()];
+    let text = lines.iter().map(|l| l.text.as_str()).collect::<Vec<_>>().join("\n");
+    if lang == "text" || text.is_empty() || text.len() > 200_000 {
+        return out;
+    }
+    let mut hl = SyntaxHighlighter::new(lang);
+    hl.update(None, &Rope::from(text.as_str()), Some(std::time::Duration::from_millis(80)));
+    let styles = hl.styles(&(0..text.len()), &*cx.theme().highlight_theme);
+    let mut start = 0;
+    for (i, l) in lines.iter().enumerate() {
+        let end = start + l.text.len();
+        for (r, st) in &styles {
+            let (a, b) = (r.start.max(start), r.end.min(end));
+            if a < b {
+                out[i].push((a - start..b - start, *st));
+            }
+        }
+        start = end + 1;
+    }
+    out
+}
+
+fn render_with(lines: &[DiffLine], max_lines: usize, bordered: bool, lang: &str, cx: &App) -> Div {
     let t = cx.theme();
     let (add_bg, del_bg) = diff_colors(cx);
     let shown = lines.len().min(max_lines);
+    let styles = line_styles(&lines[..shown], lang, cx);
     let mut col = v_flex().w_full().overflow_hidden().font_family(MONO).text_size(px(12.))
         .when(bordered, |d| d.rounded(px(8.)).border_1().border_color(t.border));
-    for line in &lines[..shown] {
+    for (line, st) in lines[..shown].iter().zip(styles) {
         let (bg, mark, fg) = match line.tag {
             ChangeTag::Insert => (Some(add_bg), "+", t.success),
             ChangeTag::Delete => (Some(del_bg), "−", t.danger),
@@ -68,7 +97,7 @@ fn render_with(lines: &[DiffLine], max_lines: usize, bordered: bool, cx: &App) -
                 .when_some(bg, |d, b| d.bg(b))
                 .child(div().w(px(36.)).flex_none().px_1().text_right().text_color(t.muted_foreground).child(no))
                 .child(div().w(px(14.)).flex_none().text_color(fg).child(mark))
-                .child(div().flex_1().min_w_0().pr_2().text_color(t.foreground).child(line.text.clone())),
+                .child(div().flex_1().min_w_0().pr_2().text_color(t.foreground).child(StyledText::new(line.text.clone()).with_highlights(st))),
         );
     }
     if lines.len() > shown {
