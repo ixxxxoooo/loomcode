@@ -150,6 +150,8 @@ pub struct Workbench {
     new_counter: u32,
     /// 本次运行里新建、还没写进历史的会话 id(启动时用预分配 id,而不是恢复)
     pub new_sessions: HashSet<String>,
+    /// 分叉出来、还没写进历史的会话:新会话 id → 源会话 id(首次发消息时用 --fork-session 启动)
+    pub forks: HashMap<String, String>,
     /// 历史加载完成后要打开的会话(调试用 `UCODE_SESSION`)
     pending_open: Option<String>,
 }
@@ -240,6 +242,7 @@ impl Workbench {
             focus,
             new_counter: 0,
             new_sessions: HashSet::new(),
+            forks: HashMap::new(),
             pending_open: None,
         };
         wb.apply_ui_state();
@@ -463,6 +466,8 @@ impl Workbench {
             let cwd = self.projects[project_ix].path.clone();
             let live = id == "showcase-tour";
             let is_new = self.new_sessions.contains(id);
+            // 分叉会话:恢复源会话并分叉,界面先回放源会话的历史
+            let fork_src = self.forks.get(id).cloned();
             // 多根工作区:其余文件夹授权访问,并告诉 claude 它们在哪
             let workspace = self.ui_state.workspace_by_dir(&cwd).cloned();
             let s = &self.settings;
@@ -473,8 +478,9 @@ impl Workbench {
                 // 真实模式:惰性启动 claude;新会话预分配 id,历史会话 --resume
                 let config = BackendConfig {
                     cwd: cwd.clone(),
-                    resume: (!is_new).then(|| id.to_string()),
-                    session_id: is_new.then(|| id.to_string()),
+                    resume: fork_src.clone().or_else(|| (!is_new).then(|| id.to_string())),
+                    session_id: (is_new || fork_src.is_some()).then(|| id.to_string()),
+                    fork_session: fork_src.is_some(),
                     model: (s.default_model != "default").then(|| s.default_model.clone()),
                     mode: (s.default_mode != PermissionMode::Default).then_some(s.default_mode),
                     effort: (s.default_effort != Effort::Medium).then_some(s.default_effort),
@@ -521,7 +527,8 @@ impl Workbench {
             });
             // 恢复历史会话:后台解析磁盘记录,回放进时间线
             if !self.demo && !is_new {
-                let (model, cwd, sid) = (model.clone(), cwd.clone(), id.to_string());
+                // 分叉会话回放的是源会话的历史(它自己的文件还不存在)
+                let (model, cwd, sid) = (model.clone(), cwd.clone(), fork_src.clone().unwrap_or_else(|| id.to_string()));
                 cx.spawn(async move |_this, cx| {
                     let events = cx.background_spawn(async move { crate::real::replay(&cwd, &sid) }).await;
                     let _ = model.update(cx, |m, cx| m.load_history(events, cx));
@@ -773,6 +780,8 @@ impl Workbench {
             let title = if title.is_empty() { "新会话".to_string() } else { title };
             p.sessions.insert(0, SessionMeta { id: id.clone(), title, updated: "刚刚".into(), pinned: false, archived: false, badge: SessionBadge::Idle });
         }
+        // 新插入的会话(例如分叉出来、还没写盘的)也要套上自定义名
+        self.apply_ui_state();
     }
 
     /// 一个回合结束后,后台刷新该项目的会话列表与分支。
@@ -848,6 +857,10 @@ impl Workbench {
                         self.unread.insert(id.clone());
                     }
                     let path = owner.and_then(|(_, v)| self.projects.get(v.project_ix)).map(|p| p.path.clone());
+                    // 一个回合结束,会话已经写进磁盘:之后再打开就是普通会话,不能再从源会话分叉
+                    if let Some(id) = owner.map(|(id, _)| id.clone()) {
+                        self.forks.remove(&id);
+                    }
                     if let Some(path) = path {
                         let root = self.work_root(&path);
                         self.refresh_git(root, cx);

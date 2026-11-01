@@ -12,6 +12,8 @@ pub struct ClaudeOptions {
     pub session_id: Option<String>,
     /// 恢复已有会话
     pub resume: Option<String>,
+    /// 恢复时分叉成新会话(`--fork-session`);此时 `session_id` 是新会话的 id
+    pub fork_session: bool,
     pub model: Option<String>,
     pub mode: Option<PermissionMode>,
     pub effort: Option<Effort>,
@@ -28,11 +30,14 @@ pub struct ClaudeOptions {
 impl ClaudeOptions {
     /// 由界面层的后端配置转换而来;没有恢复会话时自动分配一个新的会话 id。
     pub fn from_config(config: &BackendConfig) -> Self {
-        let session_id = if config.resume.is_none() { Some(config.session_id.clone().unwrap_or_else(|| uuid::Uuid::new_v4().to_string())) } else { None };
+        // 新建或分叉都需要一个新会话 id;普通恢复沿用被恢复的那个
+        let fork = config.resume.is_some() && config.fork_session;
+        let session_id = if config.resume.is_none() || fork { Some(config.session_id.clone().unwrap_or_else(|| uuid::Uuid::new_v4().to_string())) } else { None };
         Self {
             cwd: config.cwd.clone(),
             session_id,
             resume: config.resume.clone(),
+            fork_session: fork,
             model: config.model.clone(),
             mode: config.mode,
             effort: config.effort,
@@ -42,8 +47,11 @@ impl ClaudeOptions {
         }
     }
 
-    /// 当前会话的 id(新建时是预分配的,恢复时是被恢复的那个)。
+    /// 当前会话的 id(新建时是预分配的,恢复时是被恢复的那个,分叉时是分叉出来的新 id)。
     pub fn effective_session_id(&self) -> String {
+        if self.fork_session {
+            return self.session_id.clone().or_else(|| self.resume.clone()).unwrap_or_default();
+        }
         self.resume.clone().or_else(|| self.session_id.clone()).unwrap_or_default()
     }
 
@@ -62,12 +70,19 @@ impl ClaudeOptions {
         .map(String::from)
         .collect();
 
+        if self.resume.is_some() && self.fork_session {
+            args.push("--fork-session".into());
+        }
         let mut push = |flag: &str, value: &str| {
             args.push(flag.into());
             args.push(value.into());
         };
         if let Some(resume) = &self.resume {
             push("--resume", resume);
+            // claude 规定:--session-id 与 --resume 同用时必须带 --fork-session,它给出分叉后的新 id
+            if let (true, Some(id)) = (self.fork_session, &self.session_id) {
+                push("--session-id", id);
+            }
         } else if let Some(id) = &self.session_id {
             push("--session-id", id);
         }
@@ -172,6 +187,34 @@ mod tests {
         assert!(args.windows(2).any(|w| w == ["--resume", "abc"]));
         assert!(!args.contains(&"--session-id".to_string()));
         assert_eq!(resumed.effective_session_id(), "abc");
+    }
+
+    #[test]
+    fn 分叉会话参数与有效_id() {
+        let cfg = BackendConfig { cwd: "/tmp".into(), resume: Some("src".into()), session_id: Some("new".into()), fork_session: true, ..Default::default() };
+        let o = ClaudeOptions::from_config(&cfg);
+        let a = o.args();
+        assert!(a.windows(2).any(|w| w == ["--resume", "src"]));
+        assert!(a.contains(&"--fork-session".to_string()));
+        assert!(a.windows(2).any(|w| w == ["--session-id", "new"]), "分叉要用预分配的新 id");
+        // 界面与 translator 看到的会话 id 必须是新的,不是被恢复的源会话
+        assert_eq!(o.effective_session_id(), "new");
+
+        // 没给新 id 时自动分配一个 UUID,仍不能是源 id
+        let auto = ClaudeOptions::from_config(&BackendConfig { resume: Some("src".into()), fork_session: true, ..Default::default() });
+        assert_ne!(auto.effective_session_id(), "src");
+        assert!(uuid::Uuid::parse_str(&auto.effective_session_id()).is_ok());
+
+        // 普通恢复:没有 --fork-session / --session-id,有效 id 是被恢复的那个
+        let plain = ClaudeOptions::from_config(&BackendConfig { resume: Some("src".into()), session_id: Some("ignored".into()), ..Default::default() });
+        let pa = plain.args();
+        assert!(!pa.contains(&"--fork-session".to_string()) && !pa.contains(&"--session-id".to_string()));
+        assert_eq!(plain.effective_session_id(), "src");
+
+        // 没有 resume 时 fork_session 无意义:当作新建
+        let new = ClaudeOptions::from_config(&BackendConfig { fork_session: true, ..Default::default() });
+        assert!(!new.args().contains(&"--fork-session".to_string()));
+        assert!(new.args().contains(&"--session-id".to_string()));
     }
 
     #[test]

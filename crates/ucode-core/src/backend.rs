@@ -24,8 +24,11 @@ pub struct BackendConfig {
     pub cwd: String,
     /// 要恢复的会话 id
     pub resume: Option<String>,
-    /// 新会话预分配的 id(与 `resume` 互斥;为空则由后端自行生成)
+    /// 新会话预分配的 id(与 `resume` 互斥;为空则由后端自行生成)。
+    /// `fork_session` 为真时,它是分叉出来的**新**会话的 id。
     pub session_id: Option<String>,
+    /// 恢复 `resume` 指定的会话,但分叉成一个新会话(`--fork-session`),原会话不受影响
+    pub fork_session: bool,
     pub model: Option<String>,
     pub mode: Option<crate::modes::PermissionMode>,
     pub effort: Option<crate::modes::Effort>,

@@ -27,7 +27,7 @@ fn session_row(wb: &Workbench, project_ix: usize, meta: &SessionMeta, cx: &mut C
     // 按钮点击不应触发整行的「打开会话」
     let stop = |_: &MouseDownEvent, _: &mut Window, cx: &mut App| cx.stop_propagation();
     let cwd = wb.projects.get(project_ix).map(|p| p.path.clone()).unwrap_or_default();
-    let menu = session_menu::build(cx.entity().downgrade(), meta, cwd);
+    let menu = session_menu::build(cx.entity().downgrade(), meta, cwd, wb.demo);
     h_flex()
         .id(SharedString::from(format!("sess-{}", meta.id)))
         .group(group.clone())
