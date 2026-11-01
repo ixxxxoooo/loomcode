@@ -713,6 +713,8 @@ impl Workbench {
             self.push_extensions(&composer, &self.work_root(&cwd), cx);
             if !self.demo {
                 let ctx = crate::composer_send::RewriteCtx { claude_path: self.settings.claude_path.clone(), cwd: cwd.clone().into(), env: self.session_extra_env() };
+                // 源代码管理的「生成提交说明」也走同一个运行环境
+                self.scm.update(cx, |s, _| s.set_ai_ctx(Some(ctx.clone())));
                 composer.update(cx, |c, _| c.set_rewrite_ctx(ctx));
             }
             // 调试用:预填输入框,方便截图检查补全

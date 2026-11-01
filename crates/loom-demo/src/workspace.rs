@@ -60,6 +60,11 @@ fn write_files(root: &Path, files: &[(&str, String)]) -> io::Result<()> {
 
 /// 在 `dir` 内执行 git 命令,失败只返回错误,不 panic。
 fn git(dir: &Path, args: &[&str]) -> io::Result<()> {
+    git_at(dir, args, "2026-10-01T10:00:00+0800")
+}
+
+/// 同 `git`,但指定作者与提交时间(演示历史里让提交有先后)。
+fn git_at(dir: &Path, args: &[&str], date: &str) -> io::Result<()> {
     let status = Command::new("git")
         .args(args)
         .current_dir(dir)
@@ -67,8 +72,8 @@ fn git(dir: &Path, args: &[&str]) -> io::Result<()> {
         .env("GIT_AUTHOR_EMAIL", "demo@example.com")
         .env("GIT_COMMITTER_NAME", "Demo")
         .env("GIT_COMMITTER_EMAIL", "demo@example.com")
-        .env("GIT_AUTHOR_DATE", "2026-10-01T10:00:00+0800")
-        .env("GIT_COMMITTER_DATE", "2026-10-01T10:00:00+0800")
+        .env("GIT_AUTHOR_DATE", date)
+        .env("GIT_COMMITTER_DATE", date)
         .output()?
         .status;
     if status.success() { Ok(()) } else { Err(io::Error::other(format!("git {args:?} 失败"))) }
@@ -97,10 +102,33 @@ fn make_project(root: &Path, name: &str, files: Vec<(&'static str, String)>, dir
 
 /// 给 router-demo 铺出「源代码管理」各组都有内容的状态:
 /// 暂存区(README、测试文件)、工作区(utils 已改、测试文件暂存后又改)、未跟踪(新文件、新目录)、已删除。
+/// 给演示仓库造一段有分支与合并的历史(「图形」区演示):一条已合并的功能分支、一条未合并的修复分支、一个 tag。
+fn seed_history(dir: &Path) {
+    let commit = |msg: &str, date: &str| {
+        let _ = git_at(dir, &["add", "-A"], date);
+        let _ = git_at(dir, &["commit", "-q", "-m", msg], date);
+    };
+    let _ = git(dir, &["checkout", "-q", "-b", "feature/case-insensitive"]);
+    let _ = fs::write(dir.join("src/case.rs"), "pub fn fold(p: &str) -> String {\n    p.to_lowercase()\n}\n");
+    commit("feat(router): 路由匹配忽略大小写\n\n- 新增 `case::fold`,匹配前统一转小写。", "2026-10-02T10:00:00+0800");
+    let _ = fs::write(dir.join("src/case.rs"), "pub fn fold(p: &str) -> String {\n    p.to_lowercase()\n}\n\n#[test]\nfn folds() {\n    assert_eq!(fold(\"/USERS\"), \"/users\");\n}\n");
+    commit("test: 补充大小写折叠用例", "2026-10-03T10:00:00+0800");
+    let _ = git(dir, &["checkout", "-q", "main"]);
+    let _ = fs::write(dir.join("CHANGELOG.md"), "# 变更记录\n\n- 0.1.0 初始版本\n");
+    commit("docs: 补充变更记录", "2026-10-03T15:00:00+0800");
+    let _ = git_at(dir, &["merge", "-q", "--no-ff", "feature/case-insensitive", "-m", "merge: 合并 feature/case-insensitive"], "2026-10-04T10:00:00+0800");
+    let _ = git(dir, &["tag", "v0.1.0"]);
+    let _ = git(dir, &["checkout", "-q", "-b", "fix/trailing-slash"]);
+    let _ = fs::write(dir.join("src/slash.rs"), "pub fn trim(p: &str) -> &str {\n    p.trim_end_matches('/')\n}\n");
+    commit("fix: 去掉路径末尾的斜杠", "2026-10-05T10:00:00+0800");
+    let _ = git(dir, &["checkout", "-q", "main"]);
+}
+
 fn seed_scm_state(dir: &Path) {
     if !dir.join(".git").exists() {
         return;
     }
+    seed_history(dir);
     let append = |rel: &str, extra: &str| {
         let p = dir.join(rel);
         let old = fs::read_to_string(&p).unwrap_or_default();

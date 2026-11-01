@@ -49,6 +49,8 @@ mod git_status;
 mod git_actions;
 mod git_changes;
 mod scm;
+mod scm_graph;
+mod scm_graph_view;
 mod scm_model;
 mod scm_view;
 mod image_viewer;

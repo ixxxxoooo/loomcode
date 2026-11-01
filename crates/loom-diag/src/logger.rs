@@ -271,6 +271,12 @@ fn tz_offset(secs: u64) -> i64 {
     TZ_OFFSET.load(Relaxed)
 }
 
+/// 当前本地时区偏移(秒),给界面格式化时间用(走缓存,不会反复调 libc,也不会和 fork 冲突)。
+pub fn local_tz_offset() -> i64 {
+    let now = std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH).map_or(0, |d| d.as_secs());
+    tz_offset(now)
+}
+
 /// 把 UNIX 天数换算为公历 (年, 月, 日)(Howard Hinnant 的 civil_from_days 算法)。
 fn civil_from_days(z: i64) -> (i64, u32, u32) {
     let z = z + 719_468;

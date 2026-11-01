@@ -8,6 +8,9 @@
 pub mod backend;
 pub mod event;
 pub mod git;
+pub mod commit_msg;
+pub mod git_blame;
+pub mod git_log;
 pub mod git_scm;
 pub mod modes;
 pub mod session;

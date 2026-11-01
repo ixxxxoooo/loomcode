@@ -50,13 +50,14 @@ impl ScmView {
         let (ahead, behind, has_up) = (self.sync.ahead, self.sync.behind, self.sync.upstream.is_some());
         let weak = cx.entity().downgrade();
         let tree = self.tree;
+        let stashes: Vec<(usize, String)> = self.graph.stashes.iter().map(|s| (s.index, s.message.clone())).collect();
         let more = move |menu: PopupMenu, _: &mut Window, _: &mut Context<PopupMenu>| {
             let item = |label: &'static str, w: WeakEntity<ScmView>, f: fn(&mut ScmView, &mut Window, &mut Context<ScmView>)| {
                 PopupMenuItem::new(label).on_click(move |_, window, cx| {
                     let _ = w.update(cx, |this, cx| f(this, window, cx));
                 })
             };
-            menu.item(item("拉取", weak.clone(), |t, w, cx| t.pull(w, cx)))
+            let mut menu = menu.item(item("拉取", weak.clone(), |t, w, cx| t.pull(w, cx)))
                 .item(item("推送", weak.clone(), |t, w, cx| t.push(w, cx)))
                 .item(item("同步", weak.clone(), |t, w, cx| t.sync_changes(w, cx)))
                 .item(item("提取", weak.clone(), |t, w, cx| t.fetch(w, cx)))
@@ -68,13 +69,25 @@ impl ScmView {
                     t.confirm_discard(all, w, cx)
                 }))
                 .separator()
+                .item(item("储藏所有更改", weak.clone(), |t, w, cx| t.stash_push(w, cx)))
+                .separator()
                 .item(PopupMenuItem::new("以树形视图查看").checked(tree).on_click({
                     let w = weak.clone();
                     move |_, _, cx| {
                         let _ = w.update(cx, |this, cx| this.toggle_tree(cx));
                     }
                 }))
-                .item(item("刷新", weak.clone(), |t, _, cx| t.refresh(cx)))
+                .item(item("刷新", weak.clone(), |t, _, cx| t.refresh(cx)));
+            // 储藏列表(最多 5 条):应用 / 弹出 / 删除
+            for (i, msg) in stashes.iter().take(5).cloned() {
+                let (w1, w2, w3) = (weak.clone(), weak.clone(), weak.clone());
+                let name = |s: &str| format!("{s} stash@{{{i}}}:{}", msg.chars().take(24).collect::<String>());
+                menu = menu
+                    .item(PopupMenuItem::new(name("应用")).on_click(move |_, window, cx| { let _ = w1.update(cx, |t, cx| t.stash_apply(i, window, cx)); }))
+                    .item(PopupMenuItem::new(name("弹出")).on_click(move |_, window, cx| { let _ = w2.update(cx, |t, cx| t.stash_pop(i, window, cx)); }))
+                    .item(PopupMenuItem::new(name("删除")).on_click(move |_, window, cx| { let _ = w3.update(cx, |t, cx| t.stash_drop(i, window, cx)); }));
+            }
+            menu
         };
         h_flex().h(px(32.)).w_full().min_w_0().px_3().gap_1().items_center().flex_none()
             .child(icon(IconName::GitBranch, 13., t.muted_foreground))
@@ -144,7 +157,16 @@ impl ScmView {
             }));
         v_flex().w_full().min_w_0().px_3().pb_2().gap_2().flex_none()
             .when(self.amend, |d| d.child(div().text_size(px(11.)).text_color(t.warning).child("正在修改上次提交(再次选择「修改上次提交」可取消)")))
-            .child(div().w_full().rounded(px(6.)).border_1().border_color(t.border).px_2().py_1p5().child(Textarea::new(&self.message).appearance(false).bordered(false)))
+            .child(
+                h_flex().w_full().rounded(px(6.)).border_1().border_color(t.border).pl_2().pr_1().py_1p5().gap_1().items_start()
+                    .child(div().flex_1().min_w_0().child(Textarea::new(&self.message).appearance(false).bordered(false)))
+                    .child(
+                        Button::new("scm-generate").xsmall().ghost().icon(if self.generating { IconName::LoaderCircle } else { IconName::Sparkles })
+                            .tooltip(if self.generating { "正在生成提交说明…" } else { "根据改动与最近提交风格生成提交说明" })
+                            .disabled(self.generating || self.busy.is_some() || self.groups.distinct() == 0)
+                            .on_click(cx.listener(|this, _, window, cx| this.generate_message(window, cx))),
+                    ),
+            )
             .child(
                 h_flex().w_full().gap_px().items_center()
                     .child(div().flex_1().min_w_0().child(main))
@@ -326,7 +348,8 @@ impl Render for ScmView {
             .child(
                 v_flex().id("scm-scroll").flex_1().min_h_0().overflow_y_scroll().pb_3()
                     .children(groups)
-                    .when(clean, |d| d.child(div().px_3().py_4().text_size(px(12.)).text_color(t.muted_foreground).child("没有检测到更改"))),
+                    .when(clean, |d| d.child(div().px_3().py_4().text_size(px(12.)).text_color(t.muted_foreground).child("没有检测到更改")))
+                    .children(self.graph_section(cx)),
             )
             .into_any_element()
     }

@@ -15,6 +15,7 @@ use gpui_kit::component::input::{InputEvent, TextareaState};
 use gpui_kit::component::notification::Notification;
 use gpui_kit::*;
 use loom_core::git::{self, StatusEntry};
+use loom_core::git_log;
 use loom_core::git_scm::{self, SyncInfo};
 use std::collections::{HashMap, HashSet};
 use std::path::PathBuf;
@@ -68,6 +69,12 @@ pub struct ScmView {
     /// 展开了 diff 的行(行键 → diff;`None` 表示还在算)
     pub(crate) open: HashMap<String, Option<FileDiff>>,
     pub(crate) selected: Option<String>,
+    /// 「图形」区(提交历史与泳道图)
+    pub(crate) graph: crate::scm_graph::GraphState,
+    /// 生成提交说明用的运行环境(真实模式由工作台注入;演示模式为空,用启发式)
+    pub(crate) ai: Option<crate::composer_send::RewriteCtx>,
+    /// 正在生成提交说明
+    pub(crate) generating: bool,
     /// 点文件行:true 在编辑器里打开(IDE,旁边就是编辑器),false 就地展开 diff(Agent 右栏)。由宿主面板在渲染时设置
     pub(crate) open_on_click: bool,
     /// 上次被绘制的时间:可见时轮询更勤
@@ -107,6 +114,9 @@ impl ScmView {
             collapsed: HashSet::new(),
             open: HashMap::new(),
             selected: None,
+            graph: crate::scm_graph::GraphState::default(),
+            ai: None,
+            generating: false,
             open_on_click: false,
             last_paint: Instant::now() - Duration::from_secs(3600),
             _sub: sub,
@@ -133,6 +143,7 @@ impl ScmView {
         self.open.clear();
         self.selected = None;
         self.amend = false;
+        self.graph.reset();
         self.refresh(cx);
         cx.notify();
     }
@@ -182,7 +193,9 @@ impl ScmView {
                     let top = git::repo_root(&root).ok_or_else(|| "当前目录不在 Git 仓库里".to_string())?;
                     let entries = git::status(&top)?;
                     let sync = git_scm::sync_info(&top);
-                    Ok::<_, String>((top, entries, sync))
+                    let sig = git_log::refs_signature(&top);
+                    let stashes = git_log::stashes(&top);
+                    Ok::<_, String>((top, entries, sync, sig, stashes))
                 })
                 .await;
             let _ = this.update(cx, |this, cx| {
@@ -191,7 +204,11 @@ impl ScmView {
                 this.loaded = true;
                 let mut changed = first;
                 match result {
-                    Ok((top, entries, sync)) => {
+                    Ok((top, entries, sync, sig, stashes)) => {
+                        if this.graph.stashes != stashes {
+                            this.graph.stashes = stashes;
+                            changed = true;
+                        }
                         if this.entries != entries || this.sync != sync || this.top.as_deref() != Some(top.as_str()) || this.error.is_some() {
                             changed = true;
                         }
@@ -200,6 +217,7 @@ impl ScmView {
                         this.sync = sync;
                         this.top = Some(top);
                         this.error = None;
+                        this.graph_check(sig, cx);
                         // 行消失了(已提交 / 已放弃)就收起它的 diff
                         let keys: HashSet<String> = [Group::Conflicts, Group::Staged, Group::Changes].iter().flat_map(|g| this.groups.of(*g).iter().map(|i| i.key())).collect();
                         this.open.retain(|k, _| keys.contains(k));
@@ -527,5 +545,95 @@ impl ScmView {
     pub(crate) fn toggle_tree(&mut self, cx: &mut Context<Self>) {
         self.tree = !self.tree;
         cx.notify();
+    }
+
+    // ---------- AI 生成提交说明 ----------
+
+    /// 注入生成提交说明所需的运行环境(真实模式)。
+    pub fn set_ai_ctx(&mut self, ctx: Option<crate::composer_send::RewriteCtx>) {
+        self.ai = ctx;
+    }
+
+    /// 生成提交说明(对标 Cursor / VS Code Copilot 的 ✨ 按钮):
+    /// 有暂存内容时只看暂存区,否则看全部改动;优先让小模型生成「标题 + 要点」,没有可用模型或失败时退回启发式。
+    /// 生成期间用户改过输入框则丢弃结果,不覆盖用户的输入。
+    pub(crate) fn generate_message(&mut self, window: &mut Window, cx: &mut Context<Self>) {
+        let Some(top) = self.top.clone() else { return };
+        if self.generating || self.groups.distinct() == 0 {
+            if self.groups.distinct() == 0 {
+                window.push_notification(Notification::warning("没有可生成说明的更改"), cx);
+            }
+            return;
+        }
+        self.generating = true;
+        let before = self.message.read(cx).value().to_string();
+        let untracked: Vec<String> = self.entries.iter().filter(|e| e.untracked()).map(|e| e.path.clone()).collect();
+        let ai = self.ai.clone();
+        cx.notify();
+        cx.spawn_in(window, async move |this, cx| {
+            let result = cx
+                .background_spawn(async move {
+                    let ctx = loom_core::commit_msg::collect(&top, &untracked);
+                    if ctx.files.is_empty() {
+                        return Err("没有读取到改动内容".to_string());
+                    }
+                    // 先试小模型,失败再启发式(把失败原因带回去提示一下)
+                    let ai_result = match ai {
+                        Some(a) => match loom_claude::find_claude(a.claude_path.as_deref()) {
+                            Some(claude) => loom_claude::rewrite::generate_commit_message(&claude, &a.cwd, &a.env, &loom_core::commit_msg::prompt(&ctx)),
+                            None => Err("找不到 claude 可执行文件".to_string()),
+                        },
+                        None => Err(String::new()),
+                    };
+                    match ai_result {
+                        Ok(m) => Ok((m, None)),
+                        Err(why) => Ok((loom_core::commit_msg::heuristic(&ctx), Some(why))),
+                    }
+                })
+                .await;
+            let _ = this.update_in(cx, |this, window, cx| {
+                this.generating = false;
+                match result {
+                    Ok((message, why)) => {
+                        if this.message.read(cx).value() == before.as_str() && !message.is_empty() {
+                            this.message.update(cx, |i, cx| i.set_value(message, window, cx));
+                        }
+                        if let Some(why) = why.filter(|w| !w.is_empty()) {
+                            loom_diag::warn!("生成提交说明:模型不可用,已用启发式:{why}");
+                            window.push_notification(Notification::warning(format!("模型生成失败,已按改动内容简单生成:{why}")), cx);
+                        }
+                    }
+                    Err(e) => window.push_notification(Notification::error(format!("生成提交说明失败:{e}")), cx),
+                }
+                cx.notify();
+            });
+        })
+        .detach();
+    }
+
+    // ---------- 储藏 ----------
+
+    /// 储藏当前所有改动(含未跟踪文件)。
+    pub(crate) fn stash_push(&mut self, window: &mut Window, cx: &mut Context<Self>) {
+        if self.groups.distinct() == 0 {
+            window.push_notification(Notification::warning("没有可储藏的更改"), cx);
+            return;
+        }
+        self.run("储藏", Some("已储藏更改".into()), window, cx, |top, _| git_log::stash_push(top, ""));
+    }
+
+    /// 弹出(应用并删除)某条储藏。
+    pub(crate) fn stash_pop(&mut self, index: usize, window: &mut Window, cx: &mut Context<Self>) {
+        self.run("弹出储藏", Some("已应用储藏".into()), window, cx, move |top, _| git_log::stash_pop(top, index));
+    }
+
+    /// 应用某条储藏(保留它)。
+    pub(crate) fn stash_apply(&mut self, index: usize, window: &mut Window, cx: &mut Context<Self>) {
+        self.run("应用储藏", Some("已应用储藏".into()), window, cx, move |top, _| git_log::stash_apply(top, index));
+    }
+
+    /// 删除某条储藏。
+    pub(crate) fn stash_drop(&mut self, index: usize, window: &mut Window, cx: &mut Context<Self>) {
+        self.run("删除储藏", Some("已删除储藏".into()), window, cx, move |top, _| git_log::stash_drop(top, index));
     }
 }
