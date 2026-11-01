@@ -9,6 +9,7 @@ use crate::ide_tabs::TabModel;
 use crate::ui::empty_state;
 use gpui_kit::assets::IconName;
 use gpui_kit::component::input::{Editor, EditorState, InputEvent};
+use gpui_kit::component::menu::ContextMenuExt as _;
 use gpui_kit::component::{ActiveTheme, h_flex, v_flex};
 use gpui_kit::*;
 use std::collections::HashMap;
@@ -387,6 +388,8 @@ pub(crate) fn load(path: &Path, window: &mut Window, cx: &mut Context<IdeView>) 
     let theme = cx.theme().highlight_theme.clone();
     let minimap = std::rc::Rc::new(crate::ide_minimap::build_for(&text, language_for(path), prefs.syntax_highlight, &theme));
     let editor = crate::ide_prefs::new_editor(language_for(path), text, true, &prefs, window, cx);
+    // 右键菜单由我们自己的主题化弹出菜单(`ide_menu.rs`)接管,关掉编辑器自带的系统菜单
+    editor.update(cx, |e, _| e.set_context_menu_enabled(false));
     // 编辑后标记未保存并固定预览标签;光标移动时刷新状态条
     let key = path.to_path_buf();
     let sub = cx.subscribe(&editor, move |this: &mut IdeView, _, ev: &InputEvent, cx| {
@@ -500,7 +503,7 @@ impl Render for IdeView {
                         let hide = mm.is_some() && !prefs.soft_wrap;
                         div().flex_1().min_w_0().h_full().relative().overflow_hidden()
                             .child(div().absolute().top_0().left_0().bottom_0().right(px(if hide { -16. } else { 0. }))
-                                .child(Editor::new(&editor).bordered(false).appearance(false).size_full().context_menu(ctx_menu)))
+                                .child(div().size_full().context_menu(ctx_menu).child(Editor::new(&editor).bordered(false).appearance(false).size_full())))
                     })
                     .children(mm)
                     .children(inline)

@@ -72,6 +72,8 @@ pub struct PeekState {
     pub preview: Option<Preview>,
     /// 树的行(文件头 + 引用),打开时算好
     pub rows: Arc<Vec<TreeRow>>,
+    /// 树行文本与命中区间(渲染时共享,不每帧复制)
+    pub texts: Arc<Vec<(String, Range<usize>)>>,
     pub file_count: usize,
     /// 打开时光标的偏移:预览窗锚在这一行下面
     pub anchor_offset: usize,
@@ -138,7 +140,8 @@ impl PeekState {
             }
             rows.push(TreeRow::Ref(i));
         }
-        let mut st = Self { items, selected: 0, preview: None, rows: Arc::new(rows), file_count: counts.len(), anchor_offset, scroll_tree: UniformListScrollHandle::new(), scroll_preview: UniformListScrollHandle::new() };
+        let texts = Arc::new(items.iter().map(|i| (i.text.clone(), i.hit.clone())).collect::<Vec<_>>());
+        let mut st = Self { items, selected: 0, preview: None, rows: Arc::new(rows), texts, file_count: counts.len(), anchor_offset, scroll_tree: UniformListScrollHandle::new(), scroll_preview: UniformListScrollHandle::new() };
         st.select(0, dark, cx);
         st
     }

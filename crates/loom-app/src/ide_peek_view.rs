@@ -93,7 +93,7 @@ fn peek_zone(st: &PeekState, width: f32, lh: f32, cx: &mut Context<IdeView>) -> 
 /// 右边的引用树(虚拟列表,只画可见行):单文件时直接列引用;多文件时按文件分组(文件名 + 目录 + 引用数徽标)。
 fn tree_pane(st: &PeekState, c: &Colors, cx: &mut Context<IdeView>) -> AnyElement {
     let rows = st.rows.clone();
-    let items = Arc::new(st.items.iter().map(|i| (i.text.clone(), i.hit.clone())).collect::<Vec<_>>());
+    let items = st.texts.clone();
     let (multi, selected) = (st.file_count > 1, st.selected);
     let view = cx.weak_entity();
     let (sel_bg, file_fg, line_fg, badge_bg, match_bg) = (c.selection, c.result_file, c.result_line, c.selection, c.result_match);
