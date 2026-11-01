@@ -20,6 +20,6 @@ fi
 pkill -if "target/debug/loomcode( |\$)" 2>/dev/null || true
 sleep 0.5
 
-LOOM_DEV=1 nohup "$BIN" "$@" >"$PWD/target/dev.log" 2>&1 &
+RUST_BACKTRACE=1 LOOM_DEV=1 nohup "$BIN" "$@" >"$PWD/target/dev.log" 2>&1 &
 echo $! >"$PID_FILE"
 echo "开发版已启动(pid $(cat "$PID_FILE"))"
