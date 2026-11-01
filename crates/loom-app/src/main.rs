@@ -163,7 +163,9 @@ fn main() {
     }
     let default_hook = std::panic::take_hook();
     std::panic::set_hook(Box::new(move |info| {
-        loom_config::diag::error(&format!("崩溃:{info}"));
+        // 同时记录调用栈,便于定位重入等难以复现的崩溃
+        let bt = std::backtrace::Backtrace::force_capture();
+        loom_config::diag::error(&format!("崩溃:{info}\n{bt}"));
         default_hook(info);
     }));
     loom_config::diag::info(&format!("LoomCode {} 启动{}", env!("CARGO_PKG_VERSION"), if demo { "(演示模式)" } else { "" }));
