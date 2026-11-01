@@ -12,8 +12,7 @@ use gpui_kit::prelude::FluentBuilder as _;
 use gpui_kit::*;
 use std::path::{Path, PathBuf};
 
-/// 标签栏高度。
-const TAB_H: f32 = 35.;
+use crate::tab_style::TAB_H;
 
 /// 标签栏上的一项。
 pub struct TabItem {
@@ -62,22 +61,8 @@ pub fn tab_bar(items: Vec<TabItem>, cx: &mut Context<IdeView>) -> impl IntoEleme
             let menu = tab_menu(cx.entity().downgrade(), path.clone(), pinned);
             let (p_drag, p_drop) = (path.clone(), path.clone());
             let accent = t.accent;
-            h_flex()
-                .id(SharedString::from(format!("ide-tab-{i}")))
-                .group(group.clone())
-                .h_full()
-                .flex_none()
+            crate::tab_style::tab_shell(SharedString::from(format!("ide-tab-{i}")), group.clone(), active, cx)
                 .max_w(px(200.))
-                .pl_3()
-                .pr_1()
-                .gap_1p5()
-                .items_center()
-                .cursor_pointer()
-                .border_r_1()
-                .border_color(t.border)
-                .text_size(px(12.5))
-                .when(active, |d| d.bg(t.background).text_color(t.foreground).border_t_2().border_color(t.primary))
-                .when(!active, |d| d.text_color(t.muted_foreground).hover(|s| s.bg(t.muted)))
                 .on_click(cx.listener(move |this, ev: &ClickEvent, window, cx| {
                     this.activate(&p_click, window, cx);
                     if ev.click_count() >= 2 {
@@ -92,15 +77,7 @@ pub fn tab_bar(items: Vec<TabItem>, cx: &mut Context<IdeView>) -> impl IntoEleme
                 .child(if pinned { icon(IconName::Pin, 13., t.muted_foreground).into_any_element() } else { crate::file_icons::file_icon_img(&name, false, false, 14.).into_any_element() })
                 .child(div().min_w_0().truncate().when(preview, |d| d.italic()).child(name))
                 .child(
-                    div()
-                        .id(SharedString::from(format!("ide-tab-x-{i}")))
-                        .size(px(18.))
-                        .flex_none()
-                        .flex()
-                        .items_center()
-                        .justify_center()
-                        .rounded(px(4.))
-                        .hover(|s| s.bg(t.accent))
+                    crate::tab_style::tab_close_box(SharedString::from(format!("ide-tab-x-{i}")), cx)
                         .on_click(cx.listener(move |this, _, window, cx| {
                             cx.stop_propagation();
                             this.close_tab(&p_close, window, cx);
@@ -111,7 +88,7 @@ pub fn tab_bar(items: Vec<TabItem>, cx: &mut Context<IdeView>) -> impl IntoEleme
                             div()
                                 .when(!active && !dirty, |d| d.invisible().group_hover(group.clone(), |s| s.visible()))
                                 .when(dirty, |d| d.invisible().group_hover(group.clone(), |s| s.visible()))
-                                .child(icon(IconName::X, 12., t.muted_foreground)),
+                                .child(crate::tab_style::tab_close_icon(cx)),
                         ),
                 )
         }))

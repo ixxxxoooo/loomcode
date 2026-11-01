@@ -66,6 +66,7 @@ mod ide_memory;
 mod ide_prefs;
 mod ide_brackets;
 mod ide_chrome;
+mod tab_style;
 mod ide_close;
 mod ide_tabs;
 mod chat_scroll;

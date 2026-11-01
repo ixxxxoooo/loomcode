@@ -4,7 +4,7 @@
 //! @author ixxxxoooo
 
 use crate::ide_window::IdeWindow;
-use crate::ui::{empty_state, icon};
+use crate::ui::empty_state;
 use crate::workbench::Workbench;
 use gpui_kit::assets::IconName;
 use gpui_kit::component::button::{Button, ButtonVariants};
@@ -133,25 +133,20 @@ impl IdeWindow {
             let title = title_of(self.wb.read(cx), &id);
             let group = SharedString::from(format!("ct-g-{id}"));
             let (sel, close) = (id.clone(), id.clone());
-            h_flex().id(SharedString::from(format!("ct-{id}"))).group(group.clone()).relative().h_full().flex_none().pl_3().pr_1().gap_1p5().items_center().cursor_pointer()
-                .text_size(px(13.))
-                .border_r_1().border_color(t.border)
-                .when(on, |d| d.bg(t.background).text_color(t.foreground).child(div().absolute().top_0().left_0().right_0().h(px(2.)).bg(t.primary)))
-                .when(!on, |d| d.text_color(t.muted_foreground).hover(|d| d.bg(t.list_hover)))
+            crate::tab_style::tab_shell(SharedString::from(format!("ct-{id}")), group.clone(), on, cx)
                 .on_mouse_down(MouseButton::Left, cx.listener(move |this, _, window, cx| this.activate_chat_tab(&sel, window, cx)))
                 .on_mouse_down(MouseButton::Middle, cx.listener({ let id = id.clone(); move |this, _, window, cx| this.close_chat_tab(&id, window, cx) }))
                 .when(running.contains(&id), |d| d.child(div().size(px(6.)).rounded_full().bg(t.primary)))
                 .child(div().max_w(px(TAB_MAX_W)).truncate().child(title))
                 .child(
-                    div().id(SharedString::from(format!("ct-x-{id}"))).size(px(18.)).flex().items_center().justify_center().rounded(px(4.))
+                    crate::tab_style::tab_close_box(SharedString::from(format!("ct-x-{id}")), cx)
                         .when(!on, |d| d.invisible().group_hover(group, |d| d.visible()))
-                        .hover(|d| d.bg(t.border))
                         .on_mouse_down(MouseButton::Left, cx.listener(move |this, _, window, cx| { cx.stop_propagation(); this.close_chat_tab(&close, window, cx); }))
-                        .child(icon(IconName::X, 11., t.muted_foreground)),
+                        .child(crate::tab_style::tab_close_icon(cx)),
                 )
         });
         let expanded = self.chat_wide;
-        h_flex().h(px(36.)).w_full().flex_none().items_center().border_b_1().border_color(t.border).bg(t.sidebar)
+        h_flex().h(px(crate::tab_style::TAB_H)).w_full().flex_none().items_center().border_b_1().border_color(t.border).bg(t.sidebar)
             .child(div().id("ide-chat-tabs").h_full().flex_1().min_w_0().overflow_x_scroll().child(h_flex().h_full().children(tabs)))
             .child(
                 h_flex().h_full().flex_none().px_1().gap_0p5().items_center()
