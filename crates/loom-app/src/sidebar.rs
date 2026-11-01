@@ -33,18 +33,18 @@ fn session_row(wb: &Workbench, project_ix: usize, meta: &SessionMeta, cx: &mut C
         .group(group.clone())
         .w_full()
         .h(px(32.))
-        .pl(px(20.))
+        .pl(px(15.))
         .pr_2()
         .gap_2p5()
         .items_center()
-        .rounded(px(8.))
+        .rounded(px(7.))
         .cursor_pointer()
-        // 选中行:主色淡染的底色(参考样式的薄紫蓝)
-        .when(active, |d| d.bg(t.primary.opacity(0.14)))
-        .hover(|d| d.bg(t.sidebar_accent))
+        // 选中行:中性的淡灰底(不抢项目行与状态点的颜色);悬停更淡
+        .when(active, |d| d.bg(t.foreground.opacity(0.09)))
+        .when(!active, |d| d.hover(|d| d.bg(t.foreground.opacity(0.05))))
         .on_click(cx.listener(move |this, _, window, cx| this.open_session(project_ix, &id, window, cx)))
         .child(div().w(px(8.)).flex_none().child(status_dot(badge, cx).unwrap_or_else(|| div().size(px(6.)).m(px(1.)).rounded_full().flex_none().bg(t.muted_foreground.opacity(0.7)))))
-        .child(div().flex_1().min_w_0().truncate().text_size(px(13.)).when(archived, |d| d.text_color(t.muted_foreground)).child(meta.title.clone()))
+        .child(div().flex_1().min_w_0().truncate().text_size(px(13.)).when(active, |d| d.font_weight(FontWeight::MEDIUM)).when(archived, |d| d.text_color(t.muted_foreground)).child(meta.title.clone()))
         .child(
             div().relative().w(px(44.)).h_full().flex_none()
                 .child(
@@ -143,6 +143,8 @@ pub fn render(wb: &Workbench, cx: &mut Context<Workbench>) -> impl IntoElement {
                 .children(shown.into_iter().map(|(pi, sessions)| {
                     let p = &projects[pi];
                     let expanded = p.expanded;
+                    // 当前会话所在的项目:文件夹图标用主色,其余灰色
+                    let holds_active = p.sessions.iter().any(|s| wb.active.as_deref() == Some(s.id.as_str()));
                     let pinned = wb.ui_state.pinned_projects.contains(&p.path);
                     let workspace = wb.ui_state.workspace_by_dir(&p.path).cloned();
                     let worktree = wb.is_worktree_project(&p.path);
@@ -152,15 +154,14 @@ pub fn render(wb: &Workbench, cx: &mut Context<Workbench>) -> impl IntoElement {
                     v_flex()
                         .child(
                             h_flex().id(SharedString::from(format!("proj-{pi}"))).group(group.clone()).h(px(34.)).px_2().gap_2p5().items_center().rounded(px(8.)).cursor_pointer()
-                                // 展开的项目行带灰底;折叠的悬停时才有底色
-                                .when(expanded, |d| d.bg(t.foreground.opacity(0.07)))
-                                .hover(|d| d.bg(t.foreground.opacity(0.07)))
+                                // 项目行不带常驻底色,只在悬停时有一层淡灰(层次交给选中的会话行)
+                                .hover(|d| d.bg(t.foreground.opacity(0.05)))
                                 .on_click(cx.listener(move |this, _, _, cx| this.toggle_project(pi, cx)))
                                 // 展开 = 蓝色打开的文件夹,折叠 = 灰色合上的文件夹
                                 .child(icon(
                                     if workspace.is_some() { IconName::Folders } else if worktree { IconName::GitFork } else if expanded { IconName::FolderOpen } else { IconName::Folder },
                                     15.,
-                                    if expanded { t.primary } else { t.muted_foreground },
+                                    if holds_active { t.primary } else { t.muted_foreground },
                                 ))
                                 .child(div().flex_1().truncate().text_size(px(13.)).font_weight(FontWeight::MEDIUM).child(p.name.clone()))
                                 .when(pinned, |d| d.child(icon(IconName::Pin, 11., t.muted_foreground)))
@@ -178,7 +179,7 @@ pub fn render(wb: &Workbench, cx: &mut Context<Workbench>) -> impl IntoElement {
                                 )
                                 .context_menu(menu),
                         )
-                        .when(expanded, |d| d.children(sessions.iter().map(|s| session_row(wb, pi, s, cx).into_any_element())))
+                        .when(expanded, |d| d.child(v_flex().gap(px(2.)).pt(px(2.)).pb(px(6.)).children(sessions.iter().map(|s| session_row(wb, pi, s, cx).into_any_element()))))
                 })),
         )
         .child(
