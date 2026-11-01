@@ -3591,6 +3591,7 @@ dependencies = [
  "objc2-foundation 0.3.2",
  "serde_json",
  "similar",
+ "tree-sitter-swift",
  "uuid",
 ]
 

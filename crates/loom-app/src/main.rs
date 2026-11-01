@@ -68,6 +68,7 @@ mod ide_watch;
 mod ide_chat_tabs;
 mod ide_blame;
 mod ide_hover;
+mod swift_hl;
 mod ide_gutter;
 mod lsp;
 mod ide_memory;
@@ -225,6 +226,7 @@ fn main() {
             loom_diag::crash::clean_exit("用户退出")
         })
         .detach();
+        swift_hl::register();
         markdown_editor::init(cx);
         theme::apply(theme::ThemeKind::PaperLight, None, cx);
         // 编辑器标签快捷键(⌘W 等)全局注册:Agent 右栏「文件」标签里的编辑器也要能用,不能等 IDE 窗口创建
