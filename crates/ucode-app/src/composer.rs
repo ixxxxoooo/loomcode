@@ -10,6 +10,14 @@ use gpui_kit::prelude::FluentBuilder as _;
 use gpui_kit::*;
 use ucode_core::*;
 
+actions!(composer, [CycleEffort]);
+
+/// 注册输入框快捷键(⌥T 循环思考强度);全局只注册一次。
+fn bind_keys(cx: &mut App) {
+    static ONCE: std::sync::Once = std::sync::Once::new();
+    ONCE.call_once(|| cx.bind_keys([KeyBinding::new("alt-t", CycleEffort, Some("Composer"))]));
+}
+
 /// 补全项。
 #[derive(Clone)]
 struct Suggestion {
@@ -25,7 +33,8 @@ struct Suggestion {
 enum Pick {
     Model,
     Mode,
-    Effort,
+    /// 上下文用量面板
+    Context,
 }
 
 /// Claude Code 内置斜杠命令。
@@ -82,6 +91,7 @@ pub fn extract_file_mentions(text: &str) -> Vec<String> {
 
 impl Composer {
     pub fn new(session: Entity<SessionModel>, demo: bool, window: &mut Window, cx: &mut Context<Self>) -> Self {
+        bind_keys(cx);
         let input = cx.new(|cx| TextareaState::new(window, cx).auto_grow(2, 8).placeholder("向 Claude 提问,/ 调用命令,@ 引用文件…").submit_on_enter(true));
         let sub = cx.subscribe_in(&input, window, |this: &mut Self, _, ev: &InputEvent, window, cx| match ev {
             InputEvent::PressEnter { shift: false, .. } => {
@@ -94,7 +104,13 @@ impl Composer {
             InputEvent::Change => this.refresh_suggestions(cx),
             _ => {}
         });
-        Self { session, input, open: None, suggestions: Vec::new(), sel: 0, attachments: Vec::new(), attach_counter: 0, demo, _sub: sub }
+        // 调试用:UCODE_POPUP=model|context 启动即打开对应弹层(只用于截图验证)
+        let open = match std::env::var("UCODE_POPUP").as_deref() {
+            Ok("model") => Some(Pick::Model),
+            Ok("context") => Some(Pick::Context),
+            _ => None,
+        };
+        Self { session, input, open, suggestions: Vec::new(), sel: 0, attachments: Vec::new(), attach_counter: 0, demo, _sub: sub }
     }
 
     /// 输入框里有没有未发送的内容(文字或附件);淘汰会话视图前要保护草稿。
@@ -227,27 +243,52 @@ impl Composer {
     fn pick_list(&self, kind: Pick, cx: &App) -> Vec<(String, String, bool, String)> {
         let st = &self.session.read(cx).state;
         match kind {
-            Pick::Model => st.models.iter().map(|m| (m.name.clone(), m.description.clone(), m.id == st.model, m.id.clone())).collect(),
+            // 模型与上下文有各自的弹层(composer_pop),这里只剩权限模式的简单列表
+            Pick::Model | Pick::Context => Vec::new(),
             Pick::Mode => PermissionMode::ALL.iter().map(|m| (m.label().to_string(), m.cli_value().to_string(), *m == st.mode, m.cli_value().to_string())).collect(),
-            Pick::Effort => Effort::ALL.iter().map(|e| (e.label().to_string(), e.cli_value().to_string(), *e == st.effort, e.cli_value().to_string())).collect(),
         }
     }
 
     fn choose(&mut self, kind: Pick, value: &str, cx: &mut Context<Self>) {
         self.open = None;
-        self.session.update(cx, |m, cx| match kind {
-            Pick::Model => m.set_model(value.to_string(), cx),
-            Pick::Mode => {
-                if let Some(mode) = PermissionMode::from_cli(value) {
-                    m.set_mode(mode, cx)
-                }
-            }
-            Pick::Effort => {
-                if let Some(e) = Effort::ALL.into_iter().find(|e| e.cli_value() == value) {
-                    m.set_effort(e, cx)
-                }
-            }
-        });
+        if kind == Pick::Mode
+            && let Some(mode) = PermissionMode::from_cli(value)
+        {
+            self.session.update(cx, |m, cx| m.set_mode(mode, cx));
+        }
+        cx.notify();
+    }
+
+    /// 选择模型并关闭弹层。
+    pub(crate) fn choose_model(&mut self, id: &str, cx: &mut Context<Self>) {
+        self.open = None;
+        self.session.update(cx, |m, cx| m.set_model(id.to_string(), cx));
+        cx.notify();
+    }
+
+    /// 设置思考强度;弹层保持打开,方便连续比较各档说明。
+    pub(crate) fn choose_effort(&mut self, effort: Effort, cx: &mut Context<Self>) {
+        self.session.update(cx, |m, cx| m.set_effort(effort, cx));
+        cx.notify();
+    }
+
+    /// 循环切换思考强度(⌥T),下一轮对话生效。
+    pub(crate) fn cycle_effort(&mut self, cx: &mut Context<Self>) {
+        let cur = self.session.read(cx).state.effort;
+        let ix = Effort::ALL.iter().position(|e| *e == cur).unwrap_or(0);
+        self.choose_effort(Effort::ALL[(ix + 1) % Effort::ALL.len()], cx);
+    }
+
+    /// 压缩上下文:作为斜杠命令发给 Claude(`/compact`)。
+    pub(crate) fn compact(&mut self, _window: &mut Window, cx: &mut Context<Self>) {
+        self.open = None;
+        self.session.update(cx, |m, cx| m.send_prompt_with("/compact".into(), Vec::new(), Vec::new(), cx));
+        cx.notify();
+    }
+
+    /// 关闭当前弹层。
+    pub(crate) fn close_pop(&mut self, cx: &mut Context<Self>) {
+        self.open = None;
         cx.notify();
     }
 }
@@ -278,20 +319,27 @@ impl Render for Composer {
                 .child(icon(IconName::ChevronDown, 10., color))
         };
 
-        let popup = self.open.map(|kind| {
-            let items = self.pick_list(kind, cx);
-            let this = this.clone();
-            v_flex().absolute().bottom(px(44.)).left(px(8.)).min_w(px(200.)).p_1().rounded(px(10.)).border_1().border_color(t.border)
-                .bg(t.popover).shadow_lg().children(items.into_iter().enumerate().map(|(i, (label, detail, on, value))| {
-                    let this = this.clone();
-                    h_flex().id(SharedString::from(format!("pick-{i}"))).gap_2().px_2().h(px(28.)).items_center().rounded(px(6.)).cursor_pointer()
-                        .hover(|d| d.bg(t.list_hover))
-                        .on_click(move |_, _, cx| { let v = value.clone(); this.update(cx, |c, cx| c.choose(kind, &v, cx)); })
-                        .child(div().w(px(14.)).child(if on { icon(IconName::Check, 12., t.primary).into_any_element() } else { div().into_any_element() }))
-                        .child(div().text_size(px(13.)).child(label))
-                        .child(div().flex_1())
-                        .child(div().text_size(px(11.)).text_color(t.muted_foreground).child(detail))
-                }))
+        let popup = self.open.map(|kind| match kind {
+            Pick::Model => {
+                let (models, current) = { let st = &self.session.read(cx).state; (st.models.clone(), st.model.clone()) };
+                crate::composer_pop::model_popup(&models, &current, effort, this.clone(), cx)
+            }
+            Pick::Context => crate::composer_pop::context_popup(&usage, this.clone(), cx),
+            Pick::Mode => {
+                let items = self.pick_list(kind, cx);
+                let this = this.clone();
+                v_flex().absolute().bottom(px(44.)).left(px(8.)).min_w(px(200.)).p_1().rounded(px(10.)).border_1().border_color(t.border)
+                    .bg(t.popover).shadow_lg().children(items.into_iter().enumerate().map(|(i, (label, detail, on, value))| {
+                        let this = this.clone();
+                        h_flex().id(SharedString::from(format!("pick-{i}"))).gap_2().px_2().h(px(28.)).items_center().rounded(px(6.)).cursor_pointer()
+                            .hover(|d| d.bg(t.list_hover))
+                            .on_click(move |_, _, cx| { let v = value.clone(); this.update(cx, |c, cx| c.choose(kind, &v, cx)); })
+                            .child(div().w(px(14.)).child(if on { icon(IconName::Check, 12., t.primary).into_any_element() } else { div().into_any_element() }))
+                            .child(div().text_size(px(13.)).child(label))
+                            .child(div().flex_1())
+                            .child(div().text_size(px(11.)).text_color(t.muted_foreground).child(detail))
+                    }))
+            }
         });
 
         let suggestions = (!self.suggestions.is_empty()).then(|| {
@@ -335,7 +383,8 @@ impl Render for Composer {
             }))
         });
 
-        div().w_full().flex().justify_center().px_4().pb_3().pt_1()
+        div().key_context("Composer").on_action(cx.listener(|this, _: &CycleEffort, _, cx| this.cycle_effort(cx)))
+            .w_full().flex().justify_center().px_4().pb_3().pt_1()
             // 补全列表打开时,上下键 / Tab / Esc 归补全列表;否则放行给输入框
             .capture_action(cx.listener(|this, _: &MoveUp, _, cx| { if !this.move_sel(-1, cx) { cx.propagate(); } }))
             .capture_action(cx.listener(|this, _: &MoveDown, _, cx| { if !this.move_sel(1, cx) { cx.propagate(); } }))
@@ -378,14 +427,12 @@ impl Render for Composer {
                         .child(
                             h_flex().h(px(36.)).px_2().gap_1().items_center()
                                 .child(chip("chip-mode", mode.label().to_string(), mode_color, Pick::Mode, this.clone()))
-                                .child(chip("chip-model", model_name, t.foreground, Pick::Model, this.clone()))
-                                .child(chip("chip-effort", format!("思考 {}", effort.label()), t.muted_foreground, Pick::Effort, this.clone()))
+                                .child(chip("chip-model", format!("{model_name} · 思考{}", effort.label()), t.foreground, Pick::Model, this.clone()))
                                 .when(queued > 0, |d| d.child(pill(format!("排队 {queued}"), t.warning, t.muted)))
                                 .child(div().flex_1())
                                 .when(usage.context_size > 0, |d| {
-                                    let r = usage.context_ratio();
-                                    let color = if r > 0.9 { t.danger } else if r > 0.75 { t.warning } else { t.muted_foreground };
-                                    d.child(div().text_size(px(11.)).text_color(color).child(format!("上下文 {:.0}%", r * 100.)))
+                                    let this = this.clone();
+                                    d.child(crate::composer_pop::context_ring(&usage, move |cx| { this.update(cx, |c, cx| { c.open = if c.open == Some(Pick::Context) { None } else { Some(Pick::Context) }; cx.notify(); }); }, cx))
                                 })
                                 .child(send_btn),
                         ),

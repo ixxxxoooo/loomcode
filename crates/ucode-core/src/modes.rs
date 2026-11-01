@@ -92,6 +92,17 @@ impl Effort {
         }
     }
 
+    /// 一句话说明:速度、花费与适用场景。
+    pub fn hint(self) -> &'static str {
+        match self {
+            Self::Low => "最快最省,适合简单的小改动和问答",
+            Self::Medium => "速度与质量均衡,日常默认",
+            Self::High => "更深入地推理,适合多文件改动",
+            Self::XHigh => "很深的推理,更慢更贵,适合复杂排查",
+            Self::Max => "最大思考量,最慢最贵,留给最难的问题",
+        }
+    }
+
     /// 界面显示名。
     pub fn label(self) -> &'static str {
         match self {
