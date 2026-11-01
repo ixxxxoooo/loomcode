@@ -229,6 +229,8 @@ impl SessionModel {
         if !self.expanded.remove(id) {
             self.expanded.insert(id.to_string());
         }
+        // 点开 / 收起是用户的原地操作:暂停贴底跟随,让内容从原位置往下长
+        self.scroller.update(cx, |s, _| s.pause_following());
         self.remeasure_id(id, cx);
     }
 

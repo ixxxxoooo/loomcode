@@ -84,6 +84,14 @@ impl ChatScroll {
         cx.notify();
     }
 
+    /// 暂停贴底跟随:用户点开 / 收起某一行时调用。
+    ///
+    /// 贴底跟随时底边是钉住的,行变高会把内容往上顶(看起来「向上展开」);暂停后行从原位置往下长,
+    /// 再点一次就在原地收起。用户滚回底部后列表会自动恢复跟随。
+    pub fn pause_following(&mut self) {
+        self.list.pause_following_tail();
+    }
+
     /// 滚到最新一行并恢复跟随。
     pub fn scroll_to_end(&mut self, cx: &mut Context<Self>) {
         self.list.set_follow_mode(FollowMode::Tail);

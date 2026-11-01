@@ -136,8 +136,10 @@ fn render_editor(session: &Entity<SessionModel>, input: &Entity<TextareaState>, 
     let t = cx.theme();
     let running = session.read(cx).state.phase == loom_core::Phase::Running;
     let has_text = !input.read(cx).value().trim().is_empty();
-    let (s_cancel, s_send, s_esc) = (session.clone(), session.clone(), session.clone());
-    v_flex().w_full().gap_2().px(px(14.)).py(px(10.)).rounded(px(12.)).bg(t.popover).border_1().border_color(t.border).shadow_sm()
+    let (s_cancel, s_send, s_esc, s_out) = (session.clone(), session.clone(), session.clone(), session.clone());
+    v_flex().id("umsg-editor").w_full().gap_2().px(px(14.)).py(px(10.)).rounded(px(12.)).bg(t.popover).border_1().border_color(t.border).shadow_sm()
+        // 点编辑卡以外的任何地方:收起编辑(未发送的修改丢弃)
+        .on_mouse_down_out(move |_, _, cx| { s_out.update(cx, |m, cx| m.end_edit(cx)); })
         .on_action(move |_: &crate::workbench::Escape, _, cx| { s_esc.update(cx, |m, cx| m.end_edit(cx)); })
         .when(!images.is_empty(), |d| d.child(h_flex().flex_wrap().gap_1p5().children(images.iter().map(|n| thumb(n, cx)))))
         .child(Textarea::new(input).appearance(false).bordered(false))
@@ -168,6 +170,7 @@ impl SessionModel {
         if let Some(prev) = self.editing.take() {
             self.remeasure_id(&prev.id, cx);
         }
+        self.scroller.update(cx, |s, _| s.pause_following());
         let input = cx.new(|cx| TextareaState::new(window, cx).auto_grow(1, 10).submit_on_enter(true));
         input.update(cx, |i, cx| { i.set_value(text.to_string(), window, cx); i.focus(window, cx); });
         let edit_id = id.to_string();
