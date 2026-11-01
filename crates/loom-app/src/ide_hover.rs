@@ -29,6 +29,8 @@ const GAP: f32 = 10.;
 pub struct HoverUi {
     hide_task: Option<Task<()>>,
     closest: Option<Pixels>,
+    /// 鼠标正朝卡片靠近(途经别的符号时不替换 / 不清掉当前卡片)
+    approaching: bool,
 }
 
 /// 一张悬停卡片:触发的符号范围(字节偏移)与 Markdown 内容。
@@ -110,6 +112,7 @@ impl IdeView {
         if card.contains(&pos) || symbol.contains(&pos) {
             ui.hide_task = None;
             ui.closest = None;
+            ui.approaching = false;
             return;
         }
         let d = distance_to(card, pos);
@@ -121,6 +124,7 @@ impl IdeView {
         }
         let ui = &mut self.hover_ui;
         let closer = !ui.closest.is_some_and(|c| d > c + px(4.));
+        ui.approaching = closer;
         if closer {
             ui.closest = Some(d.min(ui.closest.unwrap_or(d)));
         }
@@ -147,9 +151,10 @@ impl IdeView {
         moved
     }
 
-    /// 当前卡片是否已经覆盖这个偏移(覆盖就不必重复向语言服务器请求)。
-    pub(crate) fn hover_covers(&self, path: &Path, offset: usize) -> bool {
-        self.docs.get(path).and_then(|d| d.hover.as_ref()).is_some_and(|c| c.range.contains(&offset))
+    /// 这次悬停请求是否可以跳过:当前卡片已覆盖该位置(不重复请求),或鼠标正朝卡片移动(途经别的符号不换卡片)。
+    pub(crate) fn hover_blocked(&self, path: &Path, offset: usize) -> bool {
+        let Some(card) = self.docs.get(path).and_then(|d| d.hover.as_ref()) else { return false };
+        card.range.contains(&offset) || self.hover_ui.approaching
     }
 }
 

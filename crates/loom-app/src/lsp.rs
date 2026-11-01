@@ -130,7 +130,7 @@ impl HoverProvider for LspProvider {
         cx.spawn(async move |cx| {
             let started = std::time::Instant::now();
             // 当前卡片已经覆盖这个位置:不重复请求
-            if view.update(cx, |this, _| this.hover_covers(&path, offset)).unwrap_or(false) {
+            if view.update(cx, |this, _| this.hover_blocked(&path, offset)).unwrap_or(false) {
                 return Ok(None);
             }
             let (req_rope, req_full) = (rope.clone(), full.clone());
@@ -169,7 +169,10 @@ impl HoverProvider for LspProvider {
                 }),
                 _ => None,
             };
-            let _ = view.update(cx, |this, cx| this.set_hover_card(&path, card, cx));
+            // 没有结果(途经空白 / 标点)不清掉当前卡片:收起交给粘性计时,免得鼠标还没走进卡片就消失
+            if card.is_some() {
+                let _ = view.update(cx, |this, cx| this.set_hover_card(&path, card, cx));
+            }
             Ok(None)
         })
     }
