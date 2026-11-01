@@ -337,8 +337,7 @@ fn load(path: &Path, window: &mut Window, cx: &mut Context<IdeView>) -> Result<I
     let crlf = text.contains("\r\n");
     let theme = cx.theme().highlight_theme.clone();
     let minimap = std::rc::Rc::new(crate::ide_minimap::build_for(&text, language_for(path), prefs.syntax_highlight, &theme));
-    let editor = cx.new(|cx| EditorState::new(window, cx).language(crate::ide_prefs::language(language_for(path), &prefs)).searchable(true).default_value(text));
-    editor.update(cx, |ed, cx| crate::ide_prefs::apply(ed, &prefs, window, cx));
+    let editor = crate::ide_prefs::new_editor(language_for(path), text, true, &prefs, window, cx);
     // 编辑后标记未保存并固定预览标签;光标移动时刷新状态条
     let key = path.to_path_buf();
     let sub = cx.subscribe(&editor, move |this: &mut IdeView, _, ev: &InputEvent, cx| {

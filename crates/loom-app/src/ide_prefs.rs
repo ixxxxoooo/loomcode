@@ -16,6 +16,16 @@ pub fn apply(ed: &mut EditorState, p: &EditorPrefs, window: &mut Window, cx: &mu
     ed.set_tab_size(TabSize { tab_size: usize::from(p.tab_size.clamp(1, 16)), hard_tabs: false }, cx);
 }
 
+/// 统一的编辑器工厂:IDE 文档、设置里的文档编辑、Canvas 源码编辑都用它创建,
+/// 因此行号 / 折叠 / 换行 / 缩进 / 语法高亮开关等偏好对所有编辑器一致。
+///
+/// 参数:`lang` 语言名;`text` 初始内容;`searchable` 是否带查找替换;`p` 偏好。返回:编辑器实体。
+pub fn new_editor<T: 'static>(lang: &'static str, text: String, searchable: bool, p: &EditorPrefs, window: &mut Window, cx: &mut Context<T>) -> Entity<EditorState> {
+    let ed = cx.new(|cx| EditorState::new(window, cx).language(language(lang, p)).searchable(searchable).default_value(text));
+    ed.update(cx, |e, cx| apply(e, p, window, cx));
+    ed
+}
+
 /// 语法高亮语言:关闭语法高亮时用纯文本。
 pub fn language(path_lang: &'static str, p: &EditorPrefs) -> &'static str {
     if p.syntax_highlight { path_lang } else { "text" }

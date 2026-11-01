@@ -7,7 +7,7 @@ use super::CustomizeTab;
 use super::forms::DocEdit;
 use crate::composer::Composer;
 use crate::workbench::Workbench;
-use gpui_kit::component::input::{EditorState, InputEvent};
+use gpui_kit::component::input::InputEvent;
 use gpui_kit::*;
 use loom_config::Scope;
 use loom_config::items::{self, Item, ItemKind};
@@ -52,7 +52,8 @@ impl Workbench {
             return;
         }
         let text = std::fs::read_to_string(&path).unwrap_or_default();
-        let editor = cx.new(|cx| EditorState::new(window, cx).language("markdown").default_value(text));
+        let prefs = crate::prefs(cx).editor;
+        let editor = crate::ide_prefs::new_editor("markdown", text, false, &prefs, window, cx);
         // 编辑后标记为未保存
         cx.subscribe(&editor, |this, _, ev: &InputEvent, cx| {
             if matches!(ev, InputEvent::Change) {

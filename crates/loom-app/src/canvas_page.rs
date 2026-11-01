@@ -65,7 +65,8 @@ impl CanvasPage {
         self.source = on;
         if on && let Some(doc) = &self.current {
             let json = doc.to_json();
-            self.source_editor = Some(cx.new(|cx| EditorState::new(window, cx).language("json").default_value(json)));
+            let prefs = crate::prefs(cx).editor;
+            self.source_editor = Some(crate::ide_prefs::new_editor("json", json, false, &prefs, window, cx));
         }
         cx.notify();
     }
