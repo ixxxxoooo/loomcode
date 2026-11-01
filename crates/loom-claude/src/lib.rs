@@ -12,6 +12,7 @@ pub mod backend;
 pub mod history;
 pub mod lazy;
 pub mod options;
+pub mod usage;
 pub mod protocol;
 pub mod translate;
 

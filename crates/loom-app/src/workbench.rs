@@ -140,6 +140,8 @@ pub struct Workbench {
     pub cfg_scope: loom_config::Scope,
     /// 设置页表单的输入框状态(首次进入设置页时创建)
     pub settings_forms: Option<settings::Forms>,
+    /// 用量页当前显示的趋势指标
+    pub usage_metric: settings::UsageMetric,
     pub settings_tab: SettingsTab,
     pub claude_info: Option<String>,
     pub palette: Option<Entity<Palette>>,
@@ -248,6 +250,7 @@ impl Workbench {
             claude_home,
             cfg_scope: loom_config::Scope::Local,
             settings_forms: None,
+            usage_metric: settings::UsageMetric::Tokens,
             settings_tab: SettingsTab::General,
             claude_info: None,
             palette: None,
@@ -287,14 +290,16 @@ impl Workbench {
             Ok("light") => theme::ThemeKind::PaperLight,
             _ => theme::ThemeKind::from(wb.settings.theme),
         };
+        cx.set_global(theme::Accent(wb.settings.accent.as_deref().and_then(theme::parse_hex)));
         theme::apply(kind, Some(window), cx);
-        cx.set_global(crate::UiPrefs { expand_thinking: wb.settings.expand_thinking });
+        crate::app_icon::set_tray_visible(wb.settings.tray_icon);
+        cx.set_global(crate::UiPrefs { expand_thinking: wb.settings.expand_thinking, cmd_enter_send: wb.settings.send_with_cmd_enter });
         if !demo {
             wb.detect_claude(cx);
         }
         if let Ok(tab) = std::env::var("LOOM_SETTINGS") {
             wb.page = Page::Settings;
-            wb.settings_tab = SettingsTab::ALL.into_iter().find(|t| format!("{t:?}").to_lowercase() == tab).unwrap_or(SettingsTab::General);
+            wb.settings_tab = SettingsTab::from_name(&tab).unwrap_or(SettingsTab::General);
         }
         // 调试用:启动后直接打开对话框(rename / workspace),方便截图检查
         if let Ok(kind) = std::env::var("LOOM_DIALOG") {
@@ -467,7 +472,7 @@ impl Workbench {
             }
             PaletteAction::OpenSettings(tab) => {
                 if let Some(tab) = tab {
-                    self.settings_tab = SettingsTab::ALL.into_iter().find(|t| format!("{t:?}").to_lowercase() == tab).unwrap_or(SettingsTab::General);
+                    self.settings_tab = SettingsTab::from_name(&tab).unwrap_or(SettingsTab::General);
                 }
                 self.set_page(Page::Settings, cx);
             }
@@ -527,14 +532,16 @@ impl Workbench {
                     mode: (s.default_mode != PermissionMode::Default).then_some(s.default_mode),
                     effort: (s.default_effort != Effort::Medium).then_some(s.default_effort),
                     add_dirs: workspace.as_ref().map(|w| w.folders.clone()).unwrap_or_default(),
-                    append_system_prompt: workspace.as_ref().map(|w| w.system_prompt()),
+                    // 多根工作区说明 + 设置里的「追加系统提示词」
+                    append_system_prompt: Some([workspace.as_ref().map(|w| w.system_prompt()).unwrap_or_default(), s.append_prompt.clone()].into_iter().filter(|p| !p.trim().is_empty()).collect::<Vec<_>>().join("\n\n")).filter(|p| !p.is_empty()),
+                    extra_env: self.session_extra_env(),
                 };
                 (Box::new(LazyBackend::new(ClaudeBackend::new(s.claude_path.clone()))), config)
             };
             let handle = match backend.start(config) {
                 Ok(h) => h,
                 Err(e) => {
-                    eprintln!("启动后端失败:{e}");
+                    loom_config::diag::error(&format!("启动后端失败:{e}"));
                     return;
                 }
             };
@@ -609,13 +616,16 @@ impl Workbench {
 
     /// 修改偏好:立即生效并落盘。
     pub fn update_settings(&mut self, cx: &mut Context<Self>, f: impl FnOnce(&mut AppSettings)) {
-        let old_theme = self.settings.theme;
+        let (old_theme, old_accent) = (self.settings.theme, self.settings.accent.clone());
         f(&mut self.settings);
         if let Err(e) = self.settings.save(&self.settings_path) {
             eprintln!("保存设置失败:{e}");
         }
-        cx.set_global(crate::UiPrefs { expand_thinking: self.settings.expand_thinking });
-        if self.settings.theme != old_theme {
+        cx.set_global(crate::UiPrefs { expand_thinking: self.settings.expand_thinking, cmd_enter_send: self.settings.send_with_cmd_enter });
+        if self.settings.accent != old_accent {
+            cx.set_global(theme::Accent(self.settings.accent.as_deref().and_then(theme::parse_hex)));
+        }
+        if self.settings.theme != old_theme || self.settings.accent != old_accent {
             let kind = theme::ThemeKind::from(self.settings.theme);
             cx.defer(move |cx| theme::apply(kind, None, cx));
         }
@@ -631,7 +641,7 @@ impl Workbench {
     }
 
     /// 后台检测本机 claude 版本。
-    fn detect_claude(&mut self, cx: &mut Context<Self>) {
+    pub fn detect_claude(&mut self, cx: &mut Context<Self>) {
         let custom = self.settings.claude_path.clone();
         cx.spawn(async move |this, cx| {
             let info = cx
@@ -819,6 +829,11 @@ impl Workbench {
                     // 不是当前会话跑完的 → 标记未读
                     if let Some((id, _)) = owner.filter(|(id, _)| self.active.as_ref() != Some(*id)) {
                         self.unread.insert(id.clone());
+                    }
+                    // 窗口不在前台时发系统通知
+                    if self.settings.notify_on_finish && cx.active_window().is_none() {
+                        let title = owner.and_then(|(id, v)| self.projects.get(v.project_ix).and_then(|p| p.sessions.iter().find(|s| &s.id == id)).map(|s| s.title.clone()));
+                        crate::app_icon::notify("Claude 已完成", &title.unwrap_or_else(|| "会话回合已结束".into()));
                     }
                     let path = owner.and_then(|(_, v)| self.projects.get(v.project_ix)).map(|p| p.path.clone());
                     // 一个回合结束,会话已经写进磁盘:之后再打开就是普通会话,不能再从源会话分叉

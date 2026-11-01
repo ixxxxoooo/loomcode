@@ -7,9 +7,9 @@ Rust + gpui-kit 0.8 的 Claude Code 工作台。只支持 Claude Code,直连本�
 | crate | 职责 |
 | --- | --- |
 | `loom-core` | 与界面无关的数据模型:时间线条目、`AgentEvent`/`AgentCommand`、`SessionState` 归约器、`AgentBackend` 抽象 |
-| `loom-claude` | 真实后端:启动参数、stream-json 翻译器、权限应答、历史读取与回放、`LazyBackend` |
+| `loom-claude` | 真实后端:启动参数(含额外环境变量)、stream-json 翻译器、权限应答、历史读取与回放、`LazyBackend`、用量统计 `usage`(扫描 `~/.claude/projects` 带增量缓存) |
 | `loom-demo` | 演示后端:脚本化场景(36 个)与沙盒项目;沙盒里的 `home/` 是演示用的假 `~/.claude` 与 `~/.claude.json`,设置页的读写都落在这里 |
-| `loom-config` | `~/.loomcode/settings.json` 与 Claude 配置(权限规则、MCP、Hooks)读写 |
+| `loom-config` | `~/.loomcode/settings.json` 与 Claude 配置读写:`claude`(用户 / 项目 / 本地三层的权限、MCP、钩子、env,原子写 + 备份)、`items`(命令、子 Agent、Skills、记忆文件)、`providers`(模型服务商与映射,密钥单独 0600 文件)、`diag`(日志、诊断包、连通性) |
 | `loom-canvas` | Canvas 画布文档模型、校验与存储 |
 | `loom-automation` | 自动化的计划、存储与运行器 |
 | `loom-browser` | 内置阅读模式浏览器的抓取与正文提取 |

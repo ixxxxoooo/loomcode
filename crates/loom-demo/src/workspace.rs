@@ -191,6 +191,41 @@ const DEMO_EXTENSIONS: &[(&str, &str)] = &[
     ("skills/release-notes/SKILL.md", "---\nname: release-notes\ndescription: 发版时整理发布说明\n---\n\n# 发布说明\n\n1. 汇总本版本的提交\n2. 按模块分组\n"),
 ];
 
+/// 公历日期(UTC):距 1970-01-01 的天数 → `YYYY-MM-DD`。
+fn civil_date(days: i64) -> String {
+    let z = days + 719_468;
+    let era = z.div_euclid(146_097);
+    let doe = z - era * 146_097;
+    let yoe = (doe - doe / 1460 + doe / 36_524 - doe / 146_096) / 365;
+    let doy = doe - (365 * yoe + yoe / 4 - yoe / 100);
+    let mp = (5 * doy + 2) / 153;
+    let d = doy - (153 * mp + 2) / 5 + 1;
+    let m = if mp < 10 { mp + 3 } else { mp - 9 };
+    format!("{:04}-{m:02}-{d:02}", yoe + era * 400 + i64::from(m <= 2))
+}
+
+/// 演示用的会话记录:最近 30 天里每天若干回复,两个模型,用来填充用量页。
+fn demo_usage_jsonl() -> String {
+    let today = std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH).map_or(20_000, |d| d.as_secs() as i64 / 86_400);
+    let mut lines = Vec::new();
+    for back in 0..30i64 {
+        // 工作日多、周末少,数值用确定性公式,每次启动一致
+        let load = [3u64, 5, 2, 6, 4, 1, 0][(back % 7) as usize];
+        let date = civil_date(today - back);
+        for n in 0..load {
+            let ts = format!("{date}T{:02}:{:02}:00Z", 9 + n, (back * 7 + n as i64 * 13) % 60);
+            let model = if (back + n as i64) % 3 == 0 { "claude-opus-5-5" } else { "claude-sonnet-5-5" };
+            let id = format!("m-{back}-{n}");
+            lines.push(format!(r#"{{"type":"user","timestamp":"{ts}","message":{{"role":"user","content":"示例提问 {back}-{n}"}}}}"#));
+            lines.push(format!(
+                r#"{{"type":"assistant","timestamp":"{ts}","message":{{"id":"{id}","model":"{model}","content":[{{"type":"tool_use","id":"t-{id}"}}],"usage":{{"input_tokens":{},"output_tokens":{},"cache_creation_input_tokens":{},"cache_read_input_tokens":{}}}}}}}"#,
+                1_200 + n * 300, 600 + back as u64 * 40, 2_000 + n * 150, 20_000 + n * 4_000 + back as u64 * 500
+            ));
+        }
+    }
+    lines.join("\n")
+}
+
 /// 生成演示家目录(每次启动重置):用户层 MCP 在 `~/.claude.json` 顶层,
 /// router-demo 另有一个本地层 MCP 并禁用了 playwright。
 pub fn seed_claude_home(root: &Path) -> io::Result<PathBuf> {
@@ -216,5 +251,14 @@ pub fn seed_claude_home(root: &Path) -> io::Result<PathBuf> {
         } }
     });
     fs::write(home.join(".claude.json"), serde_json::to_string_pretty(&claude_json).map_err(io::Error::other)?)?;
+    let sessions = home.join(".claude/projects/-demo-router");
+    fs::create_dir_all(&sessions)?;
+    fs::write(sessions.join("demo-usage.jsonl"), demo_usage_jsonl())?;
+    // 演示用的模型服务商(无真实密钥,映射处于「缺密钥」状态)
+    let providers = serde_json::json!({
+        "providers": [{ "id": "deepseek", "name": "DeepSeek", "base_url": "https://api.deepseek.com/anthropic", "auth": "bearer", "models": ["deepseek-chat", "deepseek-reasoner"] }],
+        "mapping": { "enabled": false, "provider": "deepseek", "default": "deepseek-chat", "haiku": "deepseek-chat" }
+    });
+    fs::write(root.join("providers.json"), serde_json::to_string_pretty(&providers).map_err(io::Error::other)?)?;
     Ok(home)
 }

@@ -85,6 +85,8 @@ use workbench::Workbench;
 #[derive(Clone, Copy, Default)]
 pub struct UiPrefs {
     pub expand_thinking: bool,
+    /// ⌘Enter 发送、Enter 换行
+    pub cmd_enter_send: bool,
 }
 impl Global for UiPrefs {}
 
@@ -94,6 +96,16 @@ fn main() {
     let session_arg = std::env::var("LOOM_SESSION").ok();
     // 更名前的数据目录 ~/.ucode 搬到 ~/.loomcode(只做一次)
     loom_config::legacy::migrate_home();
+    // 诊断日志:~/.loomcode/logs/loomcode.log;崩溃信息也写进去
+    if let Some(home) = std::env::var_os("HOME") {
+        loom_config::diag::init(&std::path::PathBuf::from(home).join(".loomcode/logs"));
+    }
+    let default_hook = std::panic::take_hook();
+    std::panic::set_hook(Box::new(move |info| {
+        loom_config::diag::error(&format!("崩溃:{info}"));
+        default_hook(info);
+    }));
+    loom_config::diag::info(&format!("LoomCode {} 启动{}", env!("CARGO_PKG_VERSION"), if demo { "(演示模式)" } else { "" }));
 
     application().with_assets(gpui_kit::assets::AllAssets).run(move |cx| {
         init(cx);
@@ -120,7 +132,6 @@ fn main() {
         options.window_min_size = Some(size(px(640.), px(480.)));
         open_window(options, cx, move |window, cx| cx.new(|cx| Workbench::new(demo, session_arg, window, cx)))
             .expect("打开主窗口失败");
-        app_icon::install_tray();
         cx.activate(true);
     });
 }

@@ -36,6 +36,8 @@ pub struct BackendConfig {
     pub add_dirs: Vec<String>,
     /// 追加到系统提示末尾的内容(`--append-system-prompt`)
     pub append_system_prompt: Option<String>,
+    /// 额外注入 claude 进程的环境变量(模型服务商、代理等)
+    pub extra_env: Vec<(String, String)>,
 }
 
 /// 后端工厂:真实 Claude 与演示后端各自实现。

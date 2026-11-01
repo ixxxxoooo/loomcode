@@ -2,7 +2,7 @@
 //!
 //! 约定:界面里的颜色只通过 `cx.theme()` 取,不在视图里写死色值。
 
-use gpui_kit::component::{ActiveTheme, Theme, ThemeMode};
+use gpui_kit::component::{ActiveTheme, Colorize as _, Theme, ThemeMode};
 use gpui_kit::*;
 
 /// 内置主题。
@@ -31,9 +31,28 @@ fn hex(v: u32) -> Hsla {
     rgb(v).into()
 }
 
-/// 应用主题到全局,并让 Dock 图标切到对应的浅色 / 深色版。
+/// 用户自选的强调色(设置 → 通用);`None` 用主题默认橙色。
+#[derive(Clone, Copy, Default)]
+pub struct Accent(pub Option<u32>);
+impl Global for Accent {}
+
+/// 解析 `RRGGBB`(可带 `#`)。
+pub fn parse_hex(text: &str) -> Option<u32> {
+    let t = text.trim().trim_start_matches('#');
+    (t.len() == 6).then(|| u32::from_str_radix(t, 16).ok()).flatten()
+}
+
+/// 应用主题到全局(含强调色),并让 Dock 图标切到对应的浅色 / 深色版。
 pub fn apply(kind: ThemeKind, window: Option<&mut Window>, cx: &mut App) {
     apply_colors(kind, window, cx);
+    if let Some(c) = cx.try_global::<Accent>().and_then(|a| a.0) {
+        let base = hex(c);
+        Theme::update(cx, |t| {
+            t.primary = base;
+            t.primary_hover = base.darken(0.08);
+            t.primary_active = base.darken(0.16);
+        });
+    }
     crate::app_icon::set_dock_icon(cx.theme().is_dark());
 }
 

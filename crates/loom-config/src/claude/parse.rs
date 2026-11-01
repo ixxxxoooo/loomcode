@@ -2,7 +2,7 @@
 //!
 //! @author ixxxxoooo
 
-use super::{ClaudeConfig, HookEntry, LayerSettings, McpServer, McpSpec, PermissionRules, Rule, Scope, string_list};
+use super::{ClaudeConfig, HookEntry, LayerSettings, McpServer, McpSpec, PUBLIC_ENV, PermissionRules, Rule, Scope, string_list};
 use serde_json::Value;
 
 /// 解析一层里的非列表型设置。
@@ -16,6 +16,16 @@ fn parse_layer(v: &Value) -> LayerSettings {
         enable_all_project_mcp: v.get("enableAllProjectMcpServers").and_then(Value::as_bool).unwrap_or(false),
         enabled_mcpjson: string_list(v.get("enabledMcpjsonServers")),
         disabled_mcpjson: string_list(v.get("disabledMcpjsonServers")),
+        model: v.get("model").and_then(Value::as_str).map(str::to_string),
+        always_thinking: v.get("alwaysThinkingEnabled").and_then(Value::as_bool),
+        output_style: v.get("outputStyle").and_then(Value::as_str).map(str::to_string),
+        api_key_helper: v.get("apiKeyHelper").and_then(Value::as_str).map(str::to_string),
+        env_names: v.get("env").and_then(Value::as_object).map(|m| m.keys().cloned().collect()).unwrap_or_default(),
+        env_public: v
+            .get("env")
+            .and_then(Value::as_object)
+            .map(|m| m.iter().filter(|(k, _)| PUBLIC_ENV.contains(&k.as_str())).map(|(k, v)| (k.clone(), v.as_str().map(str::to_string).unwrap_or_else(|| v.to_string()))).collect())
+            .unwrap_or_default(),
     }
 }
 

@@ -25,6 +25,8 @@ pub struct ClaudeOptions {
     pub allowed_tools: Vec<String>,
     /// MCP 配置(JSON 文件路径或字符串,`--mcp-config`)
     pub mcp_config: Option<String>,
+    /// 额外环境变量(追加在固定的 SDK 标记之后)
+    pub extra_env: Vec<(String, String)>,
 }
 
 impl ClaudeOptions {
@@ -43,6 +45,7 @@ impl ClaudeOptions {
             effort: config.effort,
             add_dirs: config.add_dirs.clone(),
             append_system_prompt: config.append_system_prompt.clone().filter(|p| !p.trim().is_empty()),
+            extra_env: config.extra_env.clone(),
             ..Default::default()
         }
     }
@@ -112,12 +115,14 @@ impl ClaudeOptions {
 
     /// 需要额外注入的环境变量。
     pub fn env(&self) -> Vec<(String, String)> {
-        vec![
+        let mut env: Vec<(String, String)> = vec![
             ("CLAUDE_CODE_ENTRYPOINT".into(), "sdk-ts".into()),
             ("CLAUDE_AGENT_SDK_VERSION".into(), "0.2.0".into()),
             ("CLAUDE_CODE_EMIT_SESSION_STATE_EVENTS".into(), "1".into()),
             ("CLAUDE_CODE_SDK_READS_SESSION_STATE".into(), "1".into()),
-        ]
+        ];
+        env.extend(self.extra_env.iter().cloned());
+        env
     }
 }
 

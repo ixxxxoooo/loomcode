@@ -124,3 +124,15 @@ fn mcp_启用与批准状态() {
     assert!(!get("u").enabled);
     let _ = std::fs::remove_dir_all(home);
 }
+
+#[test]
+fn 层设置只读白名单_env_值() {
+    let json = r#"{"model":"opus","alwaysThinkingEnabled":true,"outputStyle":"Explanatory","apiKeyHelper":"~/bin/key.sh",
+        "env":{"MAX_THINKING_TOKENS":"8000","ANTHROPIC_AUTH_TOKEN":"secret-token","DISABLE_TELEMETRY":1}}"#;
+    let l = parse_settings(json, Scope::User).layer(Scope::User);
+    assert_eq!((l.model.as_deref(), l.always_thinking, l.output_style.as_deref()), (Some("opus"), Some(true), Some("Explanatory")));
+    assert_eq!(l.env("MAX_THINKING_TOKENS"), Some("8000"));
+    assert_eq!(l.env("DISABLE_TELEMETRY"), Some("1"));
+    assert_eq!(l.env_names.len(), 3);
+    assert!(!format!("{l:?}").contains("secret-token"));
+}

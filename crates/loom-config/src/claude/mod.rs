@@ -97,7 +97,46 @@ pub struct LayerSettings {
     pub enabled_mcpjson: Vec<String>,
     /// `disabledMcpjsonServers`
     pub disabled_mcpjson: Vec<String>,
+    /// `model`
+    pub model: Option<String>,
+    /// `alwaysThinkingEnabled`
+    pub always_thinking: Option<bool>,
+    /// `outputStyle`
+    pub output_style: Option<String>,
+    /// `apiKeyHelper`(脚本路径,不是密钥本身)
+    pub api_key_helper: Option<String>,
+    /// 本层 `env` 的变量名(值不读取)
+    pub env_names: Vec<String>,
+    /// 白名单内、不含密钥的 `env` 值(见 `PUBLIC_ENV`)
+    pub env_public: Vec<(String, String)>,
 }
+
+impl LayerSettings {
+    /// 取白名单 env 的值。
+    pub fn env(&self, key: &str) -> Option<&str> {
+        self.env_public.iter().find(|(k, _)| k == key).map(|(_, v)| v.as_str())
+    }
+}
+
+/// 允许读取值的环境变量(都是开关或数值,不含密钥);其余变量只读名称。
+pub const PUBLIC_ENV: &[&str] = &[
+    "MAX_THINKING_TOKENS",
+    "CLAUDE_AUTOCOMPACT_PCT_OVERRIDE",
+    "CLAUDE_CODE_MAX_OUTPUT_TOKENS",
+    "MCP_TIMEOUT",
+    "MCP_TOOL_TIMEOUT",
+    "MAX_MCP_OUTPUT_TOKENS",
+    "ENABLE_TOOL_SEARCH",
+    "DISABLE_TELEMETRY",
+    "DISABLE_ERROR_REPORTING",
+    "CLAUDE_CODE_DISABLE_NONESSENTIAL_TRAFFIC",
+    "DISABLE_AUTOUPDATER",
+    "API_TIMEOUT_MS",
+    "BASH_DEFAULT_TIMEOUT_MS",
+    "CLAUDE_CODE_USE_BEDROCK",
+    "CLAUDE_CODE_USE_VERTEX",
+    "CLAUDE_CODE_USE_FOUNDRY",
+];
 
 /// 一条钩子。
 #[derive(Debug, Clone, PartialEq)]

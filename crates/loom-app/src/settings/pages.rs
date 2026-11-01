@@ -6,6 +6,7 @@ use super::widgets::{page_title, row, section_title, segmented};
 use crate::ui::{MONO, pill};
 use crate::workbench::Workbench;
 use gpui_kit::component::button::{Button, ButtonVariants};
+use gpui_kit::component::input::Input;
 use gpui_kit::component::switch::Switch;
 use gpui_kit::component::{ActiveTheme, Sizable, h_flex, v_flex};
 use gpui_kit::prelude::FluentBuilder as _;
@@ -59,9 +60,43 @@ pub fn general(wb: &Workbench, cx: &mut Context<Workbench>) -> AnyElement {
             .on_click(cx.listener(move |this, checked: &bool, _, cx| { let v = *checked; this.update_settings(cx, |s| s.right_open = v) })), cx))
         .child(row("融合模式", "关闭时 IDE 是独立窗口(⇧⌘E 打开或回到 Agent);开启后在同一窗口原地切换", Switch::new("sw-fused").checked(fused)
             .on_click(cx.listener(move |this, checked: &bool, _, cx| { let v = *checked; this.update_settings(cx, |s| s.fused_ide = v); this.on_fused_changed(cx) })), cx))
+        .child(row("强调色", "按钮、选中态等使用的主题色", accent_picker(wb, cx), cx))
+        .child(section_title("输入", cx))
+        .child(row("发送键", "另一个键用于换行(Shift+Enter 始终换行)", segmented("send-key", vec![(false, "Enter 发送"), (true, "⌘Enter 发送")], wb.settings.send_with_cmd_enter, cx,
+            |this, v, cx| this.update_settings(cx, |s| s.send_with_cmd_enter = v)), cx))
+        .child(section_title("通知与菜单栏", cx))
+        .child(row("任务完成时通知", "回合结束且 LoomCode 不在前台时发送系统通知", Switch::new("sw-notify").checked(wb.settings.notify_on_finish)
+            .on_click(cx.listener(|this, c: &bool, _, cx| { let v = *c; this.update_settings(cx, |s| s.notify_on_finish = v) })), cx))
+        .child(row("菜单栏图标", "在系统菜单栏显示 LoomCode 图标", Switch::new("sw-tray").checked(wb.settings.tray_icon)
+            .on_click(cx.listener(|this, c: &bool, _, cx| { let v = *c; this.update_settings(cx, |s| s.tray_icon = v); crate::app_icon::set_tray_visible(v) })), cx))
         .child(section_title("语言", cx))
         .child(row("界面语言", "目前仅提供简体中文", pill("简体中文", cx.theme().foreground, cx.theme().muted), cx))
         .into_any_element()
+}
+
+/// 强调色预设:(名称, RRGGBB);`None` 为主题默认。
+const ACCENTS: &[(&str, Option<&str>)] = &[("默认橙", None), ("蓝", Some("2563EB")), ("绿", Some("16A34A")), ("紫", Some("7C3AED")), ("粉", Some("DB2777")), ("青", Some("0891B2"))];
+
+/// 强调色选择:预设色点 + 自定义十六进制。
+fn accent_picker(wb: &Workbench, cx: &mut Context<Workbench>) -> Div {
+    let t = cx.theme().clone();
+    let cur = wb.settings.accent.clone();
+    h_flex().gap_1p5().items_center()
+        .children(ACCENTS.iter().enumerate().map(|(i, (_name, hex))| {
+            let color: Hsla = rgb(hex.and_then(crate::theme::parse_hex).unwrap_or(0xF54E00)).into();
+            let on = cur.as_deref() == *hex;
+            let v = hex.map(str::to_string);
+            div().id(SharedString::from(format!("accent-{i}"))).size(px(20.)).rounded_full().bg(color).cursor_pointer()
+                .border_2().border_color(if on { t.foreground } else { t.background })
+                .on_click(cx.listener(move |this, _, _, cx| { let v = v.clone(); this.update_settings(cx, |s| s.accent = v) }))
+        }))
+        .child(div().w(px(110.)).child(Input::new(wb.field("accent")).small()))
+        .child(Button::new("accent-save").small().outline().label("应用").on_click(cx.listener(|this, _, _, cx| {
+            let v = this.field_value("accent", cx);
+            if v.is_empty() || crate::theme::parse_hex(&v).is_some() {
+                this.update_settings(cx, |s| s.accent = (!v.is_empty()).then(|| v.trim_start_matches('#').to_uppercase()));
+            }
+        })))
 }
 
 /// 对话页:新会话默认模型 / 权限模式 / 思考强度,思考显示方式。

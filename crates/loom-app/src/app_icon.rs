@@ -103,6 +103,13 @@ mod mac {
         item.setMenu(Some(&menu));
         TRAY.set(Some((item, target)));
     }
+
+    /// 移除菜单栏图标(设置里关闭「菜单栏图标」时)。
+    pub fn remove_tray() {
+        if let Some((item, _)) = TRAY.take() {
+            NSStatusBar::systemStatusBar().removeStatusItem(&item);
+        }
+    }
 }
 
 /// 按主题切换 Dock 图标。参数:`dark` 当前主题是否深色。
@@ -114,7 +121,19 @@ pub fn set_dock_icon(dark: bool) {
 }
 
 /// 放置菜单栏托盘图标(仅 macOS;其他平台什么也不做)。
-pub fn install_tray() {
+/// 按设置显示或移除菜单栏图标(启动时与设置里切换时都走这里)。
+pub fn set_tray_visible(visible: bool) {
     #[cfg(target_os = "macos")]
-    mac::install_tray();
+    if visible { mac::install_tray() } else { mac::remove_tray() }
+    #[cfg(not(target_os = "macos"))]
+    let _ = visible;
+}
+
+/// 发系统通知(经 osascript,不需要通知权限声明)。
+///
+/// 参数:`title` 标题;`body` 正文。
+pub fn notify(title: &str, body: &str) {
+    let esc = |s: &str| s.replace('\\', "\\\\").replace('"', "\\\"");
+    let script = format!("display notification \"{}\" with title \"LoomCode\" subtitle \"{}\"", esc(body), esc(title));
+    let _ = std::process::Command::new("osascript").arg("-e").arg(script).spawn();
 }

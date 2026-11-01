@@ -100,8 +100,12 @@ impl Composer {
         bind_keys(cx);
         let input = cx.new(|cx| TextareaState::new(window, cx).auto_grow(2, 8).placeholder("向 Claude 提问,/ 调用命令,@ 引用文件…").submit_on_enter(true));
         let sub = cx.subscribe_in(&input, window, |this: &mut Self, _, ev: &InputEvent, window, cx| match ev {
-            InputEvent::PressEnter { shift: false, .. } => {
-                if this.suggestions.is_empty() {
+            InputEvent::PressEnter { shift: false, secondary } => {
+                // 设置为「⌘Enter 发送」时,普通 Enter 只换行
+                let cmd_send = cx.try_global::<crate::UiPrefs>().is_some_and(|p| p.cmd_enter_send);
+                if this.suggestions.is_empty() && cmd_send && !*secondary {
+                    this.input.update(cx, |i, cx| i.insert("\n", window, cx));
+                } else if this.suggestions.is_empty() {
                     this.submit(window, cx)
                 } else {
                     this.accept_suggestion(this.sel, window, cx)

@@ -15,6 +15,7 @@ impl Workbench {
         if self.settings_forms.is_none() {
             self.settings_forms = Some(Forms::new(window, cx));
             self.refresh_items();
+            self.load_providers();
         }
     }
 
@@ -65,6 +66,9 @@ impl Workbench {
     /// 参数:`result` 写入结果。返回:是否成功。
     pub fn finish_cfg_write(&mut self, result: std::io::Result<()>, cx: &mut Context<Self>) -> bool {
         let ok = result.is_ok();
+        if let Err(e) = &result {
+            loom_config::diag::error(&format!("写入 Claude 配置失败:{e}"));
+        }
         self.forms_mut().error = result.err().map(|e| format!("写入失败:{e}"));
         self.reload_claude_cfg();
         cx.notify();

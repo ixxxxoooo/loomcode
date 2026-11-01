@@ -3,6 +3,7 @@
 //! @author ixxxxoooo
 
 use super::SettingsTab;
+use super::fields::Fields;
 use gpui_kit::component::input::{EditorState, InputState, TextareaState};
 use gpui_kit::*;
 use loom_config::Scope;
@@ -17,6 +18,34 @@ pub struct DocEdit {
     pub saved: bool,
     /// 打开它的设置分类;切到别的分类时不显示
     pub tab: SettingsTab,
+}
+
+/// 模型服务商页的状态。密钥只在内存里用于注入与测试,界面不显示。
+#[derive(Default)]
+pub struct ProviderUi {
+    pub store: loom_config::providers::ProviderStore,
+    pub keys: HashMap<String, String>,
+    /// 正在编辑的服务商 id
+    pub selected: Option<String>,
+    /// 最近一次测试 / 获取模型的结果:(成功, 提示)
+    pub status: Option<(bool, String)>,
+    /// 后台请求进行中
+    pub busy: bool,
+}
+
+/// 网络、用量、诊断页的状态(后台任务结果)。
+#[derive(Default)]
+pub struct OpsUi {
+    /// 连通性测试:(名称, 网址, 结果);结果为 `None` 表示测试中
+    pub net: Vec<(String, String, Option<Result<u64, String>>)>,
+    pub usage: Option<loom_claude::usage::UsageReport>,
+    pub usage_busy: bool,
+    /// `claude doctor` 输出
+    pub doctor: Option<String>,
+    pub doctor_busy: bool,
+    /// (pid, 内存 MB, CPU %, 命令)
+    pub procs: Vec<(u32, f64, f64, String)>,
+    pub log: Vec<String>,
 }
 
 /// 新建命令 / 子 Agent / Skill 的表单。
@@ -66,6 +95,9 @@ pub struct Forms {
     /// 扫描结果缓存(进入设置页、切换项目、增删后刷新)
     pub items: HashMap<ItemKind, Vec<Item>>,
     pub memory_files: Vec<MemoryFile>,
+    pub fields: Fields,
+    pub providers: ProviderUi,
+    pub ops: OpsUi,
     /// 最近一次写配置失败的提示(显示在页顶,下次成功时清除)
     pub error: Option<String>,
 }
@@ -109,6 +141,9 @@ impl Forms {
             doc: None,
             items: HashMap::new(),
             memory_files: Vec::new(),
+            fields: Fields::new(window, cx),
+            providers: ProviderUi::default(),
+            ops: OpsUi::default(),
             error: None,
         }
     }
