@@ -29,12 +29,12 @@ pub fn file_token(path: &Path, mention: &str) -> Option<InlineToken> {
     Some(InlineToken::new(path.to_string_lossy().to_string(), format!("@{mention}")).with_label(name))
 }
 
-/// 标记的渲染:文件类型图标 + 文件名的圆角小胶囊(选中时描主题色边)。
+/// 标记的渲染:文件类型图标 + 文件名的圆角小胶囊(选中时整颗填主题色淡底,不再描边,避免和输入框自己的选区底色叠成括号状)。
 pub fn token_view(ctx: &InlineTokenContext, _: &mut Window, cx: &mut App) -> AnyElement {
     let t = cx.theme();
     let (path, name) = (PathBuf::from(ctx.token().id().to_string()), ctx.token().label().to_string());
     let is_dir = path.is_dir();
-    h_flex().h(px(22.)).px_1p5().gap_1().items_center().rounded(px(5.)).border_1().border_color(if ctx.is_selected() { t.primary } else { t.border }).bg(t.muted.opacity(0.7)).text_size(px(13.))
+    h_flex().h(px(22.)).px_1p5().gap_1().items_center().rounded(px(5.)).border_1().border_color(t.border).bg(if ctx.is_selected() { t.primary.opacity(0.25) } else { t.muted.opacity(0.7) }).text_size(px(13.))
         .child(file_icon_img(&name, is_dir, false, 14.))
         .child(div().max_w(px(240.)).truncate().child(name))
         .into_any_element()
