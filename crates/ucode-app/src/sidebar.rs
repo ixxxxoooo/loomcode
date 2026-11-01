@@ -44,11 +44,11 @@ fn session_row(wb: &Workbench, project_ix: usize, meta: &SessionMeta, cx: &mut C
         .hover(|d| d.bg(t.sidebar_accent))
         .on_click(cx.listener(move |this, _, window, cx| this.open_session(project_ix, &id, window, cx)))
         .child(div().w(px(8.)).flex_none().child(status_dot(badge, cx).unwrap_or_else(|| div().size(px(6.)).m(px(1.)).rounded_full().flex_none().bg(t.muted_foreground.opacity(0.7)))))
-        .child(div().flex_1().min_w_0().truncate().text_size(px(13.5)).when(archived, |d| d.text_color(t.muted_foreground)).child(meta.title.clone()))
+        .child(div().flex_1().min_w_0().truncate().text_size(px(13.)).when(archived, |d| d.text_color(t.muted_foreground)).child(meta.title.clone()))
         .child(
-            div().relative().w(px(52.)).h_full().flex_none()
+            div().relative().w(px(44.)).h_full().flex_none()
                 .child(
-                    h_flex().size_full().justify_end().items_center().gap_1().text_size(px(12.)).text_color(t.muted_foreground)
+                    h_flex().size_full().justify_end().items_center().gap_1().text_size(px(11.)).text_color(t.muted_foreground)
                         .when(pinned, |d| d.child(icon(IconName::Pin, 11., t.muted_foreground)))
                         .child(short_time(&meta.updated)),
                 )
@@ -154,10 +154,10 @@ pub fn render(wb: &Workbench, cx: &mut Context<Workbench>) -> impl IntoElement {
                                 // 展开 = 蓝色打开的文件夹,折叠 = 灰色合上的文件夹
                                 .child(icon(
                                     if workspace.is_some() { IconName::Folders } else if worktree { IconName::GitFork } else if expanded { IconName::FolderOpen } else { IconName::Folder },
-                                    17.,
+                                    15.,
                                     if expanded { t.info } else { t.muted_foreground },
                                 ))
-                                .child(div().flex_1().truncate().text_size(px(14.5)).font_weight(FontWeight::SEMIBOLD).child(p.name.clone()))
+                                .child(div().flex_1().truncate().text_size(px(13.)).font_weight(FontWeight::MEDIUM).child(p.name.clone()))
                                 .when(pinned, |d| d.child(icon(IconName::Pin, 11., t.muted_foreground)))
                                 .when_some(workspace.as_ref(), |d, w| d.child(div().text_size(px(11.)).text_color(t.muted_foreground).child(format!("{} 个文件夹", w.folders.len()))))
                                 // 折叠时把项目里最需要关注的会话状态带到这一行:等待你 > 运行中 > 未读
