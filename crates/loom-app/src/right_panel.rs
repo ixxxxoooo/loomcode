@@ -126,6 +126,8 @@ pub fn collect_log(items: &[TimelineItem]) -> Vec<LogLine> {
 pub enum PanelEvent {
     /// 用户在文件树里点了一个文件
     OpenFile(std::path::PathBuf),
+    /// 用户在文件树里双击了一个文件(IDE 里固定为正式标签)
+    OpenFilePinned(std::path::PathBuf),
 }
 
 impl EventEmitter<PanelEvent> for RightPanel {}

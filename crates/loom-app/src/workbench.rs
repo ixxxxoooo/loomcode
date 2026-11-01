@@ -890,7 +890,7 @@ impl Workbench {
 
     fn on_panel_event(&mut self, ev: &PanelEvent, window: &mut Window, cx: &mut Context<Self>) {
         match ev {
-            PanelEvent::OpenFile(path) => {
+            PanelEvent::OpenFile(path) | PanelEvent::OpenFilePinned(path) => {
                 let path = path.clone();
                 self.panel.update(cx, |p, cx| p.files.load_preview(path, window, cx));
             }

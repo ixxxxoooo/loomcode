@@ -78,6 +78,7 @@ impl IdeWindow {
         // 文件树点选 → 编辑器打开
         subs.push(cx.subscribe_in(&panel, window, |this, _, ev: &PanelEvent, window, cx| match ev {
             PanelEvent::OpenFile(path) => this.open_file(path.clone(), window, cx),
+            PanelEvent::OpenFilePinned(path) => this.open_path(&path.to_string_lossy(), window, cx),
         }));
         // 工作台变化(切换会话等)→ 同步面板与根目录
         subs.push(cx.observe(&wb, |this, _, cx| this.sync(cx)));

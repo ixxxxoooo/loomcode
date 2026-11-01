@@ -215,13 +215,18 @@ impl FileTree {
                     .text_size(px(12.5))
                     .when(selected, |d| d.bg(t.list_active))
                     .hover(|d| d.bg(t.list_hover))
-                    .on_click(cx.listener(move |this, _, window, cx| {
+                    .on_click(cx.listener(move |this, ev: &ClickEvent, _, cx| {
                         if is_dir {
-                            this.files.toggle_dir(&path);
-                            cx.notify();
+                            // 目录只在单击时展开 / 收起,双击的第二下不再翻回去
+                            if ev.click_count() < 2 {
+                                this.files.toggle_dir(&path);
+                                cx.notify();
+                            }
+                        } else if ev.click_count() >= 2 {
+                            // 双击:固定为正式标签(IDE);右侧面板里等同单击
+                            cx.emit(PanelEvent::OpenFilePinned(path.clone()));
                         } else {
-                            // 由工作台决定是在右侧预览还是在 IDE 编辑器里打开
-                            let _ = window;
+                            // 单击:由工作台决定是在右侧预览还是在 IDE 编辑器里开预览标签
                             cx.emit(PanelEvent::OpenFile(path.clone()));
                         }
                     }))

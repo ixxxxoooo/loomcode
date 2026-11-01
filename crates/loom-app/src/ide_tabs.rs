@@ -172,7 +172,7 @@ mod tests {
         PathBuf::from(s)
     }
 
-    #[test]
+    #[::core::prelude::v1::test]
     fn 预览标签被下一个预览原位替换() {
         let mut m = TabModel::default();
         m.open(&p("a"), true);
@@ -184,7 +184,7 @@ mod tests {
         assert_eq!(m.tabs(), [p("a"), p("b"), p("d")]);
     }
 
-    #[test]
+    #[::core::prelude::v1::test]
     fn 固定后不再被替换() {
         let mut m = TabModel::default();
         m.open(&p("a"), true);
@@ -194,7 +194,21 @@ mod tests {
         assert_eq!(m.tabs().len(), 2);
     }
 
-    #[test]
+    #[::core::prelude::v1::test]
+    fn 单击预览_双击固定_之后单击开新标签() {
+        let mut m = TabModel::default();
+        // 单击 a:预览;双击 a:再次「正式打开」,固定下来
+        m.open(&p("a"), true);
+        m.open(&p("a"), false);
+        // 单击 b、c:b 是新标签,c 原位替换 b;a 始终保留
+        let out = m.open(&p("b"), true);
+        assert!(out.replaced.is_none());
+        let out = m.open(&p("c"), true);
+        assert_eq!(out.replaced, Some(p("b")));
+        assert_eq!(m.tabs(), [p("a"), p("c")]);
+    }
+
+    #[::core::prelude::v1::test]
     fn 新标签插在当前标签右侧() {
         let mut m = TabModel::default();
         m.open(&p("a"), false);
@@ -204,7 +218,7 @@ mod tests {
         assert_eq!(m.tabs(), [p("a"), p("c"), p("b")]);
     }
 
-    #[test]
+    #[::core::prelude::v1::test]
     fn 关闭当前标签回到最近使用的() {
         let mut m = TabModel::default();
         for n in ["a", "b", "c"] {
@@ -216,7 +230,7 @@ mod tests {
         assert_eq!(m.active(), Some(p("a").as_path()));
     }
 
-    #[test]
+    #[::core::prelude::v1::test]
     fn 其他与右侧() {
         let mut m = TabModel::default();
         for n in ["a", "b", "c"] {
@@ -226,7 +240,7 @@ mod tests {
         assert_eq!(m.right_of(&p("a")), [p("b"), p("c")]);
     }
 
-    #[test]
+    #[::core::prelude::v1::test]
     fn 固定与拖动() {
         let mut m = TabModel::default();
         for n in ["a", "b", "c", "d"] {
@@ -244,7 +258,7 @@ mod tests {
         assert!(!m.is_pinned(&p("c")));
     }
 
-    #[test]
+    #[::core::prelude::v1::test]
     fn 循环切换() {
         let mut m = TabModel::default();
         m.open(&p("a"), false);
