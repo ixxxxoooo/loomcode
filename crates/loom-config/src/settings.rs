@@ -279,6 +279,8 @@ pub struct AppSettings {
     pub tray_icon: bool,
     /// 启动时自动检查更新(只提示,不自动安装)
     pub auto_update_check: bool,
+    /// 日志级别(off / error / warn / info / debug);环境变量 `LOOM_LOG` 优先
+    pub log_level: String,
     /// 主题强调色(十六进制 RRGGBB);空则用主题默认
     pub accent: Option<String>,
     /// 追加到 Claude Code 系统提示末尾的内容(所有新会话)
@@ -322,6 +324,7 @@ impl Default for AppSettings {
             notify_on_finish: true,
             tray_icon: true,
             auto_update_check: true,
+            log_level: "info".into(),
             accent: None,
             append_prompt: String::new(),
             load_claude_md: true,

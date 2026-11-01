@@ -44,7 +44,12 @@ impl Workbench {
         use super::SettingsTab::*;
         match tab {
             Usage if self.forms().ops.usage.is_none() && !self.forms().ops.usage_busy => self.refresh_usage(cx),
-            Diagnostics if self.forms().ops.procs.is_empty() && self.forms().ops.log.is_empty() => self.refresh_diag(cx),
+            Diagnostics => {
+                if self.forms().ops.procs.is_empty() && self.forms().ops.log.is_empty() {
+                    self.refresh_diag(cx);
+                }
+                self.start_diag_ticker(cx);
+            }
             Trust => self.refresh_trust(cx),
             _ => {}
         }
@@ -159,12 +164,62 @@ impl Workbench {
         cx.notify();
     }
 
-    /// 刷新进程资源与日志末尾。
+    /// 刷新进程资源、日志末尾与崩溃记录。
     pub fn refresh_diag(&mut self, cx: &mut Context<Self>) {
+        let demo = self.demo;
         let ops = &mut self.forms_mut().ops;
         ops.procs = loom_config::diag::process_stats();
         ops.log = loom_config::diag::tail(200);
+        ops.crashes = loom_diag::records::list(30);
+        if demo && ops.crashes.is_empty() {
+            ops.crashes = super::diag_demo::fake_records();
+        }
         cx.notify();
+    }
+
+    /// 诊断页打开期间每秒重绘一次(性能曲线实时走),每 10 秒在后台刷新进程与日志;离开页面自动停止。
+    pub fn start_diag_ticker(&mut self, cx: &mut Context<Self>) {
+        if self.forms().ops.diag_ticking {
+            return;
+        }
+        self.forms_mut().ops.diag_ticking = true;
+        cx.spawn(async move |this, cx| {
+            let mut n = 0u32;
+            loop {
+                cx.background_executor().timer(Duration::from_secs(1)).await;
+                n += 1;
+                let refresh = n % 10 == 0;
+                let data = if refresh {
+                    Some(cx.background_executor().spawn(async { (loom_config::diag::process_stats(), loom_config::diag::tail(200), loom_diag::records::list(30)) }).await)
+                } else {
+                    None
+                };
+                let alive = this
+                    .update(cx, |this, cx| {
+                        let open = this.page == crate::workbench::Page::Settings && this.settings_tab == super::SettingsTab::Diagnostics;
+                        let demo = this.demo;
+                        let ops = &mut this.forms_mut().ops;
+                        if !open {
+                            ops.diag_ticking = false;
+                            return false;
+                        }
+                        if let Some((procs, log, crashes)) = data {
+                            ops.procs = procs;
+                            ops.log = log;
+                            if !(demo && crashes.is_empty()) {
+                                ops.crashes = crashes;
+                            }
+                        }
+                        cx.notify();
+                        true
+                    })
+                    .unwrap_or(false);
+                if !alive {
+                    break;
+                }
+            }
+        })
+        .detach();
     }
 
     /// 导出诊断包到 `~/.loomcode/diagnostics/` 并在 Finder 中显示。不含任何密钥与环境变量值。
@@ -188,6 +243,9 @@ impl Workbench {
             )),
             ("模型映射", mapping),
             ("进程", procs),
+            ("性能", perf_report()),
+            ("崩溃与卡顿记录", crash_report(&loom_diag::records::list(10))),
+            ("最近的操作(面包屑)", loom_diag::crumbs::recent(100).join("\n")),
         ];
         match loom_config::diag::export_bundle(&self.settings_path.with_file_name("diagnostics"), &sections) {
             Ok(path) => {
@@ -198,6 +256,35 @@ impl Workbench {
         }
         cx.notify();
     }
+}
+
+/// 诊断包里的性能段:当前读数、构建耗时分位数、实体计数、最近一次卡顿、近 60 秒的内存与 CPU 曲线。
+fn perf_report() -> String {
+    use loom_diag::{frames, hang, monitor, stats};
+    let f = frames::summary();
+    let mut out = format!(
+        "内存 {} MB;界面构建耗时(最近 {} 次)p50 {:.1} ms / p95 {:.1} ms / 最大 {:.1} ms\n",
+        stats::rss_mb(), f.count, f.p50_us as f64 / 1000., f.p95_us as f64 / 1000., f.max_us as f64 / 1000.
+    );
+    out.push_str(&format!("实体计数:{}\n", stats::gauges().iter().map(|(k, v)| format!("{k}={v}")).collect::<Vec<_>>().join(" ")));
+    match hang::last_stall() {
+        Some((ms, at)) => out.push_str(&format!("最近一次卡顿:{ms} ms(Unix 时间 {at})\n")),
+        None => out.push_str("最近一次卡顿:无\n"),
+    }
+    let s = monitor::samples();
+    out.push_str("近 60 秒(Unix 秒 内存MB CPU%):\n");
+    for x in s.iter().rev().take(60).rev() {
+        out.push_str(&format!("{} {} {:.0}\n", x.t, x.rss_mb, x.cpu));
+    }
+    out
+}
+
+/// 诊断包里的崩溃段:每条一块,含类别、时间、摘要与详情(家目录由导出函数统一脱敏)。
+fn crash_report(records: &[loom_diag::CrashRecord]) -> String {
+    if records.is_empty() {
+        return "没有记录".into();
+    }
+    records.iter().map(|r| format!("[{}] {} pid={} v{} {} 已运行 {} 秒\n{}\n{}\n", r.kind_label(), r.time, r.pid, r.version, r.mode, r.uptime_s, r.summary, r.detail)).collect::<Vec<_>>().join("\n-----\n")
 }
 
 #[cfg(test)]

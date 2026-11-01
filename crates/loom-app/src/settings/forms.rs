@@ -63,6 +63,14 @@ pub struct OpsUi {
     /// (pid, 内存 MB, CPU %, 命令)
     pub procs: Vec<(u32, f64, f64, String)>,
     pub log: Vec<String>,
+    /// 日志显示过滤:0 全部 / 1 警告及以上 / 2 仅错误
+    pub log_filter: u8,
+    /// 崩溃与卡顿记录(新在前)
+    pub crashes: Vec<loom_diag::CrashRecord>,
+    /// 展开详情的记录下标
+    pub crash_open: Option<usize>,
+    /// 诊断页的 1 秒刷新循环是否在跑
+    pub diag_ticking: bool,
     /// 项目信任:(名称, 路径, 是否已信任)
     pub trust: Vec<(String, String, bool)>,
 }

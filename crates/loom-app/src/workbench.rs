@@ -334,6 +334,12 @@ impl Workbench {
             Ok("one-dark") => theme::ThemeKind::OneDark,
             _ => theme::ThemeKind::from(wb.settings.theme),
         };
+        // 日志级别:环境变量 LOOM_LOG 优先,否则用设置里保存的
+        if std::env::var_os("LOOM_LOG").is_none() {
+            if let Some(l) = loom_diag::Level::parse(&wb.settings.log_level) {
+                loom_diag::set_level(l);
+            }
+        }
         cx.set_global(theme::Accent(wb.settings.accent.as_deref().and_then(theme::parse_hex)));
         theme::apply(kind, Some(window), cx);
         crate::app_icon::set_tray_visible(wb.settings.tray_icon);
@@ -763,7 +769,14 @@ impl Workbench {
         let (old_theme, old_accent, old_expand) = (self.settings.theme, self.settings.accent.clone(), self.settings.expand_thinking);
         let old_density = self.settings.appearance.tool_density;
         let old_layout = (self.settings.appearance.chat_width, self.settings.appearance.timeline_font_pct, self.settings.appearance.scrollbar);
+        let old_log = self.settings.log_level.clone();
         f(&mut self.settings);
+        if self.settings.log_level != old_log {
+            if let Some(l) = loom_diag::Level::parse(&self.settings.log_level) {
+                loom_diag::set_level(l);
+                loom_diag::info!("日志级别改为 {}", l.key());
+            }
+        }
         if let Err(e) = self.settings.save(&self.settings_path) {
             loom_diag::error!("保存设置失败:{e}");
         }
