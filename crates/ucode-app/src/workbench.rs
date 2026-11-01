@@ -1057,6 +1057,10 @@ pub fn chat_panel_with_footer(parts: Option<(Entity<SessionModel>, Entity<Compos
                     .size_full()
                     .jump_button(true)
                     .with_row_style(StyleRefinement::default().pb(px(0.)))
+                    // 底部留出呼吸空间,最后一行不贴着输入框
+                    .with_list_style(StyleRefinement::default().pb(px(20.)))
+                    .with_bottom_fade(t.background)
+                    .with_jump_button_style(StyleRefinement::default().shadow_md())
                     .with_jump_button_label("跳到最新"),
             ),
         )

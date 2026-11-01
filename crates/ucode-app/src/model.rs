@@ -79,13 +79,15 @@ impl SessionModel {
             }
             dirty_rows.sort_unstable();
             dirty_rows.dedup();
+            let dirty_last = new_count > 0 && dirty_rows.last() == Some(&(new_count - 1));
             for row in dirty_rows {
                 if row < old.min(new_count) {
                     s.remeasure_items(row..row + 1, cx);
                 }
             }
             // 流式输出时最后一行也需要重新测量
-            if new_count > 0 && new_count <= old {
+            // (已在脏行里的不重复测量,避免同一帧重复失效造成跳动)
+            if new_count > 0 && new_count <= old && !dirty_last {
                 s.remeasure_items(new_count - 1..new_count, cx);
             }
         });
