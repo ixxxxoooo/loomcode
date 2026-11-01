@@ -11,6 +11,7 @@ use gpui_kit::assets::IconName;
 use gpui_kit::component::Disableable as _;
 use gpui_kit::component::button::{Button, ButtonVariants};
 use gpui_kit::component::input::Input;
+use gpui_kit::component::menu::{DropdownMenu as _, PopupMenu, PopupMenuItem};
 use gpui_kit::component::{ActiveTheme, Sizable, h_flex, v_flex};
 use gpui_kit::prelude::FluentBuilder as _;
 use gpui_kit::*;
@@ -78,22 +79,32 @@ pub fn render(wb: &Workbench, cx: &mut Context<Workbench>) -> AnyElement {
         .children(error_banner(wb, cx))
         .children(super::confirm::confirm_banner(wb, cx))
         .child(group("服务商", rows![
-            block_row("已添加", "", h_flex().w_full().flex_wrap().gap_1().children(list.into_iter().map(|(id, name, has_key)| {
+            block_row("已添加", "", h_flex().w_full().flex_wrap().gap_1().items_center().children(list.into_iter().map(|(id, name, has_key)| {
                 let on = selected.as_deref() == Some(id.as_str());
                 Button::new(SharedString::from(format!("prov-{id}"))).small().when(on, |b| b.primary()).when(!on, |b| b.outline())
                     .label(if has_key { name } else { format!("{name} · 缺密钥") })
                     .on_click(cx.listener(move |this, _, window, cx| this.select_provider(&id, window, cx)))
-            })), cx),
-            block_row("添加", "预设里的模型名会随服务商更新,以「获取模型列表」为准", h_flex().w_full().flex_wrap().gap_1()
-                .children(PRESETS.iter().enumerate().map(|(i, (name, ..))| {
-                    Button::new(SharedString::from(format!("preset-{i}"))).xsmall().ghost().icon(IconName::Plus).label(name.to_string())
-                        .on_click(cx.listener(move |this, _, window, cx| this.add_provider(Some(i), window, cx)))
-                }))
-                .child(Button::new("preset-custom").xsmall().ghost().icon(IconName::Plus).label("自定义")
-                    .on_click(cx.listener(|this, _, window, cx| this.add_provider(None, window, cx)))), cx),
+            }))
+            .child(Button::new("prov-add").small().ghost().icon(IconName::Plus).label("添加").dropdown_menu(add_menu(cx.entity().downgrade()))), cx),
         ], cx))
         .children(detail(wb, cx))
         .children(super::mapping_page::sections(wb, cx))
         .child(note("配置存 ~/.loomcode/providers.json,API Key 单独存 provider-keys.json(权限 0600),只在启动 claude 时以环境变量注入,不改动 ~/.claude;对之后新建或重新连接的会话生效", cx))
         .into_any_element()
+}
+
+/// 「添加」下拉菜单:各预设与自定义服务商。
+fn add_menu(wb: WeakEntity<Workbench>) -> impl Fn(PopupMenu, &mut Window, &mut Context<PopupMenu>) -> PopupMenu + 'static {
+    move |mut menu, _, _| {
+        for (i, (name, ..)) in PRESETS.iter().enumerate() {
+            let w = wb.clone();
+            menu = menu.item(PopupMenuItem::new(name.to_string()).on_click(move |_, window, cx| {
+                let _ = w.update(cx, |this, cx| this.add_provider(Some(i), window, cx));
+            }));
+        }
+        let w = wb.clone();
+        menu.separator().item(PopupMenuItem::new("自定义").icon(IconName::Plus).on_click(move |_, window, cx| {
+            let _ = w.update(cx, |this, cx| this.add_provider(None, window, cx));
+        }))
+    }
 }
