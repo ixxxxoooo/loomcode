@@ -65,6 +65,6 @@ pub fn render_plan(plan: &PlanApproval, cx: &App) -> AnyElement {
             .child(div().text_size(px(13.)).font_weight(FontWeight::MEDIUM).child("计划"))
             .child(div().flex_1())
             .child(pill(text, fg, t.muted)))
-        .child(TextView::markdown(SharedString::from(format!("plan-{}", plan.id)), plan.markdown.clone()).selectable(true))
+        .child(crate::code_actions::with_copy(TextView::markdown(SharedString::from(format!("plan-{}", plan.id)), plan.markdown.clone()).selectable(true)))
         .into_any_element()
 }
