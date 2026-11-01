@@ -16,6 +16,7 @@ pub mod image_cache;
 pub mod lazy;
 pub mod liveness;
 pub mod options;
+pub mod session_index;
 pub mod usage;
 pub mod protocol;
 pub mod rewrite;

@@ -44,60 +44,24 @@ pub fn encode_project_dir(cwd: &str) -> String {
     cwd.chars().map(|c| if c.is_ascii_alphanumeric() { c } else { '-' }).collect()
 }
 
-fn jsonl_files(dir: &Path) -> Vec<(PathBuf, SystemTime)> {
+fn jsonl_files(dir: &Path) -> Vec<(PathBuf, u64, SystemTime)> {
     let Ok(rd) = std::fs::read_dir(dir) else { return Vec::new() };
     rd.filter_map(Result::ok)
         .filter(|e| e.path().extension().is_some_and(|x| x == "jsonl"))
-        .filter_map(|e| Some((e.path(), e.metadata().ok()?.modified().ok()?)))
+        .filter_map(|e| {
+            let m = e.metadata().ok()?;
+            Some((e.path(), m.len(), m.modified().ok()?))
+        })
         .collect()
 }
 
-/// 从会话文件里提取概要:标题优先用 `ai-title`,其次最后一条提示,再次第一条用户输入。
-fn read_meta(path: &Path, modified: SystemTime) -> Option<SessionMeta> {
-    let text = std::fs::read_to_string(path).ok()?;
+/// 从会话文件里提取概要(走 `session_index` 的流式读取与增量缓存)。
+/// 标题优先用 `ai-title`,其次第一条用户输入,再次最后一条提示;没有任何用户输入的会话不展示。
+fn read_meta(path: &Path, size: u64, modified: SystemTime) -> Option<SessionMeta> {
+    let scan = crate::session_index::scan(path, size, modified)?;
+    let title = scan.title()?;
     let id = path.file_stem()?.to_string_lossy().into_owned();
-    let (mut cwd, mut ai_title, mut last_prompt, mut first_user) = (String::new(), None, None, None);
-    for line in text.lines() {
-        // 只解析可能有用的行,避免对巨大的会话文件做全量 JSON 解析
-        let interesting = line.starts_with(r#"{"type":"ai-title""#)
-            || line.starts_with(r#"{"type":"last-prompt""#)
-            || (cwd.is_empty() && line.contains(r#""cwd":""#))
-            || (first_user.is_none() && line.starts_with(r#"{"type":"user""#));
-        if !interesting {
-            continue;
-        }
-        let Ok(v) = serde_json::from_str::<Value>(line) else { continue };
-        if cwd.is_empty()
-            && let Some(c) = v.get("cwd").and_then(Value::as_str)
-        {
-            cwd = c.into();
-        }
-        match v.get("type").and_then(Value::as_str) {
-            Some("ai-title") => ai_title = v.get("aiTitle").and_then(Value::as_str).map(String::from),
-            Some("last-prompt") => last_prompt = v.get("lastPrompt").and_then(Value::as_str).map(String::from),
-            Some("user") if first_user.is_none() => {
-                first_user = user_text(&v).filter(|t| !t.starts_with('<') && !t.starts_with("Caveat:"));
-            }
-            _ => {}
-        }
-    }
-    // 没有任何用户输入的会话(只有元数据)不展示
-    let title = ai_title.or(first_user).or(last_prompt)?;
-    let title: String = title.lines().next().unwrap_or_default().chars().take(60).collect();
-    Some(SessionMeta { id, path: path.into(), cwd, title, modified })
-}
-
-fn user_text(v: &Value) -> Option<String> {
-    let content = &v["message"]["content"];
-    match content {
-        Value::String(s) => Some(s.clone()),
-        Value::Array(a) => a
-            .iter()
-            .find(|b| b.get("type").and_then(Value::as_str) == Some("text"))
-            .and_then(|b| b.get("text").and_then(Value::as_str))
-            .map(String::from),
-        _ => None,
-    }
+    Some(SessionMeta { id, path: path.into(), cwd: scan.cwd, title, modified })
 }
 
 /// 列出某个工作目录下的历史会话,最近修改的在前。
@@ -107,7 +71,14 @@ pub fn list_sessions(projects: &Path, cwd: &str) -> Vec<SessionMeta> {
 
 /// 列出某个 projects 子目录里的会话。
 pub fn list_sessions_in(dir: &Path) -> Vec<SessionMeta> {
-    let mut metas: Vec<SessionMeta> = jsonl_files(dir).into_iter().filter_map(|(p, m)| read_meta(&p, m)).collect();
+    let metas = sessions_in(dir);
+    crate::session_index::flush();
+    metas
+}
+
+/// 扫描一个目录里的会话(不写盘,由对外入口统一 `flush`)。
+fn sessions_in(dir: &Path) -> Vec<SessionMeta> {
+    let mut metas: Vec<SessionMeta> = jsonl_files(dir).into_iter().filter_map(|(p, n, m)| read_meta(&p, n, m)).collect();
     metas.sort_by(|a, b| b.modified.cmp(&a.modified));
     metas
 }
@@ -145,7 +116,7 @@ pub fn list_projects_with_sessions(projects: &Path) -> Vec<(ProjectMeta, Vec<Ses
         .filter_map(Result::ok)
         .filter(|e| e.path().is_dir())
         .filter_map(|e| {
-            let sessions = list_sessions_in(&e.path());
+            let sessions = sessions_in(&e.path());
             let newest = sessions.first()?;
             let cwd = sessions.iter().map(|s| s.cwd.clone()).find(|c| !c.is_empty())?;
             let meta = ProjectMeta { dir: e.path(), cwd, session_count: sessions.len(), modified: newest.modified };
@@ -153,6 +124,7 @@ pub fn list_projects_with_sessions(projects: &Path) -> Vec<(ProjectMeta, Vec<Ses
         })
         .collect();
     out.sort_by(|a, b| b.0.modified.cmp(&a.0.modified));
+    crate::session_index::flush();
     out
 }
 
