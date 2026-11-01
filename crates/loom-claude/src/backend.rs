@@ -177,7 +177,10 @@ struct Actor {
 
 impl Actor {
     fn new(child: Child, stdin: ChildStdin, opts: ClaudeOptions, ev_tx: async_channel::Sender<AgentEvent>) -> Self {
+        // 每个进程一个代号:惰性后端重启进程后,新条目 id 不会与时间线里旧进程的条目撞车
+        static ID_GEN: std::sync::atomic::AtomicU64 = std::sync::atomic::AtomicU64::new(0);
         let mut translator = Translator::new(&opts.cwd);
+        translator.id_gen = ID_GEN.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
         translator.session_id = opts.effective_session_id();
         let pid = child.id();
         Self {

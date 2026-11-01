@@ -72,3 +72,26 @@ fn 保存读回且密钥文件为_0600() {
     assert!(!std::fs::read_to_string(&cfg).unwrap().contains("sk-secret"));
     let _ = std::fs::remove_dir_all(dir);
 }
+
+#[test]
+fn 映射生效时关闭工具搜索() {
+    let env = store().mapping_env(&HashMap::from([("ds".to_string(), "k".to_string())]));
+    assert!(env.contains(&("ENABLE_TOOL_SEARCH".to_string(), "false".to_string())));
+}
+
+#[test]
+fn 模型选择器按映射去重并解析别名() {
+    let mut s = store();
+    s.mapping.enabled = true;
+    s.mapping.opus = "deepseek-reasoner".into();
+    s.mapping.sonnet = "deepseek-chat".into();
+    s.mapping.haiku = "deepseek-chat".into();
+    let names: Vec<String> = s.mapped_models().unwrap().into_iter().map(|(n, _)| n).collect();
+    assert_eq!(names.iter().filter(|n| *n == "deepseek-chat").count(), 1);
+    assert!(names.contains(&"deepseek-reasoner".to_string()));
+    assert_eq!(s.resolve_model("opus"), "deepseek-reasoner");
+    assert_eq!(s.resolve_model("sonnet[1m]"), "deepseek-chat");
+    assert_eq!(s.resolve_model("custom-x"), "custom-x");
+    s.mapping.enabled = false;
+    assert!(s.mapped_models().is_none());
+}

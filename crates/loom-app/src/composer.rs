@@ -381,7 +381,11 @@ impl Render for Composer {
         let t = cx.theme().clone();
         let (phase, mode, model_id, model_name, effort, queued, usage) = {
             let m = self.session.read(cx);
-            let name = m.state.models.iter().find(|x| x.id == m.state.model).map(|x| x.name.clone()).unwrap_or_else(|| m.state.model.clone());
+            // 启用了模型映射:显示映射后的真实模型名(而不是 claude 报的别名 / 自定义说明)
+            let name = match crate::composer_models::mapped(cx) {
+                Some(map) => map.resolve_model(&m.state.model),
+                None => m.state.models.iter().find(|x| x.id == m.state.model).map(|x| x.name.clone()).unwrap_or_else(|| m.state.model.clone()),
+            };
             (m.state.phase, m.state.mode, m.state.model.clone(), name, m.state.effort, m.queued.len(), m.state.usage.clone())
         };
         let running = phase == Phase::Running;
@@ -399,7 +403,12 @@ impl Render for Composer {
 
         let popup = self.open.map(|kind| match kind {
             Pick::Model => {
-                let (models, current) = { let st = &self.session.read(cx).state; (st.models.clone(), st.model.clone()) };
+                let (mut models, mut current) = { let st = &self.session.read(cx).state; (st.models.clone(), st.model.clone()) };
+                // 启用了模型映射:选择器只列映射到的模型(去重),不再列 claude 报的别名与「Custom Opus model」之类的说明
+                if let Some(map) = crate::composer_models::mapped(cx) {
+                    models = map.mapped_models().unwrap_or_default().into_iter().map(|(n, d)| loom_core::ModelInfo::new(&n, &n, &d)).collect();
+                    current = map.resolve_model(&current);
+                }
                 crate::composer_pop::model_popup(&models, &current, effort, this.clone(), cx)
             }
             Pick::Context => crate::context_panel::context_popup(&usage, this.clone(), cx),

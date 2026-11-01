@@ -88,6 +88,8 @@ pub struct Translator {
     /// 用户是否请求过中断(用于把回合结束原因标成「已取消」)
     pub interrupted: bool,
     seq: u64,
+    /// 实时条目 id 的代号:同一会话的进程重启后序号从头开始,靠它区分,避免与旧进程的条目撞 id
+    pub id_gen: u64,
 }
 
 impl Translator {
@@ -105,6 +107,7 @@ impl Translator {
             usage: Usage::default(),
             interrupted: false,
             seq: 0,
+            id_gen: 0,
         }
     }
 
@@ -118,8 +121,14 @@ impl Translator {
     fn next_id(&mut self, prefix: &str) -> String {
         self.seq += 1;
         // 实时翻译加前缀 `l`,避免与先回放进时间线的历史条目 id(`u3`、`a5`…)撞车
-        let live = if self.replay { "" } else { "l" };
-        format!("{live}{prefix}{}", self.seq)
+        // 代号 > 0 时写成 `l3u1`:`l` 后紧跟数字,与代号 0 的 `lu1` 不会混淆
+        if self.replay {
+            format!("{prefix}{}", self.seq)
+        } else if self.id_gen == 0 {
+            format!("l{prefix}{}", self.seq)
+        } else {
+            format!("l{}{prefix}{}", self.id_gen, self.seq)
+        }
     }
 
     /// 用户发出的提示:claude 不会回显,由界面侧自己追加到时间线。

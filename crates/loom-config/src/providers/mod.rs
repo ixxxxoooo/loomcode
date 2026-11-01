@@ -157,7 +157,41 @@ impl ProviderStore {
                 env.push((var.to_string(), v.to_string()));
             }
         }
+        // 兼容服务大多不认 Claude Code 的「工具搜索」产生的 `tool_reference` / `tool_definition` 内容块,
+        // 会回 422(`unknown variant tool_definition`),所以映射到第三方服务时强制关掉工具搜索
+        env.push(("ENABLE_TOOL_SEARCH".to_string(), "false".to_string()));
         env
+    }
+
+    /// 映射生效(已启用且配置完整)时,模型选择器该显示的模型:各槽位用到的模型去重(默认 → Opus → Sonnet → Haiku → 子 Agent),
+    /// 再接服务商模型清单里其余的;说明栏写服务商名。未启用返回 `None`。
+    ///
+    /// 返回:(模型名, 说明) 列表。
+    pub fn mapped_models(&self) -> Option<Vec<(String, String)>> {
+        let m = &self.mapping;
+        if !m.enabled {
+            return None;
+        }
+        let p = self.get(&m.provider)?;
+        let mut out: Vec<(String, String)> = Vec::new();
+        for name in SLOTS.iter().map(|(s, _, _)| m.slot(s).trim().to_string()).chain(p.models.iter().cloned()) {
+            if !name.is_empty() && !out.iter().any(|(n, _)| *n == name) {
+                out.push((name, p.name.clone()));
+            }
+        }
+        Some(out)
+    }
+
+    /// 把 claude 里的模型别名(`default` / `opus` / `sonnet` / `haiku`)按映射换成真实模型名;不是别名原样返回。
+    pub fn resolve_model(&self, id: &str) -> String {
+        let m = &self.mapping;
+        let key = id.split('[').next().unwrap_or(id);
+        let v = match key {
+            "opus" | "sonnet" | "haiku" => m.slot(key).trim(),
+            "default" => m.default.trim(),
+            _ => "",
+        };
+        if v.is_empty() { id.to_string() } else { v.to_string() }
     }
 
     /// 新建服务商 id:名称的 ASCII 部分 + 序号,保证不重复。

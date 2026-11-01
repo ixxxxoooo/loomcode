@@ -33,6 +33,7 @@ mod code_hl;
 mod composer;
 mod composer_pop;
 mod context_panel;
+mod composer_models;
 mod composer_refs;
 mod composer_send;
 mod diff;

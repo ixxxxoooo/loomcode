@@ -127,23 +127,23 @@ fn 真实_claude_被杀后重启接续上下文() {
         }
         panic!("超时:{out:?}");
     };
+    // 两轮都归约进同一份状态,和界面的时间线一致
+    let mut s = SessionState::default();
     h.send(prompt("记住暗号 7341。只回复 ok"));
-    let evs = wait_end(&h);
-    let sid = evs.iter().find_map(|e| if let AgentEvent::Ready { session_id, .. } = e { Some(session_id.clone()) } else { None }).expect("有 Ready");
+    let first = wait_end(&h);
+    let sid = first.iter().find_map(|e| if let AgentEvent::Ready { session_id, .. } = e { Some(session_id.clone()) } else { None }).expect("有 Ready");
+    first.into_iter().for_each(|e| s.apply(e));
     let _ = std::process::Command::new("pkill").args(["-f", &sid]).status();
     std::thread::sleep(Duration::from_secs(1));
     h.send(prompt("刚才的暗号是多少?只回复数字"));
-    let mut evs = wait_end(&h);
-    // 被杀那次的退出提示可能先到,跳过它等真正的回合结束
-    if !evs.iter().any(|e| matches!(e, AgentEvent::Append { item: TimelineItem::Assistant { .. }, .. })) {
-        evs.extend(wait_end(&h));
-    }
-    let mut s = SessionState::default();
-    for e in evs.iter().cloned() {
-        s.apply(e);
-    }
+    let evs = wait_end(&h);
+    evs.iter().cloned().for_each(|e| s.apply(e));
     println!("{:#?}", s.items);
     assert!(has_notice(&evs, NoticeLevel::Info, "重新启动"), "{evs:?}");
-    assert!(s.items.iter().any(|i| matches!(i, TimelineItem::Assistant { text, .. } if text.contains("7341"))), "重启后应记得上下文");
+    let users: Vec<&str> = s.items.iter().filter_map(|i| if let TimelineItem::User { id, .. } = i { Some(id.as_str()) } else { None }).collect();
+    assert_eq!(users.len(), 2, "两条用户消息各占一行,id 不能撞车:{users:?}");
+    assert_ne!(users[0], users[1]);
+    let last = s.items.iter().rev().find_map(|i| if let TimelineItem::Assistant { text, .. } = i { Some(text.clone()) } else { None }).unwrap_or_default();
+    assert!(last.contains("7341"), "重启后应记得上下文,最后回复:{last}");
     h.send(AgentCommand::Shutdown);
 }
