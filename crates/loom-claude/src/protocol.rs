@@ -5,7 +5,10 @@ use base64::Engine;
 use serde_json::{Value, json};
 use loom_core::{Effort, PermissionMode};
 
-/// 用户消息。`steer` 为真时带 `priority: now`,让 claude 在当前回合中途就地吸收。
+/// 用户消息。`steer` 为真时带 `priority: next`,让 claude 在当前回合的两次工具调用之间就地吸收。
+///
+/// 已对真实 claude 实测:`now` 会提前收尾当前回合(先发一个空的 `result success`,再另开回合),
+/// 不是引导;`next`(也是不写时的默认值)才并入当前回合,只产生一个 `result`。
 pub fn user_message(text: &str, images: &[String], steer: bool) -> Value {
     let mut content: Vec<Value> = Vec::new();
     for path in images {
@@ -31,7 +34,7 @@ pub fn user_message(text: &str, images: &[String], steer: bool) -> Value {
         "uuid": uuid::Uuid::new_v4().to_string(),
     });
     if steer {
-        msg["priority"] = json!("now");
+        msg["priority"] = json!("next");
     }
     msg
 }
@@ -224,7 +227,7 @@ mod tests {
     #[test]
     fn 用户消息含图片与引导优先级() {
         let m = user_message("你好", &[], true);
-        assert_eq!(m["priority"], "now");
+        assert_eq!(m["priority"], "next", "引导不能用 now,now 会提前结束当前回合");
         assert_eq!(m["message"]["content"][0]["text"], "你好");
         let m = user_message("x", &["/不存在.png".into()], false);
         assert!(m.get("priority").is_none());

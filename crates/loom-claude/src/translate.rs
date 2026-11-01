@@ -491,6 +491,8 @@ impl Translator {
             || text.starts_with("<local-command")
             || text.starts_with("Caveat:")
             || text.starts_with("<system-reminder>")
+            // 中断时 claude 写入的标记(不带 isMeta),不是用户输入
+            || text.starts_with("[Request interrupted by user")
             || (text.trim().is_empty() && images.is_empty());
         if internal {
             return Vec::new();
@@ -1435,6 +1437,17 @@ mod tests {
         };
         assert_eq!(status("fg"), SubagentStatus::Stopped);
         assert_eq!(status("bg"), SubagentStatus::Background);
+    }
+
+    #[test]
+    fn 回放跳过中断标记但保留真实输入() {
+        let mut t = Translator::replaying("/w");
+        for marker in ["[Request interrupted by user]", "[Request interrupted by user for tool use]"] {
+            let ev = t.handle(&json!({"type":"user","isSidechain":false,"message":{"role":"user","content":[{"type":"text","text":marker}]}}));
+            assert!(ev.is_empty(), "{marker} 不应变成用户气泡");
+        }
+        let ev = t.handle(&json!({"type":"user","message":{"role":"user","content":[{"type":"text","text":"继续"}]}}));
+        assert!(matches!(&ev[0], AgentEvent::Append { item: TimelineItem::User { text, .. }, .. } if text == "继续"));
     }
 
     #[test]

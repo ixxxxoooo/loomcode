@@ -68,6 +68,9 @@ impl ClaudeOptions {
             "stream-json",
             "--include-partial-messages",
             "--permission-prompt-tool=stdio",
+            // 新模型默认不回传思考内容(thinking_delta 为空),要显式要求返回摘要版
+            "--thinking-display",
+            "summarized",
         ]
         .into_iter()
         .map(String::from)
@@ -120,6 +123,8 @@ impl ClaudeOptions {
             ("CLAUDE_AGENT_SDK_VERSION".into(), "0.2.0".into()),
             ("CLAUDE_CODE_EMIT_SESSION_STATE_EVENTS".into(), "1".into()),
             ("CLAUDE_CODE_SDK_READS_SESSION_STATE".into(), "1".into()),
+            // 用户 shell 里的强度变量会压过 --effort 与运行中切换,这里置空;extra_env 显式设置的仍然生效
+            ("CLAUDE_CODE_EFFORT_LEVEL".into(), String::new()),
         ];
         env.extend(self.extra_env.iter().cloned());
         env
@@ -236,6 +241,12 @@ mod tests {
         assert!(a.windows(2).any(|w| w == ["--permission-mode", "plan"]));
         assert!(a.windows(2).any(|w| w == ["--effort", "high"]));
         assert!(a.windows(2).any(|w| w == ["--allowedTools", "Read,Bash(ls:*)"]));
+        // 思考内容必须显式要求回传,否则新模型的思考块是空的
+        assert!(a.windows(2).any(|w| w == ["--thinking-display", "summarized"]));
+        // 用户环境里的强度变量被置空,extra_env 可覆盖
+        assert!(o.env().contains(&("CLAUDE_CODE_EFFORT_LEVEL".into(), String::new())));
+        let custom = ClaudeOptions { extra_env: vec![("CLAUDE_CODE_EFFORT_LEVEL".into(), "low".into())], ..Default::default() };
+        assert_eq!(custom.env().iter().rev().find(|(k, _)| k == "CLAUDE_CODE_EFFORT_LEVEL").map(|(_, v)| v.as_str()), Some("low"));
         // default 别名不传 --model
         let d = ClaudeOptions { model: Some("default".into()), ..Default::default() };
         assert!(!d.args().contains(&"--model".to_string()));
