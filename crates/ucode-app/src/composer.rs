@@ -427,7 +427,7 @@ impl Render for Composer {
                         .child(
                             h_flex().h(px(36.)).px_2().gap_1().items_center()
                                 .child(chip("chip-mode", mode.label().to_string(), mode_color, Pick::Mode, this.clone()))
-                                .child(chip("chip-model", format!("{model_name} · {}", effort.cli_value()), t.foreground, Pick::Model, this.clone()))
+                                .child(chip("chip-model", format!("{model_name} · {}", effort.label()), t.foreground, Pick::Model, this.clone()))
                                 .when(queued > 0, |d| d.child(pill(format!("排队 {queued}"), t.warning, t.muted)))
                                 .child(div().flex_1())
                                 .when(usage.context_size > 0, |d| {

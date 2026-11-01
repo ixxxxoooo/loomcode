@@ -66,7 +66,7 @@ pub fn model_popup(models: &[ModelInfo], current: &str, effort: Effort, this: En
             .when(on, |d| d.bg(t.background).text_color(t.foreground).shadow_sm())
             .when(!on, |d| d.text_color(t.muted_foreground).hover(|d| d.bg(t.list_hover)))
             .on_click(move |_, _, cx| { this.update(cx, |c, cx| c.choose_effort(e, cx)); })
-            .child(e.cli_value())
+            .child(e.label())
     }));
     v_flex().absolute().bottom(px(44.)).left(px(8.)).w(px(300.)).p_1().rounded(px(10.)).border_1().border_color(t.border).bg(t.popover).shadow_lg()
         .children(list)
