@@ -1111,7 +1111,8 @@ impl Workbench {
                 let wb = cx.entity();
                 let root = self.active_project_path().unwrap_or_default();
                 let demo = self.demo;
-                self.ide_shell = Some(cx.new(|cx| IdeWindow::new(wb, demo, root, window, cx)));
+                let tabs = self.ui_state.last.chat_tabs.clone();
+                self.ide_shell = Some(cx.new(|cx| IdeWindow::new(wb, demo, root, tabs, window, cx)));
             }
         } else {
             window.focus(&self.focus, cx);
@@ -1130,6 +1131,7 @@ impl Workbench {
         let wb = cx.entity();
         let demo = self.demo;
         let root = self.active_project_path().unwrap_or_default();
+        let tabs = self.ui_state.last.chat_tabs.clone();
         // 新窗口首帧会回读本工作台,必须等当前更新结束后再创建
         cx.defer(move |cx| {
             let mut options = TitleBar::window_options();
@@ -1140,7 +1142,7 @@ impl Workbench {
             let owner = wb.clone();
             match open_window(options, cx, move |window, cx| {
                 let base = root.clone();
-                let ide = cx.new(|cx| IdeWindow::new(wb, demo, root, window, cx));
+                let ide = cx.new(|cx| IdeWindow::new(wb, demo, root, tabs, window, cx));
                 // 调试用:LOOM_FILE 在独立 IDE 窗口里直接打开该文件(相对路径按项目根补全)
                 if let Ok(f) = std::env::var("LOOM_FILE") {
                     let p = PathBuf::from(&f);

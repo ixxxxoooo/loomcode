@@ -63,11 +63,11 @@ pub struct IdeWindow {
 }
 
 impl IdeWindow {
-    /// 创建窗口视图。`demo`、`root` 由调用方传入,避免在工作台更新期间回读它。
-    pub fn new(wb: Entity<Workbench>, demo: bool, root: String, window: &mut Window, cx: &mut Context<Self>) -> Self {
+    /// 创建窗口视图。`demo`、`root`、`wb_tabs` 由调用方传入:创建发生在工作台的更新期间,这里不能再回读它(会重复借用而崩溃)。
+    ///
+    /// 参数:`wb_tabs` 上次关闭时对话栏的会话标签。
+    pub fn new(wb: Entity<Workbench>, demo: bool, root: String, wb_tabs: Vec<String>, window: &mut Window, cx: &mut Context<Self>) -> Self {
         bind_ide_keys(cx);
-        // 恢复上次关闭时对话栏的会话标签
-        let wb_tabs = wb.read(cx).ui_state.last.chat_tabs.clone();
         crate::window_memory::track("ide", window, cx);
         let panel = cx.new(|cx| RightPanel::new(root.clone(), demo, window, cx));
         panel.update(cx, |p, cx| {
