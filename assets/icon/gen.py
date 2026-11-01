@@ -74,12 +74,12 @@ def app_icon(dark):
 def tray_icon():
     """托盘图标源图(36×36,即 18pt@2x):白底黑线,`render.py --template` 转成黑色 + 透明的模板图。
 
-    单色下经纬同色,靠切口区分上下:上层格两侧(沿下层带子方向)各切开 CUT 像素。返回值:SVG。
+    单色下经纬同色,靠切口区分上下:上层格两侧(沿下层带子方向)各切开 cut 像素。返回值:SVG。
     """
-    b, g, cut, tail = 6.5, 4, 1.8, 4.25
-    org = tail
-    pos = [org + i * (b + g) for i in range(N)]
-    lo, hi = 0.5, 35.5
+    # 图形占 30px(15pt),四周各留 3px,与系统菜单栏图标的视觉大小一致;带子落在整像素上避免发虚
+    b, g, cut, tail, pad = 6, 3, 1, 3, 3
+    pos = [pad + tail + i * (b + g) for i in range(N)]
+    lo, hi = pad, 36 - pad
     out = [f'<rect x="{lo}" y="{y}" width="{hi - lo}" height="{b}" rx="{b / 2}" fill="#000"/>' for y in pos]
     out += [f'<rect x="{x}" y="{lo}" width="{b}" height="{hi - lo}" rx="{b / 2}" fill="#000"/>' for x in pos]
     for i, x in enumerate(pos):
