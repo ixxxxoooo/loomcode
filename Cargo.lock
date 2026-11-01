@@ -3657,6 +3657,7 @@ dependencies = [
  "loom-demo",
  "loom-diag",
  "loom-lsp",
+ "loom-sheet",
  "loom-term",
  "lsp-types",
  "objc2 0.6.5",

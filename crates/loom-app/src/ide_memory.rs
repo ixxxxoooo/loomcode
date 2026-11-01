@@ -49,7 +49,7 @@ impl IdeView {
                 continue;
             }
             self.nav_quiet = true;
-            let preview = !self.docs.contains_key(&path) && !self.images.contains(&path);
+            let preview = !self.docs.contains_key(&path) && !self.images.contains(&path) && !self.sheets.contains_key(&path);
             self.open_inner(path.clone(), preview, true, window, cx);
             self.goto(line, 1, window, cx);
             self.nav_quiet = false;
@@ -76,6 +76,8 @@ impl IdeView {
     pub fn clear(&mut self) {
         self.docs.clear();
         self.images.clear();
+        self.sheets.clear();
+        self.sheet_subs.clear();
         self.tabs = Default::default();
         self.note = None;
         self.nav = Default::default();

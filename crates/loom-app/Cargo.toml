@@ -19,6 +19,7 @@ loom-automation = { path = "../loom-automation" }
 loom-browser = { path = "../loom-browser" }
 loom-claude = { path = "../loom-claude" }
 loom-lsp = { path = "../loom-lsp" }
+loom-sheet = { path = "../loom-sheet" }
 lsp-types = "0.97"
 tree-sitter-swift = "0.7.4"
 anyhow = "1"

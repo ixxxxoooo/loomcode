@@ -71,6 +71,11 @@ pub struct IdeView {
     pub(crate) note: Option<String>,
     /// 以图片方式打开的标签(没有文本文档)
     pub(crate) images: std::collections::HashSet<PathBuf>,
+    /// 表格标签(csv / xlsx…)的视图
+    pub(crate) sheets: HashMap<PathBuf, Entity<crate::sheet_view::SheetView>>,
+    pub(crate) sheet_subs: HashMap<PathBuf, Subscription>,
+    /// 被选成「以文本打开」的分隔文本文件
+    pub(crate) as_text: std::collections::HashSet<PathBuf>,
     /// 迷你地图的界面状态(区域、悬停、拖动抓取点、编辑区宽度)
     pub(crate) minimap_ui: std::rc::Rc<crate::ide_minimap::MinimapUi>,
     /// 已套用到所有文档的编辑器偏好(与全局不同就重新套用)
@@ -102,7 +107,7 @@ pub struct IdeView {
 impl IdeView {
     /// 创建空的编辑器视图。
     pub fn new() -> Self {
-        Self { root: String::new(), docs: HashMap::new(), tabs: TabModel::default(), note: None, images: Default::default(), minimap_ui: Default::default(), applied: None, edit_gen: 0, nav: Default::default(), nav_quiet: false, fresh_open: false, recent: Vec::new(), pending_restore: None, md: HashMap::new(), blame_gutter: false, blame_ui: Default::default(), lsp_listening: false, hover_ui: Default::default() }
+        Self { root: String::new(), docs: HashMap::new(), tabs: TabModel::default(), note: None, images: Default::default(), sheets: HashMap::new(), sheet_subs: HashMap::new(), as_text: Default::default(), minimap_ui: Default::default(), applied: None, edit_gen: 0, nav: Default::default(), nav_quiet: false, fresh_open: false, recent: Vec::new(), pending_restore: None, md: HashMap::new(), blame_gutter: false, blame_ui: Default::default(), lsp_listening: false, hover_ui: Default::default() }
     }
 
     /// 设置项目根目录(会话切换时由宿主调用)。
@@ -128,6 +133,8 @@ impl IdeView {
         self.note = None;
         if is_image(&path) {
             self.images.insert(path.clone());
+        } else if self.wants_sheet(&path) {
+            self.open_sheet(&path, window, cx);
         } else if !self.docs.contains_key(&path) {
             match load(&path, window, cx) {
                 Ok(doc) => {
@@ -144,6 +151,7 @@ impl IdeView {
         if let Some(old) = out.replaced {
             self.docs.remove(&old);
             self.images.remove(&old);
+            self.drop_sheet(&old);
         }
         if focus {
             self.focus_active(window, cx);
@@ -196,6 +204,9 @@ impl IdeView {
     pub(crate) fn focus_active(&self, window: &mut Window, cx: &mut Context<Self>) {
         if let Some(doc) = self.tabs.active().and_then(|p| self.docs.get(p)) {
             doc.editor.update(cx, |e, cx| e.focus(window, cx));
+        } else if let Some(sv) = self.tabs.active().and_then(|p| self.sheets.get(p)) {
+            let focus = sv.read(cx).focus.clone();
+            focus.focus(window, cx);
         }
     }
 
@@ -361,7 +372,7 @@ pub fn is_image(path: &Path) -> bool {
 }
 
 /// 读取文本文件并建立编辑器;二进制或过大的文件返回说明。
-fn load(path: &Path, window: &mut Window, cx: &mut Context<IdeView>) -> Result<IdeDoc, String> {
+pub(crate) fn load(path: &Path, window: &mut Window, cx: &mut Context<IdeView>) -> Result<IdeDoc, String> {
     let meta = std::fs::metadata(path).map_err(|e| format!("无法读取 {}:{e}", path.display()))?;
     let prefs = crate::prefs(cx).editor;
     if meta.len() > u64::from(prefs.max_file_kb) * 1024 {
@@ -430,6 +441,10 @@ impl Render for IdeView {
             return root.child(tab_bar(self.tab_items(&img_path), cx)).child(breadcrumbs(&img_path, &self.root, true, None, None, cx)).child(
                 div().flex_1().min_h_0().flex().items_center().justify_center().p_4().child(img(img_path).max_w_full().max_h_full()),
             ).into_any_element();
+        }
+        if let Some(sheet_path) = active.clone().filter(|p| self.sheets.contains_key(p)) {
+            let view = self.sheets[&sheet_path].clone();
+            return root.child(tab_bar(self.tab_items(&sheet_path), cx)).child(breadcrumbs(&sheet_path, &self.root, true, None, None, cx)).child(div().flex_1().min_h_0().child(view)).into_any_element();
         }
         let Some(path) = active.filter(|p| self.docs.contains_key(p)) else {
             if let Some(note) = self.note.clone() {

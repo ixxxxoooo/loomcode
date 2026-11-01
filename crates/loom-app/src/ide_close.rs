@@ -14,6 +14,7 @@ impl IdeView {
     fn drop_tab(&mut self, path: &Path) {
         self.docs.remove(path);
         self.images.remove(path);
+        self.drop_sheet(path);
         self.tabs.close(path);
     }
 
