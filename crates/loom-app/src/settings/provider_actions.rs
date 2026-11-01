@@ -36,6 +36,30 @@ impl Workbench {
         env
     }
 
+    /// 当前的服务商配置:设置页打开过就用页里的(含未保存的编辑),否则读磁盘。
+    /// 输入框每帧都会问它,所以磁盘读取按文件修改时间缓存;**不能调用 `forms()`**——设置页没打开过时表单还没创建,会 panic。
+    pub fn mapping_store(&self) -> ProviderStore {
+        if let Some(f) = self.settings_forms.as_ref() {
+            return f.providers.store.clone();
+        }
+        thread_local! {
+            static CACHE: std::cell::RefCell<Option<(Option<std::time::SystemTime>, ProviderStore)>> = const { std::cell::RefCell::new(None) };
+        }
+        let path = self.providers_path();
+        let mtime = std::fs::metadata(&path).and_then(|m| m.modified()).ok();
+        CACHE.with(|c| {
+            let mut c = c.borrow_mut();
+            match c.as_ref() {
+                Some((t, store)) if *t == mtime => store.clone(),
+                _ => {
+                    let store = ProviderStore::load(&path);
+                    *c = Some((mtime, store.clone()));
+                    store
+                }
+            }
+        })
+    }
+
     /// 模型映射是否生效。
     pub fn provider_mapping_active(&self) -> bool {
         match self.settings_forms.as_ref() {
