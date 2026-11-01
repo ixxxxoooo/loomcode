@@ -5,8 +5,6 @@ use crate::ui::MONO;
 use gpui_kit::component::{ActiveTheme, h_flex, v_flex};
 use gpui_kit::prelude::FluentBuilder as _;
 use gpui_kit::*;
-use gpui_kit::component::highlighter::SyntaxHighlighter;
-use gpui_kit::component::Rope;
 use similar::{ChangeTag, TextDiff};
 
 /// 一行 Diff。
@@ -63,9 +61,7 @@ pub(crate) fn line_styles(lines: &[DiffLine], lang: &str, cx: &App) -> Vec<Vec<(
     if lang == "text" || text.is_empty() || text.len() > 200_000 {
         return out;
     }
-    let mut hl = SyntaxHighlighter::new(lang);
-    hl.update(None, &Rope::from(text.as_str()), Some(std::time::Duration::from_millis(80)));
-    let styles = hl.styles(&(0..text.len()), &*cx.theme().highlight_theme);
+    let styles = crate::code_hl::styles(&text, lang, cx);
     let mut start = 0;
     for (i, l) in lines.iter().enumerate() {
         let end = start + l.text.len();

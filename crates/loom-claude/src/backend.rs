@@ -4,6 +4,7 @@
 //! - 读 stdout 的线程、读 stderr 的线程、转发界面命令的线程,都只做一件事:往同一条 `Msg` 通道投递;
 //! - Actor 线程独占 stdin 与 `Translator`,按顺序消费 `Msg`,因此没有任何共享可变状态与锁。
 
+use crate::liveness::{Liveness, Signal};
 use crate::options::{ClaudeOptions, find_claude};
 use crate::protocol;
 use crate::translate::{Translator, suggested_mode};
@@ -92,6 +93,13 @@ impl AgentBackend for ClaudeBackend {
             }
         })?;
 
+        // 握手超时:claude 卡在启动阶段(既不应答也不退出)时,不能让界面一直停在「处理中」
+        let t = tx.clone();
+        spawn_named("loom-claude-init-timer", move || {
+            std::thread::sleep(INIT_TIMEOUT);
+            let _ = t.send(Msg::InitTimeout);
+        })?;
+
         // 命令转发:界面侧通道关闭(会话被丢弃)等同于关闭后端
         let t = tx;
         spawn_named("loom-claude-cmd", move || {
@@ -117,11 +125,16 @@ fn spawn_named(name: &str, f: impl FnOnce() + Send + 'static) -> Result<(), Back
         .map_err(|e| BackendError::Spawn(e.to_string()))
 }
 
+/// 握手(`initialize`)应答的最长等待时间,与官方 Agent SDK 一致。
+const INIT_TIMEOUT: std::time::Duration = std::time::Duration::from_secs(60);
+
 enum Msg {
     Cmd(AgentCommand),
     Line(String),
     Stderr(String),
     Eof,
+    /// 握手计时到点(握手已完成时忽略)
+    InitTimeout,
 }
 
 /// 已发出、等待响应的控制请求。
@@ -155,6 +168,8 @@ struct Actor {
     pid: u32,
     /// 无法解析为 JSON 的输出行计数(日志只记前几条与每 100 条)
     bad_lines: u32,
+    /// 忙闲信号跟踪(`session_state_changed` / `command_lifecycle`)
+    liveness: Liveness,
 }
 
 impl Actor {
@@ -178,6 +193,7 @@ impl Actor {
             started: std::time::Instant::now(),
             pid,
             bad_lines: 0,
+            liveness: Liveness::default(),
         }
     }
 
@@ -198,6 +214,7 @@ impl Actor {
                     self.on_exit();
                     false
                 }
+                Msg::InitTimeout => self.on_init_timeout(),
             };
             if !keep_going {
                 break;
@@ -251,7 +268,9 @@ impl Actor {
                 if !self.emit(echo) {
                     return false;
                 }
-                self.write(&protocol::user_message(&text, &images, steering));
+                let msg = protocol::user_message(&text, &images, steering);
+                self.liveness.sent(msg.get("uuid").and_then(Value::as_str).unwrap_or_default());
+                self.write(&msg);
             }
             AgentCommand::Cancel => {
                 if self.turn_active {
@@ -358,7 +377,24 @@ impl Actor {
         }
 
         let ty = v.get("type").and_then(Value::as_str).unwrap_or_default();
-        // claude 自行开启的回合(排队消息、后台任务通知)也要让界面进入运行态
+        match self.liveness.on_message(&v) {
+            // claude 自行开启的回合(后台任务通知、中断后接着处理的引导消息):比第一条流式输出更早进入运行态
+            Signal::Busy if !self.turn_active => {
+                self.turn_active = true;
+                if !self.emit(AgentEvent::TurnStarted) {
+                    return false;
+                }
+            }
+            // 兜底:claude 已空闲却没收到 result,不能让界面一直停在「处理中」
+            Signal::Idle if self.turn_active => {
+                loom_diag::warn!("claude(pid {})已空闲但未收到 result,按回合结束处理", self.pid);
+                self.turn_active = false;
+                let reason = if std::mem::take(&mut self.translator.interrupted) { StopReason::Cancelled } else { StopReason::EndTurn };
+                return self.emit(AgentEvent::TurnEnded(reason));
+            }
+            _ => {}
+        }
+        // claude 自行开启的回合(排队消息、后台任务通知)也要让界面进入运行态(旧版 claude 没有忙闲事件)
         if !self.turn_active && matches!(ty, "stream_event" | "assistant") {
             self.turn_active = true;
             if !self.emit(AgentEvent::TurnStarted) {
@@ -440,6 +476,31 @@ impl Actor {
                 if ok { true } else { self.emit(warn(what)) }
             }
         }
+    }
+
+    /// 握手计时到点。
+    ///
+    /// 返回:是否继续运行。握手已完成时继续;仍未应答则提示原因、结束回合并关闭进程
+    /// (惰性后端会在下一条提示时重新启动)。
+    fn on_init_timeout(&mut self) -> bool {
+        if !self.reqs.contains_key("req_init") {
+            return true;
+        }
+        let tail = self.stderr_tail.iter().cloned().collect::<Vec<_>>().join("\n");
+        loom_diag::warn!("claude(pid {}){} 秒内未应答握手,结束进程。stderr 尾部:{}", self.pid, INIT_TIMEOUT.as_secs(), tail);
+        let mut text = format!("claude 启动超时:{} 秒内没有响应。请在终端运行 claude 确认能正常启动(登录、信任目录、网络或代理)。", INIT_TIMEOUT.as_secs());
+        if !tail.is_empty() {
+            text.push_str("\n");
+            text.push_str(&tail);
+        }
+        if self.turn_active {
+            self.turn_active = false;
+            let _ = self.emit(AgentEvent::TurnEnded(StopReason::Error));
+        }
+        let _ = self.emit(AgentEvent::Notice { level: NoticeLevel::Error, text });
+        // 进程随后会被 kill,它的退出不再另报一次
+        self.shutting_down = true;
+        false
     }
 
     fn on_exit(&mut self) {

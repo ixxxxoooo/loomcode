@@ -102,7 +102,10 @@ impl SessionState {
                 }
                 self.model = model;
                 self.mode = mode;
-                self.phase = Phase::Idle;
+                // 惰性启动时握手应答晚于第一条提示的「回合开始」到达,不能把进行中的回合打回空闲
+                if self.phase != Phase::Running {
+                    self.phase = Phase::Idle;
+                }
             }
             AgentEvent::TurnStarted => self.phase = Phase::Running,
             AgentEvent::Duration { id, secs } => {
@@ -583,6 +586,19 @@ mod tests {
         assert_eq!(s.items.len(), 1);
         assert!(matches!(&s.items[0], TimelineItem::Permission(_)));
         assert!(s.awaiting_user());
+    }
+
+    #[test]
+    fn 握手应答晚到不打断进行中的回合() {
+        let ready = || AgentEvent::Ready { session_id: "s".into(), models: vec![], model: "default".into(), mode: PermissionMode::Default };
+        let mut s = SessionState::default();
+        s.apply(ready());
+        assert_eq!(s.phase, Phase::Idle, "启动中 → 空闲");
+        let mut s = SessionState::default();
+        s.apply(AgentEvent::TurnStarted);
+        s.apply(ready());
+        assert_eq!(s.phase, Phase::Running, "第一条提示已在处理,握手应答不能把它打回空闲");
+        assert_eq!(s.session_id.as_deref(), Some("s"));
     }
 
     #[test]

@@ -10,7 +10,25 @@ use std::ops::Range;
 /// 高亮文本过大时不再着色,避免卡顿。
 const MAX_BYTES: usize = 200_000;
 
-/// 计算语法高亮样式。
+/// 缓存条目上限(超过就清空重来,简单且够用)。
+const CACHE_CAP: usize = 512;
+
+type Styles = std::sync::Arc<Vec<(Range<usize>, HighlightStyle)>>;
+
+thread_local! {
+    /// (语言, 主题指针, 文本哈希) → 高亮结果。对话里的工具卡片、差异块每帧都会重绘,
+    /// 新建 `SyntaxHighlighter` 要编译语法查询(毫秒级),不缓存的话回合进行中(持续出帧)界面会明显卡顿、动画不流畅。
+    static CACHE: std::cell::RefCell<std::collections::HashMap<(String, usize, u64), Styles>> = Default::default();
+}
+
+fn hash_of(text: &str) -> u64 {
+    use std::hash::{Hash, Hasher};
+    let mut h = std::collections::hash_map::DefaultHasher::new();
+    text.hash(&mut h);
+    h.finish()
+}
+
+/// 计算语法高亮样式(带缓存:同一语言、同一主题、同一文本只算一次)。
 ///
 /// 参数:`text` 文本;`lang` 语言名(`text` 或空表示不着色);`cx` 取语法主题。
 /// 返回:按位置排序的 (字节区间, 样式);不支持的语言或文本过大返回空。
@@ -18,9 +36,22 @@ pub fn styles(text: &str, lang: &str, cx: &App) -> Vec<(Range<usize>, HighlightS
     if lang.is_empty() || lang == "text" || text.is_empty() || text.len() > MAX_BYTES {
         return Vec::new();
     }
+    let theme = cx.theme().highlight_theme.clone();
+    let key = (lang.to_string(), std::sync::Arc::as_ptr(&theme) as *const () as usize, hash_of(text));
+    if let Some(hit) = CACHE.with(|c| c.borrow().get(&key).cloned()) {
+        return hit.as_ref().clone();
+    }
     let mut hl = SyntaxHighlighter::new(lang);
     hl.update(None, &Rope::from(text), Some(std::time::Duration::from_millis(80)));
-    hl.styles(&(0..text.len()), &*cx.theme().highlight_theme)
+    let out: Styles = std::sync::Arc::new(hl.styles(&(0..text.len()), &*theme));
+    CACHE.with(|c| {
+        let mut c = c.borrow_mut();
+        if c.len() >= CACHE_CAP {
+            c.clear();
+        }
+        c.insert(key, out.clone());
+    });
+    out.as_ref().clone()
 }
 
 /// 带 bash 语法高亮的命令文本,可在前面加一段不着色的前缀(如提示符 `$ `)。
