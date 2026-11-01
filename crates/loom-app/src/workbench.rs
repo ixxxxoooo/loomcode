@@ -968,6 +968,11 @@ impl Workbench {
                 self.right_open = true;
                 self.panel.update(cx, |p, cx| p.set_tab(RightTab::Changes, cx));
             }
+            UiRequest::OpenChangeFile(path) => {
+                self.right_open = true;
+                let path = path.clone();
+                self.panel.update(cx, |p, cx| p.focus_change_file(path, cx));
+            }
             UiRequest::OpenSubagent(id) => {
                 self.right_open = true;
                 let id = id.clone();

@@ -28,6 +28,7 @@ mod branch_bar;
 mod browser_page;
 mod canvas_page;
 mod cards;
+mod change_focus;
 mod composer;
 mod composer_pop;
 mod composer_send;

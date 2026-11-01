@@ -423,6 +423,8 @@ impl SessionModel {
 pub enum UiRequest {
     /// 打开右侧「改动」面板
     OpenChanges,
+    /// 打开右侧「改动」面板并只看某个文件的 Diff
+    OpenChangeFile(String),
     /// 打开 Canvas 画布
     OpenCanvas(String),
     /// 一个回合结束(真实模式下用来刷新侧栏会话列表与 Git 分支)

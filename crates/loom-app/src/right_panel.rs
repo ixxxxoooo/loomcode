@@ -167,6 +167,8 @@ pub struct RightPanel {
     _sub: Option<Subscription>,
     /// 「改动」里已展开 Diff 的文件
     open_changes: HashSet<String>,
+    /// 「改动」里只看某个文件(时间线卡片点进来)
+    pub(crate) focus_change: Option<String>,
     pub files: FileTree,
     /// 等待在渲染时打开的文件(没有 window 的调用方使用)
     pending_open: Option<String>,
@@ -184,6 +186,7 @@ impl RightPanel {
         let sub = cx.observe(&hub, |_, _, cx| cx.notify());
         Self {
             tab: RightTab::Changes,
+            focus_change: None,
             open: crate::right_tabs::DEFAULT_TABS.to_vec(),
             current: None,
             nav: Vec::new(),
@@ -249,6 +252,9 @@ impl RightPanel {
     // ---------- 改动 ----------
 
     pub(crate) fn changes_view(&self, items: &[TimelineItem], cx: &mut Context<Self>) -> AnyElement {
+        if let Some(v) = self.focus_change_view(items, cx) {
+            return v;
+        }
         let t = cx.theme().clone();
         let changes = collect_changes(items);
         if changes.is_empty() {

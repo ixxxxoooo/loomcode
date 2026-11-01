@@ -67,7 +67,7 @@ pub fn render_changes(session: &Entity<SessionModel>, files: &[ChangedFile], cx:
         .children(files.iter().enumerate().map(|(i, f)| {
             let name = f.path.rsplit('/').next().unwrap_or(&f.path).to_string();
             h_flex().id(SharedString::from(format!("changes-file-{i}"))).h(px(28.)).px_1().gap_2().items_center().rounded(px(6.)).cursor_pointer()
-                .hover(|d| d.bg(t.list_hover)).on_click(open(session))
+                .hover(|d| d.bg(t.list_hover)).on_click({ let (s, p) = (session.clone(), f.path.clone()); move |_, _, cx| { s.update(cx, |_, cx| cx.emit(UiRequest::OpenChangeFile(p.clone()))); } })
                 .child(crate::file_icons::file_icon_img(&name, false, false, 14.))
                 .child(div().flex_1().min_w_0().truncate().text_size(px(13.)).child(name))
                 .when(f.added > 0, |d| d.child(div().text_size(px(12.)).font_family(MONO).text_color(t.success).child(format!("+{}", f.added))))
