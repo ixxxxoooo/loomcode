@@ -101,7 +101,9 @@ pub fn render_tool(session: &Entity<SessionModel>, tool: &ToolCall, cx: &App) ->
             .child(crate::file_icons::file_icon_img(&name, false, false, 14.))
             .child(div().min_w_0().truncate().text_size(px(13.)).font_weight(FontWeight::MEDIUM).text_color(subject_color).child(name))
             .into_any_element()
-    } else if matches!(tool.kind, ToolKind::Execute | ToolKind::Search) {
+    } else if tool.kind == ToolKind::Execute {
+        div().min_w_0().truncate().text_size(px(12.)).font_family(MONO).text_color(subject_color).child(crate::code_hl::shell_text(p.subject.lines().next().unwrap_or(""), "", cx)).into_any_element()
+    } else if tool.kind == ToolKind::Search {
         div().min_w_0().truncate().text_size(px(12.)).font_family(MONO).text_color(subject_color).child(p.subject.clone()).into_any_element()
     } else {
         div().min_w_0().truncate().text_size(px(13.)).font_weight(FontWeight::MEDIUM).text_color(subject_color).child(p.subject.clone()).into_any_element()
@@ -219,7 +221,7 @@ pub fn render_content(content: &ToolContent, run_id: Option<&str>, lang: &str, c
                 .child(
                     h_flex().gap_2().mb_1().items_start()
                         // 长命令在卡片内折行,不再把右侧的状态与「在终端面板查看」挤出去
-                        .child(div().flex_1().min_w_0().text_color(t.muted_foreground).child(format!("$ {}", command.lines().next().unwrap_or(""))))
+                        .child(div().flex_1().min_w_0().text_color(t.muted_foreground).child(crate::code_hl::shell_text(command.lines().next().unwrap_or(""), "$ ", cx)))
                         .when_some(*exit_code, |d, code| {
                             let (fg, bg) = if code == 0 { (t.success, t.background) } else { (t.danger, t.background) };
                             d.child(div().flex_none().child(pill(format!("退出码 {code}"), fg, bg)))

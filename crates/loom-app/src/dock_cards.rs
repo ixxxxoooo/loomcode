@@ -82,7 +82,7 @@ fn permission(session: &Entity<SessionModel>, req: &PermissionRequest, cx: &App)
                 .child(div().text_size(px(13.)).font_weight(FontWeight::MEDIUM).child("需要你的许可")),
         )
         .child(div().text_size(px(12.)).font_family(MONO).max_h(px(72.)).overflow_hidden().child(req.tool.title.clone()))
-        .when_some(cmd, |d, c| d.child(mono_box(cx).max_h(px(120.)).overflow_hidden().child(format!("$ {c}"))))
+        .when_some(cmd, |d, c| d.child(mono_box(cx).max_h(px(120.)).overflow_hidden().child(crate::code_hl::shell_text(&c, "$ ", cx))))
         .when(!preview.is_empty(), |d| d.child(v_flex().id(SharedString::from(format!("perm-prev-{}", req.id))).w_full().max_h(px(260.)).overflow_y_scroll().gap_2().children(preview)))
         .child(h_flex().flex_wrap().gap_2().children(req.options.iter().map(|opt| {
             let (s, rid, oid) = (session.clone(), req.id.clone(), opt.id.clone());

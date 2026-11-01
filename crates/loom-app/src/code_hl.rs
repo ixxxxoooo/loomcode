@@ -22,3 +22,11 @@ pub fn styles(text: &str, lang: &str, cx: &App) -> Vec<(Range<usize>, HighlightS
     hl.update(None, &Rope::from(text), Some(std::time::Duration::from_millis(80)));
     hl.styles(&(0..text.len()), &*cx.theme().highlight_theme)
 }
+
+/// 带 bash 语法高亮的命令文本,可在前面加一段不着色的前缀(如提示符 `$ `)。
+///
+/// 参数:`cmd` 命令(整段,多行也行);`prefix` 前缀;`cx` 取语法主题。返回:可直接 `.child(..)` 的带样式文本。
+pub fn shell_text(cmd: &str, prefix: &str, cx: &App) -> StyledText {
+    let shifted: Vec<(Range<usize>, HighlightStyle)> = styles(cmd, "bash", cx).into_iter().map(|(r, s)| (r.start + prefix.len()..r.end + prefix.len(), s)).collect();
+    StyledText::new(format!("{prefix}{cmd}")).with_highlights(shifted)
+}
