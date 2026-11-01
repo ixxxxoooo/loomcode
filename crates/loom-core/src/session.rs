@@ -30,6 +30,8 @@ pub struct SessionState {
     pub usage: Usage,
     /// 最近一次回合的结束原因
     pub last_stop: Option<StopReason>,
+    /// 条目 id → 用时(秒):思考条目是这次思考的用时,用户消息条目是它引出的整个回合的用时
+    pub durations: std::collections::HashMap<String, u64>,
 }
 
 impl Default for SessionState {
@@ -44,6 +46,7 @@ impl Default for SessionState {
             mode: PermissionMode::Default,
             effort: Effort::Medium,
             usage: Usage::default(),
+            durations: Default::default(),
             last_stop: None,
         }
     }
@@ -91,6 +94,9 @@ impl SessionState {
                 self.phase = Phase::Idle;
             }
             AgentEvent::TurnStarted => self.phase = Phase::Running,
+            AgentEvent::Duration { id, secs } => {
+                self.durations.insert(id, secs);
+            }
             AgentEvent::Append { parent, item } => {
                 target_list(&mut self.items, &parent).push(item);
             }

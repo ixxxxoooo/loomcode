@@ -47,6 +47,8 @@ pub enum AgentEvent {
     /// 会话就绪
     Ready { session_id: String, models: Vec<ModelInfo>, model: String, mode: PermissionMode },
     TurnStarted,
+    /// 记录某个条目的用时(秒):思考条目是一次思考的用时,用户消息条目是整个回合的用时(历史回放用时间戳算出)
+    Duration { id: String, secs: u64 },
     /// 追加一个条目
     Append { parent: Option<String>, item: TimelineItem },
     /// 助手文本增量

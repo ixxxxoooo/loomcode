@@ -57,6 +57,7 @@ mod chat_scroll;
 mod nav_history;
 mod row_groups;
 mod tool_group;
+mod turn_digest;
 mod turn_footer;
 mod window_header;
 mod ide_window;

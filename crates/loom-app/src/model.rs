@@ -102,7 +102,7 @@ impl SessionModel {
         }
         // 重新算显示行;只有尾部会变,把变化的那一段整体替换,并重新测量内容变了的行
         let old_rows = std::mem::take(&mut self.rows);
-        self.rows = crate::row_groups::build_rows(&self.state.items, self.state.phase == Phase::Running, Self::density(cx));
+        self.rows = crate::row_groups::build_rows(&self.state.items, self.state.phase == Phase::Running, Self::density(cx), &self.state.durations);
         self.item_row = crate::row_groups::item_to_row(&self.rows, self.state.items.len());
         let common = old_rows.iter().zip(&self.rows).take_while(|(a, b)| a == b).count();
         let dirty: Vec<usize> = {
@@ -142,7 +142,7 @@ impl SessionModel {
 
     /// 详细程度变了:按新档位重算显示行,并重置虚拟列表。
     pub fn rebuild_rows(&mut self, cx: &mut Context<Self>) {
-        self.rows = crate::row_groups::build_rows(&self.state.items, self.state.phase == Phase::Running, Self::density(cx));
+        self.rows = crate::row_groups::build_rows(&self.state.items, self.state.phase == Phase::Running, Self::density(cx), &self.state.durations);
         self.item_row = crate::row_groups::item_to_row(&self.rows, self.state.items.len());
         let n = self.rows.len();
         self.scroller.update(cx, |s, cx| s.reset(n, cx));
@@ -159,7 +159,7 @@ impl SessionModel {
         }
         self.state.items.extend(live);
         // 条目整体变了:一次性重置虚拟列表,避免逐条增量与高度缓存错位
-        self.rows = crate::row_groups::build_rows(&self.state.items, self.state.phase == Phase::Running, Self::density(cx));
+        self.rows = crate::row_groups::build_rows(&self.state.items, self.state.phase == Phase::Running, Self::density(cx), &self.state.durations);
         self.item_row = crate::row_groups::item_to_row(&self.rows, self.state.items.len());
         let n = self.rows.len();
         self.scroller.update(cx, |s, cx| s.reset(n, cx));
@@ -240,7 +240,7 @@ impl SessionModel {
 
     pub(crate) fn remeasure_id(&mut self, id: &str, cx: &mut Context<Self>) {
         // 折叠组的 key 是「grp:首个工具 id」
-        let id = id.strip_prefix("grp:").unwrap_or(id);
+        let id = id.strip_prefix("grp:").or_else(|| id.strip_prefix("dg:")).unwrap_or(id);
         if let Some(row) = self.state.row_of(id).and_then(|i| self.item_row.get(i).copied()) {
             self.scroller.update(cx, |s, cx| {
                 s.remeasure_items(row..row + 1, cx);
@@ -288,14 +288,21 @@ impl SessionModel {
             })
             .detach();
         } else if !running {
-            self.turn_started = None;
+            // 回合结束:把用时记在这个回合的用户消息上(「已工作 N」用它)
+            if let Some(start) = self.turn_started.take() {
+                let secs = start.elapsed().as_secs();
+                if secs >= 1 && let Some(TimelineItem::User { id, .. }) = self.state.items.iter().rev().find(|i| matches!(i, TimelineItem::User { .. })) {
+                    self.state.durations.insert(id.clone(), secs);
+                }
+            }
         }
     }
 
     /// 思考用时(秒);没有实时计时(历史回放)或还没结束返回 `None`。
     pub fn thinking_secs(&self, id: &str) -> Option<u64> {
-        let (start, end) = self.thinking_times.get(id)?;
-        end.map(|e| e.duration_since(*start).as_secs())
+        // 实时看到的思考用本地计时;历史回放用时间戳算出的用时
+        let live = self.thinking_times.get(id).and_then(|(start, end)| end.map(|e| e.duration_since(*start).as_secs()));
+        live.or_else(|| self.state.durations.get(id).copied())
     }
 
     /// 更新末尾几个思考条目的计时:开始流式记开始,结束流式记结束。

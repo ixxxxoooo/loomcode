@@ -163,10 +163,18 @@ pub fn load_session(path: &Path, cwd: &str) -> std::io::Result<Vec<AgentEvent>> 
 }
 
 /// 回放若干行 jsonl。
+///
+/// 除了条目事件,还会用每条记录的 `timestamp` 算出思考与整个回合的用时,作为 `Duration` 事件附在末尾。
 pub fn replay_lines<'a>(lines: impl Iterator<Item = &'a str>, cwd: &str) -> Vec<AgentEvent> {
+    use crate::history_time::{parse_iso_ms, secs_between};
+    use loom_core::TimelineItem;
     let mut tr = Translator::replaying(cwd);
     let mut events = Vec::new();
     let mut title = None;
+    // 上一条记录的时间;当前回合(用户消息 id、开始时间);算出的用时
+    let mut prev_ts: Option<i64> = None;
+    let mut turn: Option<(String, i64)> = None;
+    let mut durations: Vec<AgentEvent> = Vec::new();
     for line in lines {
         let Ok(v) = serde_json::from_str::<Value>(line) else { continue };
         if v.get("isSidechain").and_then(Value::as_bool).unwrap_or(false) {
@@ -174,10 +182,39 @@ pub fn replay_lines<'a>(lines: impl Iterator<Item = &'a str>, cwd: &str) -> Vec<
         }
         match v.get("type").and_then(Value::as_str) {
             Some("ai-title") => title = v.get("aiTitle").and_then(Value::as_str).map(String::from),
-            Some("user" | "assistant") => events.extend(tr.handle(&v)),
+            Some("user" | "assistant") => {
+                let ts = v.get("timestamp").and_then(Value::as_str).and_then(parse_iso_ms);
+                let evs = tr.handle(&v);
+                for e in &evs {
+                    match e {
+                        // 新的用户提示:上一个回合到此结束(用上一条记录的时间收尾)
+                        AgentEvent::Append { parent: None, item: TimelineItem::User { id, .. } } => {
+                            if let (Some((uid, start)), Some(end)) = (turn.take(), prev_ts) {
+                                durations.extend(secs_between(start, end, 86_400).map(|secs| AgentEvent::Duration { id: uid, secs }));
+                            }
+                            turn = ts.map(|t| (id.clone(), t));
+                        }
+                        // 思考:从上一条记录到这一条的时间
+                        AgentEvent::Append { parent: None, item: TimelineItem::Thinking { id, .. } } => {
+                            if let (Some(t), Some(p)) = (ts, prev_ts) {
+                                durations.extend(secs_between(p, t, 3600).map(|secs| AgentEvent::Duration { id: id.clone(), secs }));
+                            }
+                        }
+                        _ => {}
+                    }
+                }
+                events.extend(evs);
+                if ts.is_some() {
+                    prev_ts = ts;
+                }
+            }
             _ => {}
         }
     }
+    if let (Some((uid, start)), Some(end)) = (turn.take(), prev_ts) {
+        durations.extend(secs_between(start, end, 86_400).map(|secs| AgentEvent::Duration { id: uid, secs }));
+    }
+    events.extend(durations);
     if let Some(t) = title {
         events.insert(0, AgentEvent::TitleChanged(t));
     }
@@ -238,6 +275,25 @@ mod tests {
         assert!(matches!(&s.items[1], TimelineItem::Tool(t) if t.title == "读取 a.txt · 3 行"));
         assert!(matches!(&s.items[2], TimelineItem::Assistant { text, .. } if text == "文件有 3 行"));
         assert_eq!(s.items.len(), 3, "元信息与子线程被过滤");
+    }
+
+    #[test]
+    fn 回放算出思考与回合用时() {
+        let jsonl = r#"{"type":"user","timestamp":"2026-10-09T10:00:00.000Z","cwd":"/w","message":{"role":"user","content":[{"type":"text","text":"问题一"}]}}
+{"type":"assistant","timestamp":"2026-10-09T10:00:08.000Z","message":{"id":"m1","content":[{"type":"thinking","thinking":"想一想","signature":"x"}]}}
+{"type":"assistant","timestamp":"2026-10-09T10:01:10.000Z","message":{"id":"m2","content":[{"type":"text","text":"回答一"}]}}
+{"type":"user","timestamp":"2026-10-09T10:05:00.000Z","cwd":"/w","message":{"role":"user","content":[{"type":"text","text":"问题二"}]}}
+{"type":"assistant","timestamp":"2026-10-09T10:05:30.000Z","message":{"id":"m3","content":[{"type":"text","text":"回答二"}]}}
+"#;
+        let mut s = SessionState::default();
+        for e in replay_lines(jsonl.lines(), "/w") {
+            s.apply(e);
+        }
+        let users: Vec<&str> = s.items.iter().filter_map(|i| if let TimelineItem::User { id, .. } = i { Some(id.as_str()) } else { None }).collect();
+        let think = s.items.iter().find_map(|i| if let TimelineItem::Thinking { id, .. } = i { Some(id.clone()) } else { None }).expect("有思考条目");
+        assert_eq!(s.durations.get(&think), Some(&8), "思考:上一条记录到这一条 8 秒");
+        assert_eq!(s.durations.get(users[0]), Some(&70), "第一个回合 70 秒");
+        assert_eq!(s.durations.get(users[1]), Some(&30), "最后一个回合用最后一条记录收尾");
     }
 
     #[test]

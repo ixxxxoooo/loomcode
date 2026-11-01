@@ -10,6 +10,7 @@
 
 pub mod backend;
 pub mod history;
+pub mod history_time;
 pub mod image_cache;
 pub mod lazy;
 pub mod options;
