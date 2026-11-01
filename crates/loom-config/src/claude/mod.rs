@@ -21,7 +21,7 @@ pub use hooks_write::{HOOK_EVENTS, add_hook, remove_hook};
 pub use load::{load, scope_file};
 pub use mcp_write::{McpLocation, parse_mcp_paste, remove_mcp, set_mcp_enabled, upsert_mcp, upsert_mcp_raw, validate as validate_mcp};
 pub use parse::{merge, parse_mcp_servers, parse_settings};
-pub use write::{add_permission_rule, backup_path, edit_json, remove_permission_rule, set_string_list, set_value};
+pub use write::{add_permission_rule, backup_path, edit_json, object_at, remove_permission_rule, set_string_list, set_value};
 
 use serde_json::Value;
 

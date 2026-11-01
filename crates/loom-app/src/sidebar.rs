@@ -123,7 +123,9 @@ pub fn render(wb: &Workbench, cx: &mut Context<Workbench>) -> impl IntoElement {
                 .child(nav_row("nav-new", IconName::SquarePen, "新对话", Some("⌘N"), false, cx,
                     |this, window, cx| this.new_session(this.target_project(), window, cx)))
                 .child(nav_row("nav-auto-row", IconName::Timer, "自动化", None, wb.page == Page::Automation, cx,
-                    |this, _, cx| this.set_page(Page::Automation, cx))),
+                    |this, _, cx| this.set_page(Page::Automation, cx)))
+                .child(nav_row("nav-customize-row", IconName::SlidersHorizontal, "自定义", None, wb.page == Page::Customize, cx,
+                    |this, _, cx| this.set_page(Page::Customize, cx))),
         )
         .child(
             h_flex().px_3().pt_2().pb_1().gap_1().items_center()

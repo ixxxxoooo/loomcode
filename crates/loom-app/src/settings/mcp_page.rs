@@ -74,9 +74,9 @@ fn server_card(i: usize, s: McpServer, has_project: bool, cx: &mut Context<Workb
             .on_click(cx.listener(move |this, _, _, cx| this.delete_mcp(&s_del, cx))))
 }
 
-/// MCP 页。
-pub fn mcp(wb: &Workbench, cx: &mut Context<Workbench>) -> AnyElement {
-    let servers = wb.claude_cfg.mcp_servers.clone();
+/// 渲染 MCP 页。参数:`filter` 搜索词(小写,空为不过滤),按名称与目标匹配。
+pub fn mcp(wb: &Workbench, filter: &str, cx: &mut Context<Workbench>) -> AnyElement {
+    let servers: Vec<_> = wb.claude_cfg.mcp_servers.iter().filter(|s| filter.is_empty() || format!("{} {}", s.name, s.spec.target()).to_lowercase().contains(filter)).cloned().collect();
     let has_project = wb.claude_cfg_root.is_some();
     let open = wb.forms().mcp.open;
     let target = match McpLocation::of(&wb.claude_home, wb.cfg_project(), wb.effective_scope()) {

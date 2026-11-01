@@ -65,10 +65,10 @@ fn item_row(i: usize, item: Item, tab: SettingsTab, current: bool, cx: &mut Cont
 
 /// 渲染管理页。
 ///
-/// 参数:`kind` 种类;`tab` 对应的设置分类。
-pub fn render(wb: &Workbench, kind: ItemKind, tab: SettingsTab, cx: &mut Context<Workbench>) -> AnyElement {
+/// 参数:`kind` 种类;`tab` 对应的设置分类;`filter` 搜索词(小写,空为不过滤)。
+pub fn render(wb: &Workbench, kind: ItemKind, tab: SettingsTab, filter: &str, cx: &mut Context<Workbench>) -> AnyElement {
     let t = cx.theme().clone();
-    let list = wb.forms().items.get(&kind).cloned().unwrap_or_default();
+    let list: Vec<Item> = wb.forms().items.get(&kind).cloned().unwrap_or_default().into_iter().filter(|i| filter.is_empty() || format!("{} {}", i.name, i.description).to_lowercase().contains(filter)).collect();
     let current = wb.forms().doc.as_ref().filter(|d| d.tab == tab).map(|d| d.path.clone());
     let open = wb.forms().item.open;
     let mut body = v_flex().w_full();

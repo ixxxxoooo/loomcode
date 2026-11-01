@@ -33,6 +33,19 @@ pub struct ProviderUi {
     pub busy: bool,
 }
 
+/// 插件页的状态。
+#[derive(Default)]
+pub struct PluginUi {
+    pub installed: Vec<loom_config::plugins::PluginEntry>,
+    pub markets: Vec<loom_config::plugins::Marketplace>,
+    /// 正在执行的 CLI 操作说明;`Some` 时按钮置灰
+    pub busy: Option<String>,
+    /// 最近一次操作结果:(成功, 输出)
+    pub message: Option<(bool, String)>,
+    /// 安装到哪一层
+    pub install_scope: Option<Scope>,
+}
+
 /// 网络、用量、诊断页的状态(后台任务结果)。
 #[derive(Default)]
 pub struct OpsUi {
@@ -98,6 +111,7 @@ pub struct Forms {
     pub fields: Fields,
     pub providers: ProviderUi,
     pub ops: OpsUi,
+    pub plugins: PluginUi,
     /// 最近一次写配置失败的提示(显示在页顶,下次成功时清除)
     pub error: Option<String>,
 }
@@ -144,6 +158,7 @@ impl Forms {
             fields: Fields::new(window, cx),
             providers: ProviderUi::default(),
             ops: OpsUi::default(),
+            plugins: PluginUi::default(),
             error: None,
         }
     }

@@ -16,6 +16,15 @@ impl Workbench {
             self.settings_forms = Some(Forms::new(window, cx));
             self.refresh_items();
             self.load_providers();
+            self.refresh_plugins();
+            // 搜索框每次输入都要重绘列表
+            let search = self.field("search").clone();
+            cx.subscribe(&search, |_, _, ev: &gpui_kit::component::input::InputEvent, cx| {
+                if matches!(ev, gpui_kit::component::input::InputEvent::Change) {
+                    cx.notify();
+                }
+            })
+            .detach();
         }
     }
 

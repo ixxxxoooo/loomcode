@@ -29,6 +29,9 @@ pub const FIELDS: &[(&str, &str)] = &[
     ("p_url", "Base URL,例如 https://api.deepseek.com/anthropic"),
     ("p_key", "API Key(保存后不再显示,留空保持原值)"),
     ("p_model", "添加模型 ID,回车或点「添加」"),
+    ("plugin_id", "plugin@marketplace"),
+    ("market_src", "GitHub 仓库 owner/repo、Git URL 或本地路径"),
+    ("search", "搜索插件、技能、MCP…"),
 ];
 
 /// 文本字段集合。

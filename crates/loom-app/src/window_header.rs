@@ -110,6 +110,7 @@ impl Workbench {
             Page::Canvas => Some("Canvas".to_string()),
             Page::Automation => Some("自动化".to_string()),
             Page::Browser => Some("浏览器".to_string()),
+            Page::Customize => Some("自定义".to_string()),
         };
         let right_hidden = !self.right_visible();
         header_row("hd-center-row").pl(px(if left_hidden { TRAFFIC_PAD } else { 12. })).pr_2()

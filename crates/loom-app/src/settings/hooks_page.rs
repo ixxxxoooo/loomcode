@@ -56,9 +56,9 @@ fn hook_card(i: usize, h: HookEntry, cx: &mut Context<Workbench>) -> Div {
         .child(div().font_family(MONO).text_size(px(12.5)).child(h.command.clone()))
 }
 
-/// 钩子页。
-pub fn hooks(wb: &Workbench, cx: &mut Context<Workbench>) -> AnyElement {
-    let hooks = wb.claude_cfg.hooks.clone();
+/// 渲染钩子页。参数:`filter` 搜索词(小写,空为不过滤),按事件、匹配器与命令匹配。
+pub fn hooks(wb: &Workbench, filter: &str, cx: &mut Context<Workbench>) -> AnyElement {
+    let hooks: Vec<_> = wb.claude_cfg.hooks.iter().filter(|h| filter.is_empty() || format!("{} {} {}", h.event, h.matcher, h.command).to_lowercase().contains(filter)).cloned().collect();
     let open = wb.forms().hook.open;
     let target = match wb.scope_settings_file(wb.effective_scope()) {
         Some(path) => format!("新增写入 {}", path.display()),

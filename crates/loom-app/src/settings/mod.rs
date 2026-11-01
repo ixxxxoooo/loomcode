@@ -10,6 +10,7 @@
 mod actions;
 mod advanced_page;
 mod claude_pages;
+mod customize_page;
 mod diagnostics_page;
 mod doc_actions;
 mod env_page;
@@ -25,12 +26,15 @@ mod model_page;
 mod network_page;
 mod ops_actions;
 mod pages;
+mod plugin_actions;
+mod plugins_page;
 mod permissions_page;
 mod provider_actions;
 mod providers_page;
 mod usage_page;
 mod widgets;
 
+pub use customize_page::CustomizeTab;
 pub use forms::Forms;
 pub use usage_page::Metric as UsageMetric;
 
@@ -49,6 +53,7 @@ pub enum SettingsTab {
     General,
     Chat,
     Shortcuts,
+    Customize,
     Model,
     Providers,
     Permissions,
@@ -70,7 +75,7 @@ impl SettingsTab {
     /// 导航分组。
     pub const GROUPS: [(&'static str, &'static [SettingsTab]); 3] = [
         ("客户端", &[Self::General, Self::Chat, Self::Shortcuts]),
-        ("Claude Code", &[Self::Model, Self::Providers, Self::Permissions, Self::Mcp, Self::Hooks, Self::Commands, Self::Agents, Self::Skills, Self::Memory, Self::Env]),
+        ("Claude Code", &[Self::Customize, Self::Model, Self::Providers, Self::Permissions, Self::Mcp, Self::Hooks, Self::Commands, Self::Agents, Self::Skills, Self::Memory, Self::Env]),
         ("其他", &[Self::Network, Self::Usage, Self::Diagnostics, Self::Advanced, Self::About]),
     ];
 
@@ -90,6 +95,7 @@ impl SettingsTab {
             Self::General => "通用",
             Self::Chat => "对话",
             Self::Shortcuts => "快捷键",
+            Self::Customize => "自定义",
             Self::Model => "模型与思考",
             Self::Providers => "模型服务商",
             Self::Permissions => "权限",
@@ -114,6 +120,7 @@ impl SettingsTab {
             Self::General => IconName::SlidersHorizontal,
             Self::Chat => IconName::MessageSquare,
             Self::Shortcuts => IconName::Keyboard,
+            Self::Customize => IconName::SlidersHorizontal,
             Self::Model => IconName::Sparkle,
             Self::Providers => IconName::Server,
             Self::Permissions => IconName::Shield,
@@ -133,6 +140,11 @@ impl SettingsTab {
     }
 }
 
+/// 渲染「自定义」整页(左侧栏入口,主窗口中央区域)。
+pub fn render_customize(wb: &mut Workbench, window: &mut Window, cx: &mut Context<Workbench>) -> AnyElement {
+    customize_page::render_page(wb, window, cx)
+}
+
 /// 渲染整个设置页。
 ///
 /// 参数:`wb` 工作台;`window` / `cx` gpui 上下文。返回:设置页元素。
@@ -147,6 +159,7 @@ pub fn render(wb: &mut Workbench, window: &mut Window, cx: &mut Context<Workbenc
     let body = match tab {
         SettingsTab::General => pages::general(wb, cx),
         SettingsTab::Chat => pages::chat(wb, cx),
+        SettingsTab::Customize => customize_page::render(wb, window, cx),
         SettingsTab::Model => model_page::render(wb, cx),
         SettingsTab::Providers => providers_page::render(wb, cx),
         SettingsTab::Env => env_page::render(wb, cx),
@@ -155,11 +168,11 @@ pub fn render(wb: &mut Workbench, window: &mut Window, cx: &mut Context<Workbenc
         SettingsTab::Diagnostics => diagnostics_page::render(wb, cx),
         SettingsTab::Advanced => advanced_page::render(wb, cx),
         SettingsTab::Permissions => permissions_page::permissions(wb, cx),
-        SettingsTab::Mcp => mcp_page::mcp(wb, cx),
-        SettingsTab::Hooks => hooks_page::hooks(wb, cx),
-        SettingsTab::Commands => items_page::render(wb, ItemKind::Command, tab, cx),
-        SettingsTab::Agents => items_page::render(wb, ItemKind::Agent, tab, cx),
-        SettingsTab::Skills => items_page::render(wb, ItemKind::Skill, tab, cx),
+        SettingsTab::Mcp => mcp_page::mcp(wb, "", cx),
+        SettingsTab::Hooks => hooks_page::hooks(wb, "", cx),
+        SettingsTab::Commands => items_page::render(wb, ItemKind::Command, tab, "", cx),
+        SettingsTab::Agents => items_page::render(wb, ItemKind::Agent, tab, "", cx),
+        SettingsTab::Skills => items_page::render(wb, ItemKind::Skill, tab, "", cx),
         SettingsTab::Memory => claude_pages::memory(wb, window, cx),
         SettingsTab::Shortcuts => pages::shortcuts(cx),
         SettingsTab::About => pages::about(wb, cx),

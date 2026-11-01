@@ -36,6 +36,8 @@ pub enum Page {
     Canvas,
     Automation,
     Browser,
+    /// 自定义:插件 / MCP / 技能 / 命令 / 子 Agent / 规则 / Hooks
+    Customize,
 }
 
 /// 右侧面板的分段。
@@ -140,6 +142,8 @@ pub struct Workbench {
     pub cfg_scope: loom_config::Scope,
     /// 设置页表单的输入框状态(首次进入设置页时创建)
     pub settings_forms: Option<settings::Forms>,
+    /// 自定义页当前标签
+    pub customize_tab: settings::CustomizeTab,
     /// 用量页当前显示的趋势指标
     pub usage_metric: settings::UsageMetric,
     pub settings_tab: SettingsTab,
@@ -250,6 +254,7 @@ impl Workbench {
             claude_home,
             cfg_scope: loom_config::Scope::Local,
             settings_forms: None,
+            customize_tab: settings::CustomizeTab::Plugins,
             usage_metric: settings::UsageMetric::Tokens,
             settings_tab: SettingsTab::General,
             claude_info: None,
@@ -340,8 +345,14 @@ impl Workbench {
                 "canvas" => wb.page = Page::Canvas,
                 "automation" => wb.page = Page::Automation,
                 "browser" => wb.page = Page::Browser,
+                "customize" => wb.page = Page::Customize,
                 _ => {}
             }
+        }
+        // 调试用:LOOM_CUSTOMIZE=plugins|mcp|skills|commands|agents|rules|hooks 选中自定义页的标签
+        if let Some(t) = std::env::var("LOOM_CUSTOMIZE").ok().and_then(|n| settings::CustomizeTab::from_name(&n)) {
+            wb.page = Page::Customize;
+            wb.customize_tab = t;
         }
         if let Ok(url) = std::env::var("LOOM_URL") {
             wb.page = Page::Browser;
@@ -382,9 +393,10 @@ impl Workbench {
     }
 
     pub fn set_page(&mut self, page: Page, cx: &mut Context<Self>) {
-        if page == Page::Settings && self.page != Page::Settings {
-            // 进入设置时重读 Claude 配置,外部修改(如 claude mcp add)能立刻看到
+        if matches!(page, Page::Settings | Page::Customize) && self.page != page {
+            // 进入设置 / 自定义时重读 Claude 配置,外部修改(如 claude mcp add)能立刻看到
             self.reload_claude_cfg();
+            self.refresh_plugins();
         }
         self.page = page;
         cx.notify();
@@ -435,6 +447,7 @@ impl Workbench {
         cmd("主题:跟随系统", "", IconName::Monitor, PaletteAction::SetTheme(ThemeChoice::System));
         cmd("打开 Canvas 画布", "", IconName::LayoutDashboard, PaletteAction::OpenPage("canvas"));
         cmd("打开自动化", "", IconName::Timer, PaletteAction::OpenPage("automation"));
+        cmd("打开自定义(插件 / MCP / 技能 / 命令…)", "", IconName::SlidersHorizontal, PaletteAction::OpenPage("customize"));
         cmd("打开内置浏览器", "", IconName::Globe, PaletteAction::OpenPage("browser"));
         for (pi, p) in self.projects.iter().enumerate() {
             items.push(PaletteItem { title: p.name.clone(), subtitle: p.path.clone(), group: Group::Project, icon: IconName::Folder, action: PaletteAction::OpenProject(pi) });
@@ -476,7 +489,7 @@ impl Workbench {
                 }
                 self.set_page(Page::Settings, cx);
             }
-            PaletteAction::OpenPage(p) => self.set_page(match p { "canvas" => Page::Canvas, "automation" => Page::Automation, _ => Page::Browser }, cx),
+            PaletteAction::OpenPage(p) => self.set_page(match p { "canvas" => Page::Canvas, "automation" => Page::Automation, "customize" => Page::Customize, _ => Page::Browser }, cx),
             PaletteAction::SetTheme(c) => self.update_settings(cx, |s| s.theme = c),
             PaletteAction::OpenSession(pi, id) => self.open_session(pi, &id, window, cx),
             PaletteAction::OpenProject(pi) => self.open_project_from_palette(pi, window, cx),
@@ -1018,6 +1031,7 @@ impl Render for Workbench {
             Page::Canvas => self.canvas.clone().into_any_element(),
             Page::Automation => self.automation.clone().into_any_element(),
             Page::Browser => self.browser.clone().into_any_element(),
+            Page::Customize => settings::render_customize(self, window, cx),
         };
         v_flex()
             .key_context("Workbench")

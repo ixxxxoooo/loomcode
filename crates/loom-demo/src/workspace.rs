@@ -176,6 +176,7 @@ pub const DEMO_CLAUDE_SETTINGS: &str = r#"{
     "deny": ["Bash(rm -rf:*)", "Read(.env)"],
     "ask": ["Bash(git push:*)"]
   },
+  "enabledPlugins": { "rust-analyzer-lsp@claude-plugins-official": true, "statusline-pro@demo-market": true },
   "hooks": {
     "PreToolUse": [{ "matcher": "Bash", "hooks": [{ "type": "command", "command": "echo \"即将执行命令\"" }] }],
     "PostToolUse": [{ "matcher": "Edit|Write", "hooks": [{ "type": "command", "command": "cargo fmt", "timeout": 30 }] }]
@@ -226,6 +227,33 @@ fn demo_usage_jsonl() -> String {
     lines.join("\n")
 }
 
+/// 演示用的插件与插件市场(只写文件,不会真的安装)。
+fn seed_plugins(home: &Path) -> io::Result<()> {
+    let dir = home.join(".claude/plugins");
+    let mut installed = serde_json::Map::new();
+    for (id, name, ver, desc, files) in [
+        ("rust-analyzer-lsp@claude-plugins-official", "rust-analyzer-lsp", "1.0.0", "Rust 语言服务:跳转、补全与诊断", &[][..]),
+        ("statusline-pro@demo-market", "statusline-pro", "1.3.2", "状态栏显示上下文用量、token 与会话时长", &["commands/stats.md", "commands/reset.md"][..]),
+        ("gopls-lsp@claude-plugins-official", "gopls-lsp", "1.0.0", "Go 语言服务", &[][..]),
+    ] {
+        let market = id.split('@').nth(1).unwrap_or("");
+        let path = dir.join("cache").join(market).join(name).join(ver);
+        fs::create_dir_all(path.join(".claude-plugin"))?;
+        fs::write(path.join(".claude-plugin/plugin.json"), serde_json::json!({ "name": name, "description": desc, "author": { "name": "示例作者" } }).to_string())?;
+        for f in files {
+            fs::create_dir_all(path.join(f).parent().unwrap_or(&path))?;
+            fs::write(path.join(f), "---\ndescription: 示例\n---\n")?;
+        }
+        installed.insert(id.to_string(), serde_json::json!([{ "scope": "user", "version": ver, "installPath": path.to_string_lossy() }]));
+    }
+    fs::write(dir.join("installed_plugins.json"), serde_json::json!({ "version": 2, "plugins": installed }).to_string())?;
+    let markets = serde_json::json!({
+        "claude-plugins-official": { "source": { "source": "github", "repo": "anthropics/claude-plugins-official" }, "lastUpdated": "2026-11-01T04:54:26Z" },
+        "demo-market": { "source": { "source": "github", "repo": "example/demo-market" }, "lastUpdated": "2026-10-17T09:58:26Z" }
+    });
+    fs::write(dir.join("known_marketplaces.json"), markets.to_string())
+}
+
 /// 生成演示家目录(每次启动重置):用户层 MCP 在 `~/.claude.json` 顶层,
 /// router-demo 另有一个本地层 MCP 并禁用了 playwright。
 pub fn seed_claude_home(root: &Path) -> io::Result<PathBuf> {
@@ -251,6 +279,7 @@ pub fn seed_claude_home(root: &Path) -> io::Result<PathBuf> {
         } }
     });
     fs::write(home.join(".claude.json"), serde_json::to_string_pretty(&claude_json).map_err(io::Error::other)?)?;
+    seed_plugins(&home)?;
     let sessions = home.join(".claude/projects/-demo-router");
     fs::create_dir_all(&sessions)?;
     fs::write(sessions.join("demo-usage.jsonl"), demo_usage_jsonl())?;

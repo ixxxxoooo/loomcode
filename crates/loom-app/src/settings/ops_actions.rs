@@ -19,7 +19,7 @@ const TARGETS: &[(&str, &str)] = &[
 ];
 
 /// 去掉终端颜色控制符。
-fn strip_ansi(s: &str) -> String {
+pub(super) fn strip_ansi(s: &str) -> String {
     let mut out = String::new();
     let mut chars = s.chars().peekable();
     while let Some(c) = chars.next() {
