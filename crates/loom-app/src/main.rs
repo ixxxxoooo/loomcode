@@ -89,6 +89,7 @@ mod right_rail;
 mod right_tabs;
 mod sidebar;
 mod smooth_scroll;
+mod sticky_user;
 mod sidebar_filter;
 mod term_actions;
 mod term_geom;

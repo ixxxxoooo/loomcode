@@ -42,6 +42,18 @@ impl ChatScroll {
         max - top > BOTTOM_SLOP
     }
 
+    /// 视口顶部的行下标与该行已滚出的像素数。
+    pub fn top(&self) -> (usize, f32) {
+        let o = self.list.logical_scroll_top();
+        (o.item_ix, f32::from(o.offset_in_item))
+    }
+
+    /// 滚到指定行顶部(暂停贴底跟随)。
+    pub fn scroll_to_row(&mut self, row: usize, cx: &mut Context<Self>) {
+        self.list.scroll_to(ListOffset { item_ix: row, offset_in_item: px(0.) });
+        cx.notify();
+    }
+
     /// 重置为 `item_count` 行并恢复跟随。
     pub fn reset(&mut self, item_count: usize, cx: &mut Context<Self>) {
         self.list.reset(item_count);
@@ -107,6 +119,7 @@ pub fn chat_scroller(
     id: &'static str,
     state: Entity<ChatScroll>,
     mut render_row: impl FnMut(usize, &mut Window, &mut App) -> AnyElement + 'static,
+    sticky: Option<AnyElement>,
     cx: &App,
 ) -> impl IntoElement {
     let t = cx.theme().clone();
@@ -126,6 +139,7 @@ pub fn chat_scroller(
                 }))
                 .vertical_scrollbar(&list),
         )
+        .children(sticky)
         .when(away, |d| {
             d.child(
                 div().absolute().left_0().right_0().bottom(px(12.)).flex().justify_center().child(

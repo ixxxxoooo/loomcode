@@ -1196,6 +1196,7 @@ pub fn chat_panel_with_footer(parts: Option<(Entity<SessionModel>, Entity<Compos
     };
     let scroller_state = model.read(cx).scroller.clone();
     let wheel_model = model.clone();
+    let sticky = crate::sticky_user::render(&model, &scroller_state, cx);
     let model_for_dock = model.clone();
     v_flex().size_full().bg(t.background)
         .child(
@@ -1205,7 +1206,7 @@ pub fn chat_panel_with_footer(parts: Option<(Entity<SessionModel>, Entity<Compos
                     wheel_model.update(cx, |m, cx| m.on_wheel(dy, cx));
                 })
                 .child(
-                crate::chat_scroll::chat_scroller("timeline", scroller_state, move |ix, window, cx| timeline::render_row(&model, ix, window, cx), cx),
+                crate::chat_scroll::chat_scroller("timeline", scroller_state, move |ix, window, cx| timeline::render_row(&model, ix, window, cx), sticky, cx),
             ),
         )
         .children(crate::dock_cards::render(&model_for_dock, cx))
