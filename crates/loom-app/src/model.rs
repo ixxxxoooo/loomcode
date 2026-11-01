@@ -190,14 +190,25 @@ impl SessionModel {
     pub fn send_prompt(&mut self, text: String, cx: &mut Context<Self>) {
         let steer = self.state.phase == Phase::Running;
         self.handle.send(AgentCommand::Prompt { text, images: vec![], files: vec![], steer });
-        cx.notify();
+        self.mark_running(cx);
     }
 
     /// 带图片与文件引用发送。
     pub fn send_prompt_with(&mut self, text: String, images: Vec<String>, files: Vec<String>, cx: &mut Context<Self>) {
         let steer = self.state.phase == Phase::Running;
         self.handle.send(AgentCommand::Prompt { text, images, files, steer });
-        cx.notify();
+        self.mark_running(cx);
+    }
+
+    /// 发送后立刻进入运行态:惰性后端要先启动 `claude` 子进程(可能要十几秒)才会回「回合开始」,
+    /// 这段时间里界面必须已显示「处理中」与停止按钮,不能像卡住一样空白。
+    /// 后端随后的 `TurnStarted` 是幂等的;启动失败会回 `TurnEnded`,自然恢复。
+    fn mark_running(&mut self, cx: &mut Context<Self>) {
+        if self.state.phase != Phase::Running {
+            self.on_events(vec![AgentEvent::TurnStarted], cx);
+        } else {
+            cx.notify();
+        }
     }
 
     /// 运行中把消息排到队尾。
