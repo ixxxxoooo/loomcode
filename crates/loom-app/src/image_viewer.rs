@@ -2,7 +2,7 @@
 //!
 //! @author ixxxxoooo
 
-use gpui_kit::component::{ActiveTheme, WindowExt as _};
+use gpui_kit::component::ActiveTheme;
 use gpui_kit::prelude::FluentBuilder as _;
 use gpui_kit::*;
 use std::path::PathBuf;
@@ -10,17 +10,11 @@ use std::path::PathBuf;
 use crate::ui::icon;
 use gpui_kit::assets::IconName;
 
-/// 弹出图片预览对话框。
+/// 打开全屏图片预览(缩放、拖动、Esc 关闭)。
 ///
 /// 参数:`path` 图片文件路径;`name` 标题。
 pub fn preview_image(path: &str, name: &str, window: &mut Window, cx: &mut App) {
-    let (path, name) = (PathBuf::from(path), name.to_string());
-    window.open_dialog(cx, move |dialog, _, _| {
-        let p = path.clone();
-        dialog.title(name.clone()).w(px(760.)).child(
-            div().w_full().max_h(px(560.)).flex().items_center().justify_center().child(img(p).max_w_full().max_h(px(540.)).object_fit(ObjectFit::Contain)),
-        )
-    });
+    crate::lightbox::open(path, name, window, cx);
 }
 
 /// 方形缩略图:点击预览;`on_remove` 非空时悬停显示右上角删除按钮。
@@ -37,7 +31,9 @@ pub fn thumbnail(id: &str, path: &str, name: &str, size: f32, on_remove: Option<
         .when_some(on_remove, |d, remove| {
             d.child(
                 div().id(SharedString::from(format!("thumb-x-{id}"))).absolute().top(px(3.)).right(px(3.)).size(px(18.)).flex().items_center().justify_center().rounded_full()
-                    .bg(t.foreground.opacity(0.78)).invisible().group_hover(group, |s| s.visible())
+                    .bg(t.foreground.opacity(0.55)).hover(|s| s.bg(t.foreground.opacity(0.9)))
+                    // 悬停缩略图时更醒目;平时也保留淡淡的按钮,保证一定看得见
+                    .opacity(0.7).group_hover(group, |s| s.opacity(1.))
                     .tooltip(|window, cx| gpui_kit::component::tooltip::Tooltip::new("移除图片").build(window, cx))
                     // 点删除不触发预览
                     .on_click(move |_, window, cx| { cx.stop_propagation(); remove(window, cx); })

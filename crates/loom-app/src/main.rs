@@ -90,6 +90,8 @@ mod right_tabs;
 mod sidebar;
 mod smooth_scroll;
 mod edit_model;
+mod image_size;
+mod lightbox;
 mod row_probe;
 mod sticky_user;
 mod sidebar_filter;

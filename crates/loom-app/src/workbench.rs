@@ -1298,5 +1298,6 @@ impl Render for Workbench {
                 d.child(self.right_rail(changes, cx))
             })
             .when_some(self.palette.clone(), |d, p| d.child(p))
+            .children(crate::lightbox::current(cx))
     }
 }
