@@ -69,12 +69,13 @@ pub fn model_popup(models: &[ModelInfo], current: &str, hovered: Option<&str>, e
             .hover(|d| d.bg(t.list_hover))
             .on_click(move |_, _, cx| { let id = id.clone(); this.update(cx, |c, cx| c.choose_model_effort(&id, e, cx)); })
             .child(div().w(px(14.)).child(if on { icon(IconName::Check, 12., t.primary).into_any_element() } else { div().into_any_element() }))
-            .child(div().text_size(px(13.)).child(e.cli_value()))
+            .child(div().w(px(36.)).text_size(px(13.)).child(e.label()))
+            .child(div().text_size(px(11.)).text_color(t.muted_foreground).child(e.hint()))
     });
     let panel = || v_flex().p_1().rounded(px(10.)).border_1().border_color(t.border).bg(t.popover).shadow_lg();
     h_flex().absolute().bottom(px(44.)).left(px(8.)).items_start().gap_1()
         .child(panel().w(px(180.)).children(list))
-        .child(panel().w(px(160.)).child(div().px_2().pt_1().pb_0p5().text_size(px(11.)).text_color(t.muted_foreground).child("思考强度")).children(efforts))
+        .child(panel().w(px(340.)).child(div().px_2().pt_1().pb_0p5().text_size(px(11.)).text_color(t.muted_foreground).child("思考强度")).children(efforts))
 }
 
 /// 上下文弹层。
