@@ -89,9 +89,9 @@ impl RightPanel {
                         .child(icon(IconName::X, 10., t.muted_foreground)),
                 )
         });
-        crate::window_header::draggable(h_flex().id("rt-tabbar").h(px(crate::window_header::HEADER_H)).flex_none().px_2().gap_0p5().items_center())
+        crate::window_header::draggable(h_flex().id("rt-tabbar").h(px(crate::window_header::HEADER_H)).w_full().min_w_0().flex_none().px_2().gap_0p5().items_center())
             // 标签放不下时横向滚动,「+」与右侧按钮始终固定可见
-            .child(div().id("rt-tabs-scroll").min_w_0().h_full().flex().items_center().overflow_x_scroll().child(h_flex().gap_0p5().items_center().children(tabs)))
+            .child(div().id("rt-tabs-scroll").min_w_0().flex_shrink(1.).h_full().flex().items_center().overflow_x_scroll().child(h_flex().gap_0p5().items_center().children(tabs)))
             .child(Button::new("rt-add").xsmall().ghost().icon(IconName::Plus).tooltip("新增标签").dropdown_menu(menu))
             .child(div().flex_1().h_full())
             .when_some(trailing, |d, f| d.child(div().flex_none().child(f(window, cx))))
