@@ -36,6 +36,7 @@ pub fn sections(wb: &Workbench, cx: &mut Context<Workbench>) -> Vec<AnyElement> 
             row("工具调用详细程度", a.tool_density.describe(), segmented("tool-density",
                 ToolDensity::ALL.iter().map(|d| (*d, d.label())).collect(), a.tool_density, cx,
                 |this, v, cx| this.update_settings(cx, |s| s.appearance.tool_density = v)), cx),
+            super::density_preview::density_preview(a.tool_density, cx),
         ], cx).into_any_element(),
         group("设置页宽度", rows![
             row("内容宽度", "统一控制所有设置页右侧内容的最大宽度;窗口较窄时自动收窄", segmented("w-settings",

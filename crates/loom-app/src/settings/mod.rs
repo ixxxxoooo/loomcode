@@ -17,6 +17,7 @@ mod claude_pages;
 mod cli;
 mod confirm;
 mod customize_page;
+mod density_preview;
 mod diagnostics_page;
 mod doc_actions;
 mod editor_page;
