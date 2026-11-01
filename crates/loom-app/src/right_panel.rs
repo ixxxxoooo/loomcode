@@ -44,6 +44,10 @@ pub fn collect_changes(items: &[TimelineItem]) -> Vec<FileChange> {
             TimelineItem::Permission(p) => &p.tool,
             _ => return,
         };
+        // 被拒绝、被中断的编辑没有真正落盘,不算改动
+        if matches!(tool.status, ToolStatus::Denied | ToolStatus::Interrupted) {
+            return;
+        }
         for c in &tool.content {
             if let ToolContent::Diff { path, old, new } = c {
                 match out.iter_mut().find(|f| &f.path == path) {
@@ -434,6 +438,13 @@ mod tests {
             old: old.into(),
             new: new.into(),
         }))
+    }
+
+    #[::core::prelude::v1::test]
+    fn 被拒绝的编辑不算改动() {
+        let mut denied = ToolCall::new("1", "Edit", "编辑").with_content(ToolContent::Diff { path: "a.rs".into(), old: "x".into(), new: "y".into() });
+        denied.status = ToolStatus::Denied;
+        assert!(collect_changes(&[TimelineItem::Tool(denied)]).is_empty());
     }
 
     #[::core::prelude::v1::test]

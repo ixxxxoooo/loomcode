@@ -74,6 +74,10 @@ pub fn needs_working_row(items: &[TimelineItem]) -> bool {
 /// 回合折叠行里该折进去的条目:思考、工具调用(含子 Agent)、待办、中间的助手叙述;
 /// 用户消息、提示、改动汇总、权限 / 提问 / 计划卡、画布、最终回答都保持可见。
 fn digest_foldable(item: &TimelineItem) -> bool {
+    // 还在运行的(后台)子 Agent 要留在外面,不然用户看不到它在做什么
+    if matches!(item, TimelineItem::Subagent(c) if c.is_active()) {
+        return false;
+    }
     matches!(item, TimelineItem::Thinking { .. } | TimelineItem::Tool(_) | TimelineItem::Subagent(_) | TimelineItem::Todos { .. } | TimelineItem::Assistant { .. })
 }
 
@@ -213,6 +217,17 @@ pub fn agents_tally(cards: &[&loom_core::SubagentCard]) -> (usize, usize, usize,
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn 运行中的子agent不被折进回合摘要() {
+        use loom_core::{SubagentCard as C, SubagentStatus as S};
+        let mut d = HashMap::new();
+        d.insert("u1".to_string(), 8);
+        let running = vec![user("u1"), tool("1", ToolKind::Read, ToolStatus::Completed), TimelineItem::Subagent(C::new("s", "x", "d", S::Background)), tool("2", ToolKind::Read, ToolStatus::Completed), text("answer")];
+        assert!(!build_rows(&running, false, ToolDensity::Standard, &d).iter().any(|r| matches!(r, Row::Digest(_))), "后台子 Agent 还在跑,不能被折叠");
+        let done = vec![user("u1"), tool("1", ToolKind::Read, ToolStatus::Completed), TimelineItem::Subagent(C::new("s", "x", "d", S::Completed)), tool("2", ToolKind::Read, ToolStatus::Completed), text("answer")];
+        assert!(build_rows(&done, false, ToolDensity::Standard, &d).iter().any(|r| matches!(r, Row::Digest(_))));
+    }
 
     #[test]
     fn 连续子agent合成一组() {

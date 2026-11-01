@@ -719,7 +719,13 @@ impl Translator {
         let req = &v["request"];
         match str_of(req, "subtype") {
             "can_use_tool" => (self.can_use_tool(&request_id, req), None),
-            "elicitation" => (Vec::new(), Some(crate::protocol::success_response(&request_id, serde_json::json!({"action": "decline"})))),
+            "elicitation" => {
+                // MCP 服务向用户索取输入:暂不支持在对话里填写,自动拒绝,但要让用户知道发生了什么
+                let server = ["mcp_server_name", "server_name", "serverName"].iter().map(|k| str_of(req, k)).find(|s| !s.is_empty()).unwrap_or("MCP 服务");
+                let message = str_of(req, "message");
+                let text = if message.is_empty() { format!("{server} 请求输入,已自动拒绝(暂不支持在对话里填写)") } else { format!("{server} 请求输入「{message}」,已自动拒绝(暂不支持在对话里填写)") };
+                (vec![notice(NoticeLevel::Info, &text)], Some(crate::protocol::success_response(&request_id, serde_json::json!({"action": "decline"}))))
+            }
             "hook_callback" => (Vec::new(), Some(crate::protocol::success_response(&request_id, serde_json::json!({})))),
             other => (Vec::new(), Some(crate::protocol::error_response(&request_id, &format!("不支持的控制请求:{other}")))),
         }
@@ -1191,6 +1197,14 @@ mod tests {
             events.extend(t.handle(l));
         }
         reduce(events)
+    }
+
+    #[test]
+    fn mcp_输入请求自动拒绝并提示() {
+        let mut t = Translator::new("/w");
+        let (events, reply) = t.control_request(&json!({"type":"control_request","request_id":"r1","request":{"subtype":"elicitation","mcp_server_name":"github","message":"个人访问令牌"}}));
+        assert!(reply.is_some(), "必须立刻应答,否则 claude 会一直等");
+        assert!(matches!(&events[0], AgentEvent::Notice { text, .. } if text.contains("github") && text.contains("个人访问令牌")));
     }
 
     #[test]

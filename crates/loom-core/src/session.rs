@@ -58,17 +58,24 @@ impl Default for SessionState {
 
 /// 在条目列表(可能嵌套在子 Agent 内)中定位目标列表。
 fn target_list<'a>(items: &'a mut Vec<TimelineItem>, parent: &Option<String>) -> &'a mut Vec<TimelineItem> {
-    // 先算出子 Agent 的下标,再统一返回,避免借用冲突
-    let idx = parent.as_ref().and_then(|pid| {
-        items
-            .iter()
-            .position(|i| matches!(i, TimelineItem::Subagent(s) if &s.id == pid))
-    });
-    match idx {
-        Some(idx) => match &mut items[idx] {
-            TimelineItem::Subagent(s) => &mut s.children,
-            _ => unreachable!("下标由 position 在同一列表上得出"),
-        },
+    /// 在整棵树里找到子 Agent `pid` 的子列表(支持任意层嵌套)。
+    fn children_of<'a>(items: &'a mut [TimelineItem], pid: &str) -> Option<&'a mut Vec<TimelineItem>> {
+        for item in items.iter_mut() {
+            if let TimelineItem::Subagent(s) = item {
+                if s.id == pid {
+                    return Some(&mut s.children);
+                }
+                if let Some(found) = children_of(&mut s.children, pid) {
+                    return Some(found);
+                }
+            }
+        }
+        None
+    }
+    // 先判断是否存在,再取可变引用,避免借用冲突
+    let exists = parent.as_ref().is_some_and(|pid| children_of(items, pid).is_some());
+    match parent.as_ref().filter(|_| exists) {
+        Some(pid) => children_of(items, pid).expect("上面刚确认过存在"),
         None => items,
     }
 }
@@ -549,6 +556,20 @@ mod tests {
         });
         let TimelineItem::Subagent(card) = &s.items[0] else { panic!() };
         assert!(matches!(&card.children[0], TimelineItem::Tool(t) if t.status == ToolStatus::Completed));
+    }
+
+    #[test]
+    fn 多层嵌套的子代理条目落在正确的层级() {
+        let mut s = SessionState::default();
+        s.apply(sub("l1", SubagentStatus::Running));
+        s.apply(AgentEvent::Append { parent: Some("l1".into()), item: TimelineItem::Subagent(SubagentCard::new("l2", "x", "第 2 层", SubagentStatus::Running)) });
+        s.apply(AgentEvent::Append { parent: Some("l2".into()), item: TimelineItem::Subagent(SubagentCard::new("l3", "x", "第 3 层", SubagentStatus::Running)) });
+        s.apply(AgentEvent::Append { parent: Some("l3".into()), item: TimelineItem::Tool(ToolCall::new("t1", "Read", "读取")) });
+        assert_eq!(s.items.len(), 1, "只有最外层在顶层");
+        let TimelineItem::Subagent(l1) = &s.items[0] else { panic!() };
+        let TimelineItem::Subagent(l2) = &l1.children[0] else { panic!("第 2 层应在第 1 层里") };
+        let TimelineItem::Subagent(l3) = &l2.children[0] else { panic!("第 3 层应在第 2 层里") };
+        assert!(matches!(&l3.children[0], TimelineItem::Tool(t) if t.id == "t1"));
     }
 
     #[test]

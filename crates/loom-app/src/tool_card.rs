@@ -47,6 +47,18 @@ fn status_indicator(status: ToolStatus, cx: &App) -> AnyElement {
     }
 }
 
+/// 后台启动的工具(`run_in_background` 的命令、Monitor)的状态徽标:(文案, 颜色, 任务 id)。
+fn bg_badge(session: &Entity<SessionModel>, tool: &ToolCall, cx: &App) -> Option<(String, Hsla, String)> {
+    let task_id = tool.task_id.clone()?;
+    let started_here = tool.input.get("run_in_background").and_then(|v| v.as_bool()).unwrap_or(false) || tool.name == "Monitor";
+    if !started_here {
+        return None;
+    }
+    let status = session.read(cx).state.task(&task_id).map(|t| t.status).unwrap_or(TaskStatus::Running);
+    let text = if status == TaskStatus::Running { "后台运行".to_string() } else { format!("后台 · {}", status.label()) };
+    Some((text, crate::task_ui::task_color(status, cx), task_id))
+}
+
 /// 统计一个工具里所有 Diff 的增删行数。
 fn diff_stats(tool: &ToolCall) -> Option<(usize, usize)> {
     let mut found = false;
@@ -67,8 +79,10 @@ pub fn render_tool(session: &Entity<SessionModel>, tool: &ToolCall, cx: &App) ->
     let t = cx.theme();
     // 详细档下编辑与命令默认展开;手动点击反转默认状态
     let detailed = cx.try_global::<crate::UiPrefs>().is_some_and(|p| p.tool_density == loom_config::ToolDensity::Detailed) && crate::row_groups::expands_in_detailed(tool);
-    let expanded = session.read(cx).is_expanded(&tool.id) != detailed;
     let has_body = !tool.content.is_empty();
+    // 失败的命令默认展开,直接看到报错输出(详细档本来就展开);手动点击反转默认状态
+    let by_default = detailed || (tool.status == ToolStatus::Failed && tool.kind == ToolKind::Execute && has_body);
+    let expanded = session.read(cx).is_expanded(&tool.id) != by_default;
     let id = tool.id.clone();
     let s = session.clone();
     let stats = diff_stats(tool);
@@ -115,6 +129,15 @@ pub fn render_tool(session: &Entity<SessionModel>, tool: &ToolCall, cx: &App) ->
         .when(!described, |d| d.when_some(p.detail.clone().filter(|x| !x.is_empty()), |d, x| {
             d.child(div().flex_none().text_size(px(11.)).text_color(t.muted_foreground.opacity(0.75)).child(x))
         }))
+        // 后台启动的命令 / 监听:徽标显示任务当前状态,点击在右侧「任务」标签里查看输出
+        .when_some(bg_badge(session, tool, cx), |d, (text, color, task_id)| {
+            let sess = session.clone();
+            d.child(
+                div().id(SharedString::from(format!("tool-bg-{}", tool.id))).flex_none().cursor_pointer()
+                    .on_click(move |_, _, cx| { cx.stop_propagation(); sess.update(cx, |_, cx| cx.emit(crate::model::UiRequest::OpenTasks(Some(task_id.clone())))); })
+                    .child(pill(text, color, cx.theme().muted)),
+            )
+        })
         .when_some(open_path, |d, path| {
             let sess = session.clone();
             d.child(
@@ -136,6 +159,9 @@ pub fn render_tool(session: &Entity<SessionModel>, tool: &ToolCall, cx: &App) ->
         .when_some(tool.duration_ms.filter(|ms| tool.status.is_finished() && *ms >= 1000), |d, ms| {
             d.child(div().text_size(px(11.)).text_color(t.muted_foreground.opacity(0.75)).child(format!("{:.1} s", ms as f64 / 1000.)))
         })
+        // 被拒绝 / 被中断:用文字说明,和「失败」区分开
+        .when(tool.status == ToolStatus::Denied, |d| d.child(div().flex_none().text_size(px(11.)).text_color(t.warning).child("已拒绝")))
+        .when(tool.status == ToolStatus::Interrupted, |d| d.child(div().flex_none().text_size(px(11.)).text_color(t.muted_foreground).child("已中断")))
         .child(status_indicator(tool.status, cx))
         .when(has_body, |d| {
             d.child(

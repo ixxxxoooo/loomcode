@@ -20,6 +20,7 @@ fn session_row(wb: &Workbench, project_ix: usize, meta: &SessionMeta, cx: &mut C
     let active = wb.active.as_deref() == Some(meta.id.as_str());
     // 活动会话的实时状态优先于演示数据里的静态状态
     let badge = wb.live_badge(&meta.id, meta.badge, cx);
+    let bg_tasks = wb.live_task_count(&meta.id, cx);
     let id = meta.id.clone();
     let group = SharedString::from(format!("grp-{}", meta.id));
     let (pin_id, arch_id) = (meta.id.clone(), meta.id.clone());
@@ -45,6 +46,13 @@ fn session_row(wb: &Workbench, project_ix: usize, meta: &SessionMeta, cx: &mut C
         .on_click(cx.listener(move |this, _, window, cx| this.open_session(project_ix, &id, window, cx)))
         .child(div().w(px(8.)).flex_none().child(status_dot(badge, cx).unwrap_or_else(|| div().size(px(6.)).m(px(1.)).rounded_full().flex_none().bg(t.muted_foreground.opacity(0.7)))))
         .child(div().flex_1().min_w_0().truncate().text_size(px(13.)).when(active, |d| d.font_weight(FontWeight::MEDIUM)).when(archived, |d| d.text_color(t.muted_foreground)).child(meta.title.clone()))
+        .when(bg_tasks > 0, |d| {
+            d.child(
+                h_flex().flex_none().h(px(16.)).px_1().gap_0p5().items_center().rounded(px(8.)).bg(t.foreground.opacity(0.08)).text_size(px(10.)).text_color(t.muted_foreground)
+                    .child(icon(IconName::Activity, 9., t.primary))
+                    .child(format!("{bg_tasks}")),
+            )
+        })
         .child(
             div().relative().w(px(44.)).h_full().flex_none()
                 .child(

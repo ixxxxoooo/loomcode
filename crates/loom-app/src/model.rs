@@ -82,7 +82,8 @@ impl SessionModel {
             wheel_acc: 0.,
             wheel_pending: false,
             wheel_last: 0.,
-            tasks_open: false,
+            // 调试用:LOOM_TASKS=1 启动即展开任务坞,方便截图
+            tasks_open: std::env::var("LOOM_TASKS").is_ok(),
             task_ticking: false,
         }
     }

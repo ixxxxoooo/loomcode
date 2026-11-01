@@ -424,7 +424,8 @@ impl Workbench {
                 let st = &v.model.read(cx).state;
                 if st.awaiting_user() {
                     SessionBadge::Waiting
-                } else if st.phase == Phase::Running {
+                } else if st.phase == Phase::Running || st.running_task_count() > 0 {
+                    // 回合结束但后台任务还在跑,也算运行中
                     SessionBadge::Running
                 } else if self.unread.contains(id) {
                     SessionBadge::Unread
@@ -435,6 +436,11 @@ impl Workbench {
             None if self.unread.contains(id) => SessionBadge::Unread,
             None => stored,
         }
+    }
+
+    /// 某个会话里仍在运行的后台任务数(没打开过的会话为 0)。
+    pub fn live_task_count(&self, id: &str, cx: &App) -> usize {
+        self.views.get(id).map_or(0, |v| v.model.read(cx).state.running_task_count())
     }
 
     pub fn active_model(&self) -> Option<&Entity<SessionModel>> {
