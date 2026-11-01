@@ -136,6 +136,9 @@ pub struct RightPanel {
     pub tab: RightTab,
     /// 已打开的标签(顺序即标签条顺序);为空时显示入口列表
     pub open: Vec<RightTab>,
+    /// 已打开的文件预览标签(显示在各功能标签之后)与当前选中的一个;选中时内容区显示该文件
+    pub previews: Vec<crate::file_preview::FilePreview>,
+    pub active_preview: Option<usize>,
     /// 是否显示顶部分段栏(IDE 窗口用活动栏切换,不显示)
     pub show_tabs: bool,
     /// 标签行末尾的额外控件(Agent 窗口放右面板开关与 IDE 入口),由工作台注入
@@ -162,6 +165,8 @@ impl RightPanel {
         Self {
             tab: RightTab::Changes,
             open: crate::right_tabs::DEFAULT_TABS.to_vec(),
+            previews: Vec::new(),
+            active_preview: None,
             show_tabs: true,
             trailing: None,
             model: None,
@@ -185,6 +190,8 @@ impl RightPanel {
         self._sub = model.as_ref().map(|m| cx.observe(m, |_, _, cx| cx.notify()));
         self.model = model;
         self.open_changes.clear();
+        self.previews.clear();
+        self.active_preview = None;
         self.git.reset();
         self.root = root.clone();
         self.files.set_root(root);
@@ -365,16 +372,19 @@ impl Render for RightPanel {
     fn render(&mut self, window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
         let t = cx.theme().clone();
         if let Some(path) = self.pending_open.take() {
-            self.files.open(&path, window, cx);
+            let full = self.files.open(&path);
+            self.open_preview(full, false, window, cx);
         }
         let items = self.items(cx);
         if self.tab == RightTab::Changes && self.git.mode == crate::git_changes::ChangesMode::Git {
             self.git_auto_refresh(items.len(), cx);
         }
         let change_count = collect_changes(&items).len();
-        let body = if self.open.is_empty() { self.empty_tabs_view(cx) } else { match self.tab {
+        let body = if let Some(p) = self.active_preview.and_then(|i| self.previews.get(i)) {
+            p.render(cx)
+        } else if self.open.is_empty() { self.empty_tabs_view(cx) } else { match self.tab {
             RightTab::Changes => self.changes_tab(&items, cx),
-            RightTab::Files => self.files.render(cx),
+            RightTab::Files => self.files_view(cx),
             RightTab::Terminal => self.terminal_tab(&items, cx),
             RightTab::Plan => self.plan_view(&items, cx),
             RightTab::Output => self.output_view(&items, cx),

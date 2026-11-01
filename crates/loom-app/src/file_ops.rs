@@ -1,4 +1,4 @@
-//! 文件树的文件操作:新建文件 / 文件夹、重命名、删除、在访达中显示,以及行右键菜单。
+//! 文件树的文件操作:新建文件 / 文件夹、重命名、移到废纸篓、在访达中显示,以及行右键菜单。
 //!
 //! @author ixxxxoooo
 
@@ -105,7 +105,7 @@ impl RightPanel {
         });
     }
 
-    /// 弹出删除确认(移到废纸篓不可行时直接删除,所以明确提示不可恢复)。
+    /// 弹出「移到废纸篓」确认(可从废纸篓恢复)。
     pub fn delete_dialog(&mut self, path: PathBuf, window: &mut Window, cx: &mut Context<Self>) {
         let name = path.file_name().map(|n| n.to_string_lossy().to_string()).unwrap_or_default();
         let panel = cx.entity().downgrade();
@@ -113,20 +113,19 @@ impl RightPanel {
             let (panel, path) = (panel.clone(), path.clone());
             alert
                 .confirm()
-                .title("删除文件?")
-                .description(format!("「{name}」将被永久删除,无法恢复。"))
-                .ok_text("删除")
+                .title(format!("要把「{name}」移到废纸篓吗?"))
+                .description("之后可以在废纸篓里恢复。")
+                .ok_text("移到废纸篓")
                 .ok_variant(gpui_kit::component::button::ButtonVariant::Danger)
                 .on_ok(move |_, window, cx| {
-                    let res = if path.is_dir() { std::fs::remove_dir_all(&path) } else { std::fs::remove_file(&path) };
-                    match res {
+                    match trash_path(&path) {
                         Ok(()) => {
                             let _ = panel.update(cx, |this, cx| {
                                 this.reload_files(cx);
                                 cx.notify();
                             });
                         }
-                        Err(e) => window.push_notification(Notification::error(format!("删除失败:{e}")), cx),
+                        Err(e) => window.push_notification(Notification::error(format!("移到废纸篓失败:{e}")), cx),
                     }
                     true
                 })
@@ -134,10 +133,20 @@ impl RightPanel {
     }
 }
 
+/// 把文件或目录移到废纸篓(通过访达,保留「放回原处」)。
+///
+/// 参数:`path` 目标路径。返回:失败原因。
+pub fn trash_path(path: &Path) -> Result<(), String> {
+    let escaped = path.to_string_lossy().replace('\\', "\\\\").replace('"', "\\\"");
+    let script = format!("tell application \"Finder\" to delete POSIX file \"{escaped}\"");
+    let out = std::process::Command::new("osascript").args(["-e", &script]).output().map_err(|e| e.to_string())?;
+    if out.status.success() { Ok(()) } else { Err(String::from_utf8_lossy(&out.stderr).trim().to_string()) }
+}
+
 /// 文件树行的右键菜单:新建、重命名、删除、复制路径、在访达中显示。
 ///
 /// 参数:`panel` 文件面板弱引用;`path` 目标路径;`is_dir` 是否目录。
-pub fn row_menu(panel: WeakEntity<RightPanel>, path: PathBuf, is_dir: bool) -> impl Fn(PopupMenu, &mut Window, &mut Context<PopupMenu>) -> PopupMenu + 'static {
+pub fn row_menu(panel: WeakEntity<RightPanel>, path: PathBuf, is_dir: bool, root: PathBuf) -> impl Fn(PopupMenu, &mut Window, &mut Context<PopupMenu>) -> PopupMenu + 'static {
     move |menu, _, _| {
         let item = |label: &'static str, icon: IconName| PopupMenuItem::new(label).icon(icon);
         // 新建的位置:目录自身,或文件所在目录
@@ -158,17 +167,22 @@ pub fn row_menu(panel: WeakEntity<RightPanel>, path: PathBuf, is_dir: bool) -> i
             let _ = p.update(cx, |this, cx| this.rename_dialog(t, window, cx));
         });
         let (p, t) = (panel.clone(), path.clone());
-        let delete = item("删除…", IconName::Trash).on_click(move |_, window, cx| {
+        let delete = item("移到废纸篓…", IconName::Trash).on_click(move |_, window, cx| {
             let t = t.clone();
             let _ = p.update(cx, |this, cx| this.delete_dialog(t, window, cx));
         });
         let t = path.clone();
         let copy = item("复制路径", IconName::Copy).on_click(move |_, _, cx| cx.write_to_clipboard(ClipboardItem::new_string(t.display().to_string())));
+        let (t, r) = (path.clone(), root.clone());
+        let copy_rel = item("复制相对路径", IconName::Copy).on_click(move |_, _, cx| {
+            let rel = t.strip_prefix(&r).unwrap_or(&t).display().to_string();
+            cx.write_to_clipboard(ClipboardItem::new_string(rel))
+        });
         let t = path.clone();
         let reveal = item("在访达中显示", IconName::ExternalLink).on_click(move |_, _, _| {
             let _ = std::process::Command::new("open").arg("-R").arg(&t).spawn();
         });
-        menu.item(new_file).item(new_dir).separator().item(rename).item(delete).separator().item(copy).item(reveal)
+        menu.item(new_file).item(new_dir).separator().item(rename).item(delete).separator().item(copy).item(copy_rel).item(reveal)
     }
 }
 

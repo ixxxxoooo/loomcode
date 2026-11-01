@@ -456,6 +456,12 @@ impl Render for Composer {
                     if running { this.session.update(cx, |m, cx| m.cancel(cx)); } else { cx.propagate(); }
                 } else { this.suggestions.clear(); this.open = None; cx.notify(); }
             }))
+            // 从文件树拖进来:引用 @相对路径
+            .on_drop(cx.listener(|this, d: &crate::file_dnd::DraggedPath, window, cx| {
+                let cur = this.input.read(cx).value().to_string();
+                let sep = if cur.is_empty() || cur.ends_with(' ') || cur.ends_with('\n') { "" } else { " " };
+                this.set_text(&format!("{cur}{sep}@{} ", d.rel), window, cx);
+            }))
             .on_drop(cx.listener(|this, paths: &ExternalPaths, window, cx| {
                 for p in paths.paths() {
                     let ext = p.extension().and_then(|e| e.to_str()).unwrap_or("").to_lowercase();
