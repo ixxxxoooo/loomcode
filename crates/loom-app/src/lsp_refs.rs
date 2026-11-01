@@ -4,7 +4,8 @@
 //! @author ixxxxoooo
 
 use crate::ide::IdeView;
-use crate::ide_overlay::{ActionItem, Overlay, RefItem};
+use crate::ide_overlay::{ActionItem, Overlay};
+use crate::ide_peek::{PeekState, RawRef};
 use crate::lsp::{split_lines, to_lsp_pos, fix_pos, fix_range};
 use crate::lsp_actions::apply_edits;
 use anyhow::{Result, anyhow};
@@ -49,11 +50,12 @@ impl IdeView {
         window.push_notification(n, cx);
     }
 
-    /// 查找光标处符号的所有引用:一处直接跳转,多处弹出列表。
+    /// 查找光标处符号的所有引用:一处直接跳转,多处弹出引用预览窗(对标 VS Code 的 Peek References)。
     pub(crate) fn find_references(&mut self, window: &mut Window, cx: &mut Context<Self>) {
         let Some((_, sync, full, rope, offset)) = self.lsp_context_pub(cx) else { return };
+        let symbol = rope.word_range(offset).and_then(|r| full.get(r)).unwrap_or("").to_string();
         cx.spawn_in(window, async move |this, cx| {
-            let res: Result<Vec<RefItem>> = cx
+            let res: Result<Vec<RawRef>> = cx
                 .background_spawn(async move {
                     let lines = split_lines(&full);
                     let pos = to_lsp_pos(&rope, offset, &lines);
@@ -64,17 +66,19 @@ impl IdeView {
                         return Ok(vec![]);
                     }
                     let locs: Vec<lsp_types::Location> = serde_json::from_value(v)?;
-                    let mut files: HashMap<String, Vec<String>> = HashMap::new();
+                    let mut files: HashMap<String, String> = HashMap::new();
                     let mut items = Vec::new();
                     for l in locs.into_iter().take(MAX_REFS) {
                         let Some(path) = loom_lsp::uri::to_path(l.uri.as_str()) else { continue };
                         let key = l.uri.to_string();
-                        let text = files.entry(key.clone()).or_insert_with(|| if key == sync.uri { full.lines().map(String::from).collect() } else { std::fs::read_to_string(&path).map(|t| t.lines().map(String::from).collect()).unwrap_or_default() });
-                        let mut start = l.range.start;
-                        let refs: Vec<&str> = text.iter().map(String::as_str).collect();
-                        fix_pos(&mut start, &refs);
-                        let preview = text.get(start.line as usize).map(|s| s.trim().to_string()).unwrap_or_default();
-                        items.push(RefItem { path, line: start.line, col: start.character, preview });
+                        let text = files.entry(key.clone()).or_insert_with(|| if key == sync.uri { full.clone() } else { std::fs::read_to_string(&path).unwrap_or_default() });
+                        let file_lines = split_lines(text);
+                        let (mut start, mut end) = (l.range.start, l.range.end);
+                        fix_pos(&mut start, &file_lines);
+                        fix_pos(&mut end, &file_lines);
+                        let line_text = file_lines.get(start.line as usize).map(|s| s.to_string()).unwrap_or_default();
+                        let end_col = if end.line == start.line { end.character } else { line_text.chars().count() as u32 };
+                        items.push(RawRef { path, line: start.line, col: start.character, end_col, line_text });
                     }
                     Ok(items)
                 })
@@ -84,20 +88,15 @@ impl IdeView {
                     let r = items[0].clone();
                     this.open_at(r.path, r.line, r.col, window, cx);
                 }
-                Ok(items) if !items.is_empty() => this.set_overlay(Overlay::Refs { items }, cx),
+                Ok(items) if !items.is_empty() => {
+                    let st = PeekState::new(items, symbol, cx);
+                    this.set_overlay(Overlay::Refs(st), cx);
+                }
                 Ok(_) => Self::notify_ui(window, cx, Notification::info("没有找到引用")),
                 Err(e) => Self::notify_ui(window, cx, Notification::error(format!("查找引用失败:{e}"))),
             });
         })
         .detach();
-    }
-
-    /// 点引用列表的第 `i` 项:关闭浮层并跳转。
-    pub(crate) fn open_ref(&mut self, i: usize, window: &mut Window, cx: &mut Context<Self>) {
-        let Some(Overlay::Refs { items }) = &self.overlay else { return };
-        let Some(r) = items.get(i).cloned() else { return };
-        self.close_overlay(window, cx);
-        self.open_at(r.path, r.line, r.col, window, cx);
     }
 
     /// 打开重命名输入框:`local` 为真是「更改所有匹配项」。光标不在单词上时提示。

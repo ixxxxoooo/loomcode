@@ -9,18 +9,6 @@ use gpui_kit::assets::IconName;
 use gpui_kit::component::input::{Input, InputState};
 use gpui_kit::component::{ActiveTheme, h_flex, v_flex};
 use gpui_kit::*;
-use std::path::PathBuf;
-
-/// 引用列表里的一项。
-#[derive(Debug, Clone, PartialEq)]
-pub struct RefItem {
-    pub path: PathBuf,
-    /// 行 / 列(0 起,列是字符列)
-    pub line: u32,
-    pub col: u32,
-    /// 该行的文本(去掉首尾空白)
-    pub preview: String,
-}
 
 /// 代码操作列表里的一项:标题 + 服务器给的原始 JSON(执行时需要)。
 #[derive(Debug, Clone)]
@@ -31,7 +19,7 @@ pub struct ActionItem {
 
 /// 浮层内容。
 pub enum Overlay {
-    Refs { items: Vec<RefItem> },
+    Refs(crate::ide_peek::PeekState),
     /// 重命名:`local` 为真是「更改所有匹配项」(只改当前文件里的整词匹配),否则走语言服务器的重命名
     Rename { input: Entity<InputState>, local: bool, old: String },
     Actions { title: &'static str, items: Vec<ActionItem> },
@@ -60,16 +48,7 @@ impl IdeView {
         let t = cx.theme().clone();
         let weak = cx.weak_entity();
         let (title, body): (String, AnyElement) = match o {
-            Overlay::Refs { items } => {
-                let rows = items.iter().enumerate().map(|(i, r)| {
-                    let name = r.path.file_name().map(|n| n.to_string_lossy().to_string()).unwrap_or_default();
-                    h_flex().id(("ov-ref", i)).h(px(26.)).px_2().gap_2().items_center().rounded(px(4.)).cursor_pointer().hover(|d| d.bg(t.list_hover))
-                        .on_click(cx.listener(move |this, _, window, cx| this.open_ref(i, window, cx)))
-                        .child(div().flex_1().min_w_0().truncate().text_size(px(12.5)).font_family(crate::ui::MONO).child(r.preview.clone()))
-                        .child(div().flex_none().text_size(px(11.)).text_color(t.muted_foreground).child(format!("{name}:{}", r.line + 1)))
-                }).collect::<Vec<_>>();
-                (format!("引用({})", items.len()), div().id("ov-list").max_h(px(420.)).overflow_y_scroll().children(rows).into_any_element())
-            }
+            Overlay::Refs(st) => crate::ide_peek::peek_body(st, cx),
             Overlay::Actions { title, items } => {
                 let rows = items.iter().enumerate().map(|(i, a)| {
                     h_flex().id(("ov-act", i)).h(px(28.)).px_2().items_center().rounded(px(4.)).cursor_pointer().hover(|d| d.bg(t.list_hover)).text_size(px(12.5))
@@ -87,13 +66,24 @@ impl IdeView {
                 (title.clone(), body)
             }
         };
-        let width = if matches!(o, Overlay::Diff { .. }) { 900. } else { 560. };
+        let width = match o { Overlay::Diff { .. } => 900., Overlay::Refs(_) => 1040., _ => 560. };
         let esc = canvas(|b, _, _| b, move |_, _, window, _| {
             let w = weak.clone();
             window.on_key_event(move |e: &KeyDownEvent, _, window, cx| {
-                if e.keystroke.key == "escape" {
-                    let _ = w.update(cx, |this, cx| this.close_overlay(window, cx));
-                }
+                let key = e.keystroke.key.clone();
+                let _ = w.update(cx, |this, cx| match key.as_str() {
+                    "escape" => this.close_overlay(window, cx),
+                    // 引用预览窗:↑↓ 切换、回车打开
+                    "up" if matches!(this.overlay, Some(Overlay::Refs(_))) => this.peek_move(-1, cx),
+                    "down" if matches!(this.overlay, Some(Overlay::Refs(_))) => this.peek_move(1, cx),
+                    "enter" => {
+                        if let Some(Overlay::Refs(st)) = &this.overlay {
+                            let i = st.selected;
+                            this.peek_open(i, window, cx);
+                        }
+                    }
+                    _ => {}
+                });
             });
         }).absolute().size_full();
         Some(

@@ -30,3 +30,96 @@ pub fn shell_text(cmd: &str, prefix: &str, cx: &App) -> StyledText {
     let shifted: Vec<(Range<usize>, HighlightStyle)> = styles(cmd, "bash", cx).into_iter().map(|(r, s)| (r.start + prefix.len()..r.end + prefix.len(), s)).collect();
     StyledText::new(format!("{prefix}{cmd}")).with_highlights(shifted)
 }
+
+/// 把整段文本的高亮样式按行切开:`lines` 是按 `\n` 拼成该文本的各行,返回每行一组相对行首的样式。
+///
+/// 参数:`lines` 各行文本;`styles` 整段文本上的样式(字节区间)。
+pub fn split_by_line(lines: &[&str], styles: &[(Range<usize>, HighlightStyle)]) -> Vec<Vec<(Range<usize>, HighlightStyle)>> {
+    let mut out = vec![Vec::new(); lines.len()];
+    let mut start = 0;
+    for (i, l) in lines.iter().enumerate() {
+        let end = start + l.len();
+        for (r, st) in styles {
+            let (a, b) = (r.start.max(start), r.end.min(end));
+            if a < b {
+                out[i].push((a - start..b - start, *st));
+            }
+        }
+        start = end + 1;
+    }
+    out
+}
+
+/// 在已有的语法高亮上叠一段背景(如引用里的命中词):把与 `range` 重叠的样式切开,重叠部分加上背景色。
+///
+/// 参数:`base` 按位置排序且互不重叠的样式;`range` 要加背景的区间;`bg` 背景色。返回:仍然有序且互不重叠的样式。
+pub fn overlay_background(base: &[(Range<usize>, HighlightStyle)], range: Range<usize>, bg: Hsla) -> Vec<(Range<usize>, HighlightStyle)> {
+    if range.is_empty() {
+        return base.to_vec();
+    }
+    let mut out = Vec::new();
+    let mut cursor = range.start;
+    let mut placed = false;
+    for (r, st) in base {
+        if r.end <= range.start || r.start >= range.end {
+            if r.start >= range.end && !placed {
+                out.push((range.clone(), HighlightStyle { background_color: Some(bg), ..Default::default() }));
+                placed = true;
+            }
+            out.push((r.clone(), *st));
+            continue;
+        }
+        if r.start < range.start {
+            out.push((r.start..range.start, *st));
+        }
+        // 命中区间里没被样式覆盖的空隙补上纯背景
+        if r.start > cursor {
+            out.push((cursor..r.start, HighlightStyle { background_color: Some(bg), ..Default::default() }));
+        }
+        let (a, b) = (r.start.max(range.start), r.end.min(range.end));
+        out.push((a..b, HighlightStyle { background_color: Some(bg), ..*st }));
+        cursor = b;
+        if r.end > range.end {
+            out.push((range.end..r.end, *st));
+            cursor = range.end;
+        }
+        placed = true;
+    }
+    if cursor < range.end && !placed {
+        out.push((range.clone(), HighlightStyle { background_color: Some(bg), ..Default::default() }));
+    } else if cursor < range.end {
+        out.push((cursor..range.end, HighlightStyle { background_color: Some(bg), ..Default::default() }));
+    }
+    out.sort_by_key(|(r, _)| r.start);
+    out
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn hs() -> HighlightStyle {
+        HighlightStyle { color: Some(hsla(0.1, 0.5, 0.5, 1.)), ..Default::default() }
+    }
+
+    #[::core::prelude::v1::test]
+    fn 叠背景后仍有序且不重叠() {
+        let bg = hsla(0.6, 1., 0.5, 0.3);
+        let base = vec![(0..3, hs()), (5..9, hs())];
+        let out = overlay_background(&base, 2..7, bg);
+        assert!(out.windows(2).all(|w| w[0].0.end <= w[1].0.start), "{out:?}");
+        let covered: usize = out.iter().filter(|(_, s)| s.background_color == Some(bg)).map(|(r, _)| r.len()).sum();
+        assert_eq!(covered, 5);
+        // 没有样式的文本也能加背景
+        let out = overlay_background(&[], 1..4, bg);
+        assert_eq!(out.len(), 1);
+    }
+
+    #[::core::prelude::v1::test]
+    fn 按行切开样式() {
+        let lines = ["ab", "cde"];
+        let out = split_by_line(&lines, &[(1..4, hs())]);
+        assert_eq!(out[0][0].0, 1..2);
+        assert_eq!(out[1][0].0, 0..1);
+    }
+}

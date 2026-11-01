@@ -74,6 +74,7 @@ mod ide_md_sync;
 mod ide_compare;
 mod ide_menu;
 mod ide_overlay;
+mod ide_peek;
 mod lsp_refs;
 mod lsp_actions;
 mod ide_sheet;
