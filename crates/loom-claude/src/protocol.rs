@@ -69,6 +69,11 @@ pub fn initialize(request_id: &str) -> Value {
     )
 }
 
+/// 查询账户用量与限额(`/usage` 同源)。
+pub fn get_usage(request_id: &str) -> Value {
+    control_request(request_id, json!({"subtype": "get_usage", "skip_behaviors": true}))
+}
+
 /// 停止一个后台任务。
 pub fn stop_task(request_id: &str, task_id: &str) -> Value {
     control_request(request_id, json!({"subtype": "stop_task", "task_id": task_id}))

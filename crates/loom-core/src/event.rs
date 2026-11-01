@@ -29,6 +29,20 @@ pub struct Usage {
     pub five_hour_pct: Option<f32>,
     /// 每周限额使用百分比
     pub weekly_pct: Option<f32>,
+    /// 限额查询状态(只在用户点开上下文弹层时才查询,不自动轮询)
+    pub limits_state: LimitsState,
+}
+
+/// 账户限额的查询状态。
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
+pub enum LimitsState {
+    /// 没有进行中的查询
+    #[default]
+    Idle,
+    /// 正在向官方接口查询
+    Checking,
+    /// 查询失败或当前账户没有限额(如使用第三方服务商)
+    Unavailable,
 }
 
 impl Usage {
@@ -112,6 +126,8 @@ pub enum AgentCommand {
     StopTask { task_id: String },
     /// 把前台运行中的 Bash / 子 Agent 转入后台(Ctrl+B);`tool_use_id` 为空表示全部
     BackgroundCurrent { tool_use_id: Option<String> },
+    /// 查询账户用量与限额(官方 `get_usage` 控制请求);只在用户点开上下文弹层时发送
+    RefreshUsage,
     /// 触发演示场景(仅演示后端识别)
     RunScenario(String),
     /// 关闭后端(结束子进程)

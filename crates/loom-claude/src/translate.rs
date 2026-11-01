@@ -687,6 +687,28 @@ impl Translator {
         out
     }
 
+    /// 开始查询账户限额:返回带「查询中」状态的用量快照。
+    pub fn usage_checking(&mut self) -> AgentEvent {
+        self.usage.limits_state = LimitsState::Checking;
+        AgentEvent::Usage(self.usage.clone())
+    }
+
+    /// 处理 `get_usage` 的应答:`rate_limits.five_hour / seven_day` 的 `utilization` 已是百分比。
+    /// 失败或当前账户没有限额时置为「不可用」。
+    pub fn account_usage(&mut self, body: &Value, ok: bool) -> AgentEvent {
+        let limits = &body["rate_limits"];
+        let pct = |k: &str| limits[k].get("utilization").and_then(Value::as_f64).map(|u| u as f32);
+        let (five, weekly) = (pct("five_hour"), pct("seven_day"));
+        if ok && (five.is_some() || weekly.is_some()) {
+            self.usage.five_hour_pct = five.or(self.usage.five_hour_pct);
+            self.usage.weekly_pct = weekly.or(self.usage.weekly_pct);
+            self.usage.limits_state = LimitsState::Idle;
+        } else {
+            self.usage.limits_state = LimitsState::Unavailable;
+        }
+        AgentEvent::Usage(self.usage.clone())
+    }
+
     fn rate_limit(&mut self, v: &Value) -> Vec<AgentEvent> {
         let info = &v["rate_limit_info"];
         let windows = &info["unifiedWindows"];
@@ -1024,6 +1046,18 @@ pub fn build_tool(id: &str, name: &str, input: &Value, cwd: &str) -> ToolCall {
 mod tests {
     use super::*;
     use serde_json::json;
+
+    #[test]
+    fn get_usage应答写入限额与状态() {
+        let mut t = Translator::new("/private/tmp/loom-probe");
+        let AgentEvent::Usage(u) = t.usage_checking() else { panic!() };
+        assert_eq!(u.limits_state, LimitsState::Checking);
+        let body = json!({"rate_limits": {"five_hour": {"utilization": 42.0}, "seven_day": {"utilization": 7.5}}});
+        let AgentEvent::Usage(u) = t.account_usage(&body, true) else { panic!() };
+        assert_eq!((u.five_hour_pct, u.weekly_pct, u.limits_state), (Some(42.0), Some(7.5), LimitsState::Idle));
+        let AgentEvent::Usage(u) = t.account_usage(&json!({"rate_limits_available": false}), true) else { panic!() };
+        assert_eq!(u.limits_state, LimitsState::Unavailable);
+    }
 
     /// 把 jsonl 夹具逐行喂给翻译器。can_use_tool 的应答在测试里省略。
     fn feed(name: &str) -> (Translator, Vec<AgentEvent>) {

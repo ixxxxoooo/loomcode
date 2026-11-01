@@ -6,7 +6,6 @@
 use crate::diff;
 use crate::file_tree::FileTree;
 use crate::model::SessionModel;
-use crate::tool_card::tool_icon;
 use crate::ui::{MONO, caption, empty_state, icon, pill};
 use crate::workbench::RightTab;
 use gpui_kit::assets::IconName;
@@ -88,43 +87,6 @@ pub fn collect_terminal(items: &[TimelineItem]) -> Vec<TerminalRun> {
                 }
             }
         }
-    });
-    out
-}
-
-/// 输出面板的一行日志。
-#[derive(Debug, Clone, PartialEq)]
-pub struct LogLine {
-    pub level: NoticeLevel,
-    pub kind: Option<ToolKind>,
-    pub text: String,
-    pub detail: Option<String>,
-}
-
-/// 把时间线整理成日志:工具调用 + 提示。
-pub fn collect_log(items: &[TimelineItem]) -> Vec<LogLine> {
-    let mut out = Vec::new();
-    walk_items(items, &mut |item| match item {
-        TimelineItem::Tool(t) => {
-            let level = if t.status == ToolStatus::Failed { NoticeLevel::Error } else { NoticeLevel::Info };
-            let detail = match (t.status, t.duration_ms) {
-                (ToolStatus::Running, _) => Some("运行中".to_string()),
-                (ToolStatus::Pending, _) => Some("等待".to_string()),
-                (_, Some(ms)) => Some(format!("{ms} ms")),
-                _ => None,
-            };
-            out.push(LogLine { level, kind: Some(t.kind), text: t.title.clone(), detail });
-        }
-        TimelineItem::Notice { level, text, .. } => {
-            out.push(LogLine { level: *level, kind: None, text: text.clone(), detail: None })
-        }
-        TimelineItem::Subagent(s) => out.push(LogLine {
-            level: NoticeLevel::Info,
-            kind: Some(ToolKind::Subagent),
-            text: format!("子 Agent · {}", s.description),
-            detail: None,
-        }),
-        _ => {}
     });
     out
 }
@@ -358,51 +320,6 @@ impl RightPanel {
             })
             .into_any_element()
     }
-
-    // ---------- 输出 ----------
-
-    fn output_view(&self, items: &[TimelineItem], cx: &mut Context<Self>) -> AnyElement {
-        let t = cx.theme().clone();
-        let log = collect_log(items);
-        let usage = self.model.as_ref().map(|m| m.read(cx).state.usage.clone()).unwrap_or_default();
-        if log.is_empty() && usage.context_size == 0 {
-            return empty_state(IconName::ScrollText, "暂无输出", "工具调用与会话日志会显示在这里", cx).into_any_element();
-        }
-        v_flex().size_full()
-            .when(usage.context_size > 0, |d| {
-                d.child(
-                    v_flex().px_3().py_2().gap_1().border_b_1().border_color(t.border).text_size(px(12.))
-                        .child(h_flex().justify_between()
-                            .child(div().text_color(t.muted_foreground).child("上下文"))
-                            .child(div().font_family(MONO).child(format!("{} / {}  ({:.0}%)", usage.context_used, usage.context_size, usage.context_ratio() * 100.))))
-                        .child(h_flex().justify_between()
-                            .child(div().text_color(t.muted_foreground).child("本会话花费"))
-                            .child(div().font_family(MONO).child(format!("${:.4}", usage.cost_usd))))
-                        .when_some(usage.five_hour_pct, |d, p| d.child(h_flex().justify_between()
-                            .child(div().text_color(t.muted_foreground).child("5 小时限额"))
-                            .child(div().font_family(MONO).child(format!("{p:.0}%")))))
-                        .when_some(usage.weekly_pct, |d, p| d.child(h_flex().justify_between()
-                            .child(div().text_color(t.muted_foreground).child("每周限额"))
-                            .child(div().font_family(MONO).child(format!("{p:.0}%"))))),
-                )
-            })
-            .child(
-                v_flex().id("output-scroll").flex_1().min_h_0().overflow_y_scroll().py_1()
-                    .children(log.into_iter().enumerate().map(|(ix, line)| {
-                        let color = match line.level {
-                            NoticeLevel::Info => t.foreground,
-                            NoticeLevel::Warning => t.warning,
-                            NoticeLevel::Error => t.danger,
-                        };
-                        h_flex().w_full().px_3().h(px(24.)).gap_2().items_center().text_size(px(12.))
-                            .child(div().w(px(26.)).flex_none().font_family(MONO).text_color(t.muted_foreground).child(format!("{:>3}", ix + 1)))
-                            .child(icon(line.kind.map(tool_icon).unwrap_or(IconName::Info), 12., t.muted_foreground))
-                            .child(div().flex_1().min_w_0().truncate().text_color(color).child(line.text))
-                            .when_some(line.detail, |d, s| d.child(div().flex_none().font_family(MONO).text_color(t.muted_foreground).child(s)))
-                    })),
-            )
-            .into_any_element()
-    }
 }
 
 /// 把路径拆成 (目录, 文件名)。
@@ -431,7 +348,6 @@ impl Render for RightPanel {
             RightTab::Files => self.files_view(cx),
             RightTab::Terminal => self.terminal_tab(&items, cx),
             RightTab::Plan => self.plan_view(&items, cx),
-            RightTab::Output => self.output_view(&items, cx),
             RightTab::Subagent => self.subagent_view(&items, window, cx),
             RightTab::Tasks => self.tasks_view(cx),
         } };

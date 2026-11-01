@@ -99,6 +99,16 @@ pub fn context_popup(usage: &Usage, this: Entity<Composer>, cx: &App) -> Div {
         .child(row("已用", format!("{} / {}", short_tokens(usage.context_used), short_tokens(usage.context_size))))
         .child(row("占比", format!("{:.0}%", ratio * 100.)))
         .child(row("本会话花费", format!("${:.2}", usage.cost_usd)))
+        .when_some(usage.five_hour_pct, |d, p| d.child(row("5 小时限额", format!("{p:.0}%"))))
+        .when_some(usage.weekly_pct, |d, p| d.child(row("每周限额", format!("{p:.0}%"))))
+        .when(usage.five_hour_pct.is_none() && usage.weekly_pct.is_none(), |d| {
+            let note = match usage.limits_state {
+                loom_core::LimitsState::Checking => "正在查询账户限额…",
+                loom_core::LimitsState::Unavailable => "账户限额不可用(第三方服务商或离线)",
+                loom_core::LimitsState::Idle => "打开此面板时查询账户限额",
+            };
+            d.child(div().text_size(px(11.)).text_color(t.muted_foreground).child(note))
+        })
         .child(div().h(px(1.)).my_1().bg(t.border))
         .child(action("ctx-compact", IconName::Minimize2, "压缩上下文", "发送 /compact", Box::new(move |window, cx| { a.update(cx, |c, cx| c.compact(window, cx)); })))
         .child(action("ctx-new", IconName::SquarePen, "新会话继续", "⌘N", Box::new(move |window, cx| { b.update(cx, |c, cx| c.close_pop(cx)); window.dispatch_action(Box::new(crate::workbench::NewSession), cx); })))

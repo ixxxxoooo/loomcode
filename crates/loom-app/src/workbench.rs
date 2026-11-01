@@ -59,7 +59,6 @@ pub enum RightTab {
     Files,
     Terminal,
     Plan,
-    Output,
     /// 子 Agent 的完整对话(只能从时间线里的子 Agent 卡片打开,不在「+」菜单里)
     Subagent,
     /// 后台任务:命令、监听、子 Agent 的列表、输出与停止
@@ -67,7 +66,7 @@ pub enum RightTab {
 }
 
 impl RightTab {
-    pub const ALL: [RightTab; 6] = [Self::Changes, Self::Files, Self::Terminal, Self::Plan, Self::Output, Self::Tasks];
+    pub const ALL: [RightTab; 5] = [Self::Changes, Self::Files, Self::Terminal, Self::Plan, Self::Tasks];
 
     /// 英文键(环境变量、持久化用)。
     pub fn key(self) -> &'static str {
@@ -76,7 +75,6 @@ impl RightTab {
             Self::Files => "files",
             Self::Terminal => "terminal",
             Self::Plan => "plan",
-            Self::Output => "output",
             Self::Subagent => "subagent",
             Self::Tasks => "tasks",
         }
@@ -88,7 +86,6 @@ impl RightTab {
             Self::Files => "文件",
             Self::Terminal => "终端",
             Self::Plan => "计划",
-            Self::Output => "输出",
             Self::Subagent => "子 Agent",
             Self::Tasks => "任务",
         }
@@ -100,7 +97,6 @@ impl RightTab {
             Self::Files => IconName::Folder,
             Self::Terminal => IconName::Terminal,
             Self::Plan => IconName::ListTodo,
-            Self::Output => IconName::ScrollText,
             Self::Subagent => IconName::Bot,
             Self::Tasks => IconName::Activity,
         }

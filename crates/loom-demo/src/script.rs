@@ -304,6 +304,7 @@ impl ScriptBuilder {
             cost_usd: used as f64 / 1_000_000.0 * 3.0,
             five_hour_pct: five,
             weekly_pct: weekly,
+            limits_state: LimitsState::Idle,
         }));
         self
     }

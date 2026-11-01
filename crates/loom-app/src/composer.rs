@@ -321,6 +321,10 @@ impl Composer {
     fn toggle(&mut self, kind: Pick, cx: &mut Context<Self>) {
         let just_closed = self.outside_closed.take().is_some_and(|t| t.elapsed() < std::time::Duration::from_millis(250));
         self.open = if self.open == Some(kind) || just_closed { None } else { Some(kind) };
+        // 点开上下文弹层才查一次账户限额,不自动查询
+        if self.open == Some(Pick::Context) {
+            self.session.update(cx, |m, _| m.refresh_usage());
+        }
         cx.notify();
     }
 

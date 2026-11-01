@@ -346,6 +346,11 @@ impl SessionModel {
         }
     }
 
+    /// 向官方接口查询账户用量与限额(只在用户点开上下文弹层时调用,不自动轮询)。
+    pub fn refresh_usage(&mut self) {
+        self.handle.send(AgentCommand::RefreshUsage);
+    }
+
     /// 是否有仍在运行的后台任务或子 Agent。
     pub fn has_live_work(&self) -> bool {
         self.state.running_task_count() > 0 || self.state.items.iter().any(|i| matches!(i, TimelineItem::Subagent(c) if c.is_active()))

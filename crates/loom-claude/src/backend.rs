@@ -129,6 +129,7 @@ enum ReqKind {
     SetModel(String),
     SetMode(PermissionMode),
     Other(&'static str),
+    Usage,
 }
 
 struct Actor {
@@ -139,6 +140,8 @@ struct Actor {
     ev_tx: async_channel::Sender<AgentEvent>,
     reqs: HashMap<String, ReqKind>,
     req_seq: u64,
+    /// 上次向官方接口查询用量的时间(30 秒内不重复查)
+    usage_asked_at: Option<std::time::Instant>,
     turn_active: bool,
     stderr_tail: VecDeque<String>,
     /// 界面主动关闭时,进程退出不再当作异常
@@ -159,6 +162,7 @@ impl Actor {
             ev_tx,
             reqs: HashMap::new(),
             req_seq: 0,
+            usage_asked_at: None,
             turn_active: false,
             stderr_tail: VecDeque::new(),
             shutting_down: false,
@@ -285,6 +289,17 @@ impl Actor {
             AgentCommand::BackgroundCurrent { tool_use_id } => {
                 self.request(ReqKind::Other("转入后台"), |id| protocol::background_tasks(id, tool_use_id.as_deref()));
             }
+            AgentCommand::RefreshUsage => {
+                // 同一时刻只查一次,且 30 秒内不重复查
+                let fresh = self.usage_asked_at.is_some_and(|t| t.elapsed() < std::time::Duration::from_secs(30));
+                if fresh || self.reqs.values().any(|k| matches!(k, ReqKind::Usage)) {
+                    return true;
+                }
+                self.usage_asked_at = Some(std::time::Instant::now());
+                let ev = self.translator.usage_checking();
+                self.request(ReqKind::Usage, protocol::get_usage);
+                return self.emit(ev);
+            }
             AgentCommand::RunScenario(_) => {}
             AgentCommand::Shutdown => {
                 self.shutting_down = true;
@@ -389,6 +404,10 @@ impl Actor {
                     let back = self.confirmed_mode;
                     self.emit_all(vec![warn("切换权限模式"), AgentEvent::ModeChanged(back)])
                 }
+            }
+            ReqKind::Usage => {
+                let ev = self.translator.account_usage(&resp["response"], ok);
+                self.emit(ev)
             }
             ReqKind::Other(what) => {
                 // 中断失败时撤销取消标记,避免下一个回合被误判为已取消
