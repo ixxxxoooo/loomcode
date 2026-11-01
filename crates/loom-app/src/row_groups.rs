@@ -58,7 +58,7 @@ pub fn expands_in_detailed(tool: &ToolCall) -> bool {
 }
 
 /// 回合在进行时,末尾是否需要「处理中」提示:最后一个条目没有在流式输出 / 没有运行中的工具 /
-/// 没有在等待用户(那些自己已经有动态指示)。
+/// 没有在等待用户(那些自己已经有动态指示);用户已处理完的权限 / 提问 / 计划卡不算。
 ///
 /// 参数:`items` 时间线条目。
 pub fn needs_working_row(items: &[TimelineItem]) -> bool {
@@ -66,7 +66,12 @@ pub fn needs_working_row(items: &[TimelineItem]) -> bool {
         None => true,
         Some(TimelineItem::Assistant { streaming, .. }) | Some(TimelineItem::Thinking { streaming, .. }) => !*streaming,
         Some(TimelineItem::Tool(t)) => t.status.is_finished(),
-        Some(TimelineItem::Subagent(_)) | Some(TimelineItem::Permission(_)) | Some(TimelineItem::Question(_)) | Some(TimelineItem::PlanApproval(_)) => false,
+        Some(TimelineItem::Subagent(_)) => false,
+        // 待处理的权限 / 提问 / 计划卡在输入框上方有自己的指示;已处理完的卡片只是一行文字,
+        // 之后模型还在执行(如等工具结果),必须继续显示「处理中」,否则界面像卡住了
+        Some(TimelineItem::Permission(p)) => p.resolved.is_some(),
+        Some(TimelineItem::Question(q)) => q.answers.is_some(),
+        Some(TimelineItem::PlanApproval(p)) => p.approved.is_some(),
         Some(_) => true,
     }
 }
@@ -409,6 +414,15 @@ pub fn is_turn_last_assistant(items: &[TimelineItem], ix: usize, running: bool) 
 #[cfg(test)]
 mod turn_tests {
     use super::*;
+
+    #[test]
+    fn 权限已处理后仍显示处理中() {
+        use loom_core::{PermissionRequest, ToolCall};
+        let req = |resolved: Option<&str>| TimelineItem::Permission(PermissionRequest { id: "p".into(), tool: ToolCall::new("p", "WebSearch", "搜索"), options: vec![], resolved: resolved.map(Into::into) });
+        let user = |id: &str| TimelineItem::User { id: id.into(), text: "q".into(), images: vec![], files: vec![] };
+        assert!(!needs_working_row(&[user("u"), req(None)]), "待处理的权限在输入框上方有自己的指示");
+        assert!(needs_working_row(&[user("u"), req(Some("allow"))]), "已允许后工具在执行,要有处理中提示");
+    }
 
     fn a(id: &str, streaming: bool) -> TimelineItem {
         TimelineItem::Assistant { id: id.into(), text: "x".into(), streaming }

@@ -136,7 +136,7 @@ impl IdeWindow {
             crate::tab_style::tab_shell(SharedString::from(format!("ct-{id}")), group.clone(), on, cx)
                 .on_mouse_down(MouseButton::Left, cx.listener(move |this, _, window, cx| this.activate_chat_tab(&sel, window, cx)))
                 .on_mouse_down(MouseButton::Middle, cx.listener({ let id = id.clone(); move |this, _, window, cx| this.close_chat_tab(&id, window, cx) }))
-                .when(running.contains(&id), |d| d.child(div().size(px(6.)).rounded_full().bg(t.primary)))
+                .when(running.contains(&id), |d| d.child(crate::ui::breathe(div().id("chat-tab-run").size(px(6.)).rounded_full().bg(t.primary), "chat-tab-run-breath")))
                 .child(div().max_w(px(TAB_MAX_W)).truncate().child(title))
                 .child(
                     crate::tab_style::tab_close_box(SharedString::from(format!("ct-x-{id}")), cx)

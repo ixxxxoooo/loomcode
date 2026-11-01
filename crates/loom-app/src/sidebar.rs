@@ -44,7 +44,7 @@ fn session_row(wb: &Workbench, project_ix: usize, meta: &SessionMeta, cx: &mut C
         .when(active, |d| d.bg(t.foreground.opacity(0.09)))
         .when(!active, |d| d.hover(|d| d.bg(t.foreground.opacity(0.05))))
         .on_click(cx.listener(move |this, _, window, cx| this.open_session(project_ix, &id, window, cx)))
-        .child(div().w(px(8.)).flex_none().child(status_dot(badge, cx).unwrap_or_else(|| div().size(px(6.)).m(px(1.)).rounded_full().flex_none().bg(t.muted_foreground.opacity(0.7)))))
+        .child(div().w(px(8.)).flex_none().child(status_dot(badge, cx).unwrap_or_else(|| div().size(px(6.)).m(px(1.)).rounded_full().flex_none().bg(t.muted_foreground.opacity(0.7)).into_any_element())))
         .child(div().flex_1().min_w_0().truncate().text_size(px(13.)).when(active, |d| d.font_weight(FontWeight::MEDIUM)).when(archived, |d| d.text_color(t.muted_foreground)).child(meta.title.clone()))
         .when(bg_tasks > 0, |d| {
             d.child(

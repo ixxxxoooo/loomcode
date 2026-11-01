@@ -13,15 +13,23 @@ pub fn icon(name: IconName, size: f32, color: Hsla) -> Icon {
     Icon::new(name).size(px(size)).text_color(color)
 }
 
-/// 会话状态点:运行实心、等待空心环、未读小点、空闲不显示。
-pub fn status_dot(badge: SessionBadge, cx: &App) -> Option<Div> {
+/// 呼吸动画:一个来回 1.6 秒,透明度在 0.35–1.0 之间平滑起伏。
+///
+/// 参数:`el` 带 id 的元素;`id` 动画标识。返回:带呼吸动画的元素。
+pub fn breathe<E: IntoElement + StatefulInteractiveElement + Styled + 'static>(el: E, id: &'static str) -> AnyElement {
+    el.with_animation(id, Animation::new(std::time::Duration::from_millis(1600)).repeat(),
+        |d, delta| d.opacity(0.675 + 0.325 * (delta * std::f32::consts::TAU).cos())).into_any_element()
+}
+
+/// 会话状态点:运行实心(呼吸)、等待空心环(呼吸)、未读小点、空闲不显示。
+pub fn status_dot(badge: SessionBadge, cx: &App) -> Option<AnyElement> {
     let t = cx.theme();
-    let base = div().size(px(8.)).rounded_full().flex_none();
+    let base = |id: &'static str| div().id(id).size(px(8.)).rounded_full().flex_none();
     match badge {
         SessionBadge::Idle => None,
-        SessionBadge::Running => Some(base.bg(t.primary)),
-        SessionBadge::Waiting => Some(base.border_2().border_color(t.warning)),
-        SessionBadge::Unread => Some(base.bg(t.info)),
+        SessionBadge::Running => Some(breathe(base("dot-run").bg(t.primary), "dot-run-breath")),
+        SessionBadge::Waiting => Some(breathe(base("dot-wait").border_2().border_color(t.warning), "dot-wait-breath")),
+        SessionBadge::Unread => Some(base("dot-unread").bg(t.info).into_any_element()),
     }
 }
 
