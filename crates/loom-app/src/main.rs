@@ -81,6 +81,7 @@ mod view_cache;
 mod workspace_actions;
 mod worktree_actions;
 mod workspace_form;
+mod window_memory;
 mod workbench;
 
 use gpui_kit::component::TitleBar;
@@ -143,7 +144,8 @@ fn main() {
         window_header::apply_traffic_light(&mut options);
         // 调试用:LOOM_WINDOW_SIZE=宽,高 覆盖初始窗口大小(验证窄窗口布局)
         let (w, h) = std::env::var("LOOM_WINDOW_SIZE").ok().and_then(|v| v.split_once(',').and_then(|(a, b)| Some((a.trim().parse::<f32>().ok()?, b.trim().parse::<f32>().ok()?)))).unwrap_or((1360., 860.));
-        options.window_bounds = Some(WindowBounds::Windowed(Bounds::centered(None, size(px(w), px(h)), cx)));
+        // 有记忆就恢复上次的位置与大小;LOOM_WINDOW_SIZE 调试覆盖优先
+        options.window_bounds = Some(if std::env::var("LOOM_WINDOW_SIZE").is_ok() { WindowBounds::Windowed(Bounds::centered(None, size(px(w), px(h)), cx)) } else { window_memory::restore("main", (w, h), cx) });
         // 最小宽度放到 640:窗口窄于 780 时侧栏自动收起,不再被 900 的下限挡住
         options.window_min_size = Some(size(px(640.), px(480.)));
         open_window(options, cx, move |window, cx| cx.new(|cx| Workbench::new(demo, session_arg, window, cx)))

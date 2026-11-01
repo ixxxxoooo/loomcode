@@ -60,6 +60,7 @@ impl IdeWindow {
     /// 创建窗口视图。`demo`、`root` 由调用方传入,避免在工作台更新期间回读它。
     pub fn new(wb: Entity<Workbench>, demo: bool, root: String, window: &mut Window, cx: &mut Context<Self>) -> Self {
         bind_ide_keys(cx);
+        crate::window_memory::track("ide", window, cx);
         let panel = cx.new(|cx| RightPanel::new(root.clone(), demo, window, cx));
         panel.update(cx, |p, cx| {
             p.show_tabs = false;

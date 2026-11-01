@@ -178,6 +178,7 @@ pub struct Workbench {
 
 impl Workbench {
     pub fn new(demo: bool, session: Option<String>, window: &mut Window, cx: &mut Context<Self>) -> Self {
+        crate::window_memory::track("main", window, cx);
         let demo_root = loom_demo::workspace::default_root();
         // 演示沙盒与演示项目只在演示模式出现;真实模式的项目稍后从 Claude 历史里后台读取
         let projects = if demo {
@@ -952,7 +953,7 @@ impl Workbench {
             let mut options = TitleBar::window_options();
             // 红绿灯位置与 Agent 窗口一致
             crate::window_header::apply_traffic_light(&mut options);
-            options.window_bounds = Some(WindowBounds::Windowed(Bounds::centered(None, size(px(1280.), px(820.)), cx)));
+            options.window_bounds = Some(crate::window_memory::restore("ide", (1280., 820.), cx));
             options.window_min_size = Some(size(px(640.), px(480.)));
             let owner = wb.clone();
             match open_window(options, cx, move |window, cx| {
