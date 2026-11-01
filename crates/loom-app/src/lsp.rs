@@ -28,8 +28,6 @@ use std::sync::{Arc, Mutex};
 pub struct DocSync {
     pub client: Arc<Client>,
     pub uri: String,
-    pub path: PathBuf,
-    lang: &'static str,
     /// (已发送的版本号, 已发送内容的哈希)
     state: Mutex<(i32, u64)>,
 }
@@ -49,7 +47,7 @@ impl DocSync {
         let uri = loom_lsp::uri::from_path(&canon);
         let lang = loom_lsp::servers::language_id(path);
         client.notify("textDocument/didOpen", json!({ "textDocument": { "uri": uri, "languageId": lang, "version": 1, "text": text } }));
-        Arc::new(DocSync { client, uri, path: path.to_path_buf(), lang, state: Mutex::new((1, hash_of(text))) })
+        Arc::new(DocSync { client, uri, state: Mutex::new((1, hash_of(text))) })
     }
 
     /// 内容与上次发送的不同才发 `didChange`;返回当前版本号。
@@ -73,11 +71,6 @@ impl DocSync {
     pub fn did_save(&self, text: &str) {
         self.sync(text);
         self.client.notify("textDocument/didSave", json!({ "textDocument": { "uri": self.uri }, "text": text }));
-    }
-
-    #[allow(dead_code)]
-    pub fn language(&self) -> &'static str {
-        self.lang
     }
 }
 
@@ -398,15 +391,19 @@ impl IdeView {
         let text = doc.editor.read(cx).value().to_string();
         let (list, errors, warnings) = convert_diagnostics(diags, &text);
         doc.diag = (errors, warnings);
+        let mut marks: Vec<(usize, bool)> = Vec::new();
         doc.editor.update(cx, |ed, cx| {
             let rope = ed.text().clone();
             if let Some(set) = ed.diagnostics_mut() {
                 set.reset(&rope);
                 set.extend(list);
+                marks = set.iter().filter(|e| matches!(e.severity, DiagnosticSeverity::Error | DiagnosticSeverity::Warning)).map(|e| (rope.offset_to_position(e.range.start).line as usize, matches!(e.severity, DiagnosticSeverity::Error))).collect();
                 loom_diag::debug!("诊断已铺到编辑器:{} 条", set.len());
             }
             cx.notify();
         });
+        marks.dedup();
+        doc.diag_marks = Rc::new(marks);
         cx.notify();
     }
 
@@ -421,11 +418,6 @@ impl IdeView {
             (true, None) => c.name.clone(),
         };
         Some((label, doc.diag.0, doc.diag.1))
-    }
-
-    /// 当前活动文档的 (错误数, 警告数);没有语言服务器或没有诊断时为 `(0, 0)`。
-    pub fn active_diagnostics(&self) -> (usize, usize) {
-        self.tabs.active().and_then(|p| self.docs.get(p)).map_or((0, 0), |d| d.diag)
     }
 }
 

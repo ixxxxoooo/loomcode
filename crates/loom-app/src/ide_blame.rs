@@ -136,10 +136,16 @@ pub fn inline_blame(doc: &IdeDoc, cx: &App) -> Option<AnyElement> {
     let uncommitted = commit.uncommitted();
     let color = if uncommitted { t.warning } else { t.muted_foreground };
     let lh = at.size.height;
+    // 不越过编辑区右缘(否则会盖到迷你地图上);剩余空间太窄就不显示
+    let left = at.origin.x + px(28.);
+    let room = ed.text_bounds().map_or(px(560.), |b| b.right() - left - px(8.));
+    if room < px(80.) {
+        return None;
+    }
     Some(
         deferred(
-            anchored().position(point(at.origin.x + px(28.), at.origin.y)).anchor(Anchor::TopLeft).child(
-                div().id("ide-inline-blame").h(lh).max_w(px(560.)).flex().items_center().px_1().rounded(px(4.)).cursor_pointer()
+            anchored().position(point(left, at.origin.y)).anchor(Anchor::TopLeft).child(
+                div().id("ide-inline-blame").h(lh).max_w(room.min(px(560.))).flex().items_center().px_1().rounded(px(4.)).cursor_pointer()
                     .text_size(px(12.)).text_color(color.opacity(0.62)).whitespace_nowrap().overflow_hidden()
                     .hover(|d| d.text_color(color).bg(t.muted.opacity(0.5)))
                     .tooltip(move |window, cx| gpui_kit::component::tooltip::Tooltip::new(tip.clone()).build(window, cx))

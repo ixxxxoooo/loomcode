@@ -1,4 +1,5 @@
-//! 迷你地图(minimap):编辑器右侧的缩略图,按语法着色,带视口滑块、Git 改动刻度与光标刻度。
+//! 迷你地图(minimap):编辑器右侧的缩略图,按语法着色、按字形疏密分三档深浅(标点淡、字母适中、大写与符号浓),
+//! 带视口滑块、选区色带、Git 改动刻度、诊断(错误 / 警告)刻度与光标刻度。
 //!
 //! - 用 `canvas` 批量填充色块(一行一组同色连续块),不为每行建元素,几万行也不卡。
 //! - 文档比面板长时缩略图按编辑器滚动比例滚动,滑块的行为和滚动条一致(抓取偏移拖动、点击轨道跳转)。
@@ -9,6 +10,7 @@
 use crate::git_status::GitMark;
 use crate::ide::IdeView;
 use crate::minimap_model::{Geo, MAX_COLS, MiniMap, build};
+use gpui_kit::component::RopeExt as _;
 use gpui_kit::component::ActiveTheme;
 use gpui_kit::component::highlighter::{HighlightTheme, SyntaxHighlighter};
 use gpui_kit::component::input::EditorState;
@@ -95,12 +97,13 @@ fn apply_drag(editor: &Entity<EditorState>, ui: &MinimapUi, rows: usize, y: Pixe
 
 /// 迷你地图元素。
 ///
-/// 参数:`editor` 当前文档编辑器;`mm` 缩略数据;`hunks` Git 改动行区间;`ui` 共享界面状态;
+/// 参数:`editor` 当前文档编辑器;`mm` 缩略数据;`hunks` Git 改动行区间;`diag_marks` 诊断所在行与是否错误;`ui` 共享界面状态;
 /// `opts` 宽度、滑块与 Git 刻度显示选项(滑块非常驻时只在悬停或拖动时显示)。
 pub fn minimap(
     editor: &Entity<EditorState>,
     mm: Rc<MiniMap<Hsla>>,
     hunks: Rc<Vec<(Range<usize>, GitMark)>>,
+    diag_marks: Rc<Vec<(usize, bool)>>,
     ui: Rc<MinimapUi>,
     opts: MinimapOpts,
     cx: &mut Context<IdeView>,
@@ -109,6 +112,14 @@ pub fn minimap(
     let rows = mm.rows.len();
     let (vis_start, vis_len) = editor.read(cx).visible_row_range().map_or((0, 1), |r| (r.start, r.len().max(1)));
     let cursor_row = editor.read(cx).cursor_position().line as usize;
+    // 选区覆盖的行范围(无选区为 None),在缩略图上画一条淡色带
+    let sel_rows = {
+        let ed = editor.read(cx);
+        let r = ed.selected_range();
+        (r.start != r.end).then(|| (ed.text().offset_to_position(r.start).line as usize, ed.text().offset_to_position(r.end).line as usize))
+    };
+    let (diag_err, diag_warn) = (t.danger, t.warning);
+    let sel_c = t.primary;
     let (width, col_w) = (opts.width, (opts.width - PAD * 2.) / MAX_COLS as f32);
     let show_slider = opts.slider_always || ui.hover.get() || ui.grab.get().is_some();
     let (bar, slider_fill, slider_edge) = (t.muted_foreground.opacity(0.5), t.foreground.opacity(if ui.grab.get().is_some() { 0.18 } else { 0.1 }), t.foreground.opacity(0.18));
@@ -182,9 +193,18 @@ pub fn minimap(
                         let alpha = if in_view { 0.95 } else { 0.7 };
                         for r in &mm.rows[i] {
                             let x = bounds.origin.x + px(PAD + f32::from(r.start) * col_w);
-                            let color = r.color.map_or(bar, |c| c.opacity(alpha));
+                            // 墨量档位再叠一层深浅:标点淡、大写与符号浓
+                            let w = r.weight.alpha();
+                            let color = r.color.map_or(bar.opacity(bar.a * w), |c| c.opacity(alpha * w));
                             let rect = Bounds::new(point(x, y), size(px((f32::from(r.len) * col_w).max(1.)), px(ROW_H * 0.8)));
                             window.paint_quad(quad(rect, px(0.6), color, 0., transparent_black(), BorderStyle::default()));
+                        }
+                    }
+                    // 选区色带:盖在文字下面一层,先画
+                    if let Some((a, b)) = sel_rows {
+                        let (y0, y1) = (g.row_y(a as f32), g.row_y(b as f32 + 1.));
+                        if y1 >= 0. && y0 <= h {
+                            window.paint_quad(fill(Bounds::new(point(bounds.origin.x + px(1.), bounds.origin.y + px(y0.max(0.))), size(bounds.size.width - px(2.), px((y1.min(h) - y0.max(0.)).max(2.)))), sel_c.opacity(0.22)));
                         }
                     }
                     if show_slider {
@@ -203,6 +223,14 @@ pub fn minimap(
                         let hh = (ROW_H * range.len() as f32).max(2.);
                         if y + hh >= 0. && y <= h {
                             window.paint_quad(fill(Bounds::new(point(bounds.origin.x + bounds.size.width - px(3.), bounds.origin.y + px(y)), size(px(2.), px(hh))), color.opacity(0.9)));
+                        }
+                    }
+                    // 诊断刻度:错误红、警告黄,贴在 Git 刻度左边
+                    for (row, is_err) in diag_marks.iter() {
+                        let y = g.row_y(*row as f32);
+                        if y >= -ROW_H && y <= h {
+                            let c = if *is_err { diag_err } else { diag_warn };
+                            window.paint_quad(fill(Bounds::new(point(bounds.origin.x + bounds.size.width - px(7.), bounds.origin.y + px(y)), size(px(3.), px(ROW_H.max(2.)))), c.opacity(0.95)));
                         }
                     }
                     // 光标所在行的刻度

@@ -7,7 +7,38 @@ use std::ops::Range;
 /// 每行最多画多少列(再长的行没有缩略意义)。
 pub const MAX_COLS: usize = 120;
 
-/// 一行里同色连续的非空白字符。
+/// 字符的「墨量」档位:缩略图里按字形的疏密画出深浅,标点淡、小写与数字适中、大写与符号浓,
+/// 代码才有「纹理」而不是一条条实心色带(Monaco 用逐字符的字形密度,这里分三档近似)。
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum Weight {
+    Light,
+    Normal,
+    Heavy,
+}
+
+impl Weight {
+    /// 绘制时叠加到透明度上的系数。
+    pub fn alpha(self) -> f32 {
+        match self {
+            Weight::Light => 0.5,
+            Weight::Normal => 0.8,
+            Weight::Heavy => 1.0,
+        }
+    }
+}
+
+/// 某个字符的墨量档位。
+pub fn weight_of(ch: char) -> Weight {
+    match ch {
+        '.' | ',' | ';' | ':' | '\'' | '"' | '`' | '!' | '|' | '(' | ')' | '[' | ']' | '{' | '}' | '-' | '_' | '/' | '\\' => Weight::Light,
+        'A'..='Z' | '@' | '#' | '$' | '%' | '&' | '*' | '+' | '=' | '<' | '>' | '~' | '^' | '?' => Weight::Heavy,
+        // 中日韩等宽字符笔画密
+        c if !c.is_ascii() => Weight::Heavy,
+        _ => Weight::Normal,
+    }
+}
+
+/// 一行里同色、同墨量的连续非空白字符。
 #[derive(Debug, Clone, PartialEq)]
 pub struct MiniRun<C> {
     /// 起始列(含缩进)
@@ -15,6 +46,8 @@ pub struct MiniRun<C> {
     pub len: u16,
     /// 语法颜色;`None` 用默认灰
     pub color: Option<C>,
+    /// 墨量档位
+    pub weight: Weight,
 }
 
 /// 整个文档的缩略数据:每行一组色块。
@@ -32,7 +65,7 @@ impl<C> Default for MiniMap<C> {
 /// 由文本与语法着色区间生成缩略数据。
 ///
 /// 参数:`text` 全文;`styles` 按字节偏移排序的 (区间, 颜色),可以有空隙(空隙用默认色),为空则整体单色。
-/// 制表符按 4 列算;空白打断色块;相邻同色字符合并成一个色块,绘制时一个色块只需一次填充。
+/// 制表符按 4 列算;空白打断色块;相邻同色且同墨量的字符合并成一个色块,绘制时一个色块只需一次填充。
 pub fn build<C: Copy + PartialEq>(text: &str, styles: &[(Range<usize>, Option<C>)]) -> MiniMap<C> {
     let mut rows = Vec::new();
     let (mut offset, mut si) = (0usize, 0usize);
@@ -52,9 +85,10 @@ pub fn build<C: Copy + PartialEq>(text: &str, styles: &[(Range<usize>, Option<C>
                 si += 1;
             }
             let color = styles.get(si).filter(|(r, _)| r.start <= b).and_then(|(_, c)| *c);
+            let weight = weight_of(ch);
             match runs.last_mut() {
-                Some(r) if r.color == color && usize::from(r.start) + usize::from(r.len) == col => r.len += 1,
-                _ => runs.push(MiniRun { start: col as u16, len: 1, color }),
+                Some(r) if r.color == color && r.weight == weight && usize::from(r.start) + usize::from(r.len) == col => r.len += 1,
+                _ => runs.push(MiniRun { start: col as u16, len: 1, color, weight }),
             }
             col += 1;
         }
@@ -124,14 +158,14 @@ mod tests {
 
     #[::core::prelude::v1::test]
     fn 同色相邻字符合并_空白打断() {
-        let text = "fn a() {\n  let x;\n}";
+        let text = "fn ab {\n  let x;\n}";
         // 前两个字符(fn)着色 1,其余默认
         let m = build(text, &[(0..2, Some(1u8))]);
         assert_eq!(m.rows.len(), 3);
-        assert_eq!(m.rows[0][0], MiniRun { start: 0, len: 2, color: Some(1) });
-        // 空格后 a() 合并成一个默认色块,再空格后 { 单独一块
-        assert_eq!(m.rows[0][1], MiniRun { start: 3, len: 3, color: None });
-        assert_eq!(m.rows[0][2], MiniRun { start: 7, len: 1, color: None });
+        assert_eq!(m.rows[0][0], MiniRun { start: 0, len: 2, color: Some(1), weight: Weight::Normal });
+        // 空格后 ab 合并成一个默认色块,再空格后 { 单独一块(标点淡)
+        assert_eq!(m.rows[0][1], MiniRun { start: 3, len: 2, color: None, weight: Weight::Normal });
+        assert_eq!(m.rows[0][2], MiniRun { start: 6, len: 1, color: None, weight: Weight::Light });
         // 第二行缩进 2 列
         assert_eq!(m.rows[1][0].start, 2);
     }
@@ -140,7 +174,21 @@ mod tests {
     fn 空行没有色块且制表符算四列() {
         let m = build::<u8>("\n\tx\r\n", &[]);
         assert!(m.rows[0].is_empty());
-        assert_eq!(m.rows[1], vec![MiniRun { start: 4, len: 1, color: None }]);
+        assert_eq!(m.rows[1], vec![MiniRun { start: 4, len: 1, color: None, weight: Weight::Normal }]);
+    }
+
+    #[::core::prelude::v1::test]
+    fn 墨量档位分三档且打断合并() {
+        assert_eq!(weight_of('('), Weight::Light);
+        assert_eq!(weight_of('a'), Weight::Normal);
+        assert_eq!(weight_of('7'), Weight::Normal);
+        assert_eq!(weight_of('W'), Weight::Heavy);
+        assert_eq!(weight_of('中'), Weight::Heavy);
+        assert!(Weight::Light.alpha() < Weight::Normal.alpha() && Weight::Normal.alpha() < Weight::Heavy.alpha());
+        // 「fooBar()」:foo 一块、B 一块(浓)、ar 一块、() 一块(淡)
+        let m = build::<u8>("fooBar()", &[]);
+        let w: Vec<_> = m.rows[0].iter().map(|r| (r.start, r.len, r.weight)).collect();
+        assert_eq!(w, [(0, 3, Weight::Normal), (3, 1, Weight::Heavy), (4, 2, Weight::Normal), (6, 2, Weight::Light)]);
     }
 
     #[::core::prelude::v1::test]

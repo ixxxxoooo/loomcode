@@ -54,6 +54,8 @@ pub struct IdeDoc {
     pub(crate) lsp_gen: u64,
     /// 语言服务器给出的 (错误数, 警告数)
     pub(crate) diag: (usize, usize),
+    /// 诊断所在行与是否错误(迷你地图刻度用)
+    pub(crate) diag_marks: std::rc::Rc<Vec<(usize, bool)>>,
     _subs: Vec<Subscription>,
 }
 
@@ -401,7 +403,7 @@ fn load(path: &Path, window: &mut Window, cx: &mut Context<IdeView>) -> Result<I
     });
     let marks = None;
     let mtime = meta.modified().ok();
-    Ok(IdeDoc { editor, saved: true, crlf, mtime, stale: false, marks, minimap, mm_key: (theme, prefs.syntax_highlight), mm_gen: 0, hunks: Default::default(), bracket_pair: None, bracket_marks: None, blame: Default::default(), blame_gen: 0, blame_fresh: false, lsp: None, lsp_gen: 0, diag: (0, 0), _subs: vec![sub, sub2] })
+    Ok(IdeDoc { editor, saved: true, crlf, mtime, stale: false, marks, minimap, mm_key: (theme, prefs.syntax_highlight), mm_gen: 0, hunks: Default::default(), bracket_pair: None, bracket_marks: None, blame: Default::default(), blame_gen: 0, blame_fresh: false, lsp: None, lsp_gen: 0, diag: (0, 0), diag_marks: Default::default(), _subs: vec![sub, sub2] })
 }
 
 impl Render for IdeView {
@@ -449,7 +451,7 @@ impl Render for IdeView {
                 let ui = self.minimap_ui.clone();
                 // 编辑区太窄时自动隐藏迷你地图(宽度取自上一帧的测量)
                 let wide = ui.row_width.get() == 0. || ui.row_width.get() >= crate::ide_minimap::MIN_EDITOR_W;
-                let mm = (prefs.minimap && wide).then(|| crate::ide_minimap::minimap(&editor, doc.minimap.clone(), doc.hunks.clone(), ui.clone(), crate::ide_minimap::MinimapOpts::from_prefs(&prefs), cx));
+                let mm = (prefs.minimap && wide).then(|| crate::ide_minimap::minimap(&editor, doc.minimap.clone(), doc.hunks.clone(), doc.diag_marks.clone(), ui.clone(), crate::ide_minimap::MinimapOpts::from_prefs(&prefs), cx));
                 let source = h_flex().relative().flex_1().min_w_0().min_h_0().w_full().h_full()
                     .child(canvas(move |b, _, _| ui.row_width.set(f32::from(b.size.width)), |_, _, _, _| {}).absolute().size_full())
                     .children(gutter)
