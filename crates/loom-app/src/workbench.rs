@@ -252,7 +252,7 @@ impl Workbench {
             claude_cfg,
             claude_cfg_root: None,
             claude_home,
-            cfg_scope: loom_config::Scope::Local,
+            cfg_scope: loom_config::Scope::User,
             settings_forms: None,
             customize_tab: settings::CustomizeTab::Plugins,
             usage_metric: settings::UsageMetric::Tokens,

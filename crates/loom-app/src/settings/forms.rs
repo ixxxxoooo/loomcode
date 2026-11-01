@@ -112,6 +112,17 @@ pub struct Forms {
     pub providers: ProviderUi,
     pub ops: OpsUi,
     pub plugins: PluginUi,
+    /// 待确认的危险操作
+    pub confirm: Option<super::confirm::Confirm>,
+    /// MCP 页的范围筛选(`None` 为全部)
+    pub mcp_filter: Option<Scope>,
+    /// MCP 页展开详情的服务器名
+    pub mcp_open: Option<String>,
+    /// MCP 连接状态:服务器名 → (状态, 文字);检测中为 `checking`
+    pub mcp_health: HashMap<String, (loom_config::claude::Health, String)>,
+    pub mcp_checking: bool,
+    /// 钩子页展开了「显示更多」的分组(层)
+    pub hooks_more: Vec<Scope>,
     /// 最近一次写配置失败的提示(显示在页顶,下次成功时清除)
     pub error: Option<String>,
 }
@@ -159,6 +170,12 @@ impl Forms {
             providers: ProviderUi::default(),
             ops: OpsUi::default(),
             plugins: PluginUi::default(),
+            confirm: None,
+            mcp_filter: None,
+            mcp_open: None,
+            mcp_health: HashMap::new(),
+            mcp_checking: false,
+            hooks_more: Vec::new(),
             error: None,
         }
     }

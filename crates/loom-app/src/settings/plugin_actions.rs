@@ -3,12 +3,10 @@
 //!
 //! @author ixxxxoooo
 
-use super::ops_actions::strip_ansi;
 use crate::workbench::Workbench;
 use gpui_kit::*;
 use loom_config::Scope;
 use loom_config::plugins::{self, PluginEntry};
-use std::time::Duration;
 
 impl Workbench {
     /// 重新读取已安装插件与市场。
@@ -60,30 +58,7 @@ impl Workbench {
         cx.notify();
         let extra_env = self.settings.session_env();
         cx.spawn(async move |this, cx| {
-            let result = cx
-                .background_spawn(async move {
-                    let mut cmd = std::process::Command::new(&bin);
-                    cmd.args(&args).envs(extra_env).stdin(std::process::Stdio::null()).stdout(std::process::Stdio::piped()).stderr(std::process::Stdio::piped());
-                    if let Some(dir) = cwd.filter(|d| std::path::Path::new(d).is_dir()) {
-                        cmd.current_dir(dir);
-                    }
-                    let mut child = cmd.spawn().map_err(|e| format!("无法运行 {}:{e}", bin.display()))?;
-                    for _ in 0..1800 {
-                        if child.try_wait().ok().flatten().is_some() {
-                            break;
-                        }
-                        std::thread::sleep(Duration::from_millis(100));
-                    }
-                    let timed_out = child.try_wait().ok().flatten().is_none();
-                    if timed_out {
-                        let _ = child.kill();
-                    }
-                    let out = child.wait_with_output().map_err(|e| format!("读取输出失败:{e}"))?;
-                    let text = strip_ansi(&format!("{}{}", String::from_utf8_lossy(&out.stdout), String::from_utf8_lossy(&out.stderr)));
-                    let text = loom_config::diag::redact_home(text.trim());
-                    if timed_out { Err(format!("超过 3 分钟未完成,已终止。{text}")) } else if out.status.success() { Ok(text) } else { Err(text) }
-                })
-                .await;
+            let result = cx.background_spawn(async move { super::cli::run(&bin, &args, cwd.as_deref(), extra_env, 180) }).await;
             let _ = this.update(cx, |this, cx| {
                 let message = match result {
                     Ok(t) => (true, if t.is_empty() { "完成".to_string() } else { t }),
@@ -105,11 +80,17 @@ impl Workbench {
     pub fn install_plugin(&mut self, cx: &mut Context<Self>) {
         let id = self.field_value("plugin_id", cx);
         let scope = self.plugin_install_scope();
-        let Some(args) = plugins::plugin_args("install", &id, scope) else {
+        if plugins::plugin_args("install", &id, scope).is_none() {
             self.forms_mut().plugins.message = Some((false, "插件标识格式不对,应为「名称」或「名称@市场」,不能以 - 开头、不含空格".into()));
             cx.notify();
             return;
-        };
+        }
+        self.ask(super::confirm::Confirm::Install(id, scope), cx);
+    }
+
+    /// 确认后真正安装。
+    pub fn do_install(&mut self, id: &str, scope: Scope, cx: &mut Context<Self>) {
+        let Some(args) = plugins::plugin_args("install", id, scope) else { return };
         self.run_claude(format!("正在安装 {id}…"), args, self.claude_cfg_root.clone(), cx);
     }
 

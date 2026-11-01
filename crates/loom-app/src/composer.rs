@@ -148,6 +148,12 @@ impl Composer {
         self.refresh_suggestions(cx);
     }
 
+    /// 在光标处插入文字(从设置页「在对话中使用」调用),并刷新补全。
+    pub fn insert_text(&mut self, text: &str, window: &mut Window, cx: &mut Context<Self>) {
+        self.input.update(cx, |i, cx| i.insert(text.to_string(), window, cx));
+        self.refresh_suggestions(cx);
+    }
+
     /// 注入自定义命令 / Skills 与子 Agent(工作台扫描 `.claude` 目录后调用)。
     ///
     /// 参数:`commands` (`/名称`, 描述) 列表;`agents` 子 Agent 名称。

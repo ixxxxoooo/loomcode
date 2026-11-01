@@ -3,8 +3,9 @@
 //! @author ixxxxoooo
 
 use super::CustomizeTab;
-use super::widgets::{error_banner, page_title, section_title};
-use crate::ui::{MONO, caption, icon, pill};
+use super::ext_ui::{Row, ext_card, ext_header, ext_label, tag};
+use super::widgets::error_banner;
+use crate::ui::{MONO, icon, pill};
 use crate::workbench::Workbench;
 use gpui_kit::assets::IconName;
 use gpui_kit::component::button::{Button, ButtonVariants};
@@ -33,14 +34,14 @@ pub fn doc_editor(wb: &Workbench, tab: CustomizeTab, closable: bool, cx: &mut Co
             .child(icon(IconName::FileText, 13., t.muted_foreground))
             .child(div().flex_1().min_w_0().truncate().font_family(MONO).text_size(px(12.)).text_color(t.muted_foreground).child(doc.path.display().to_string()))
             .when(!exists, |d| d.child(pill("保存后创建", t.warning, t.muted)))
-            .when(closable, |d| d.child(Button::new("doc-close").small().ghost().label("关闭").on_click(cx.listener(|this, _, _, cx| this.close_doc(cx)))))
+            .when(closable, |d| d.child(Button::new("doc-close").small().ghost().icon(IconName::ArrowLeft).label("返回").on_click(cx.listener(|this, _, _, cx| this.close_doc(cx)))))
             .child(Button::new("doc-save").small().when(!saved, |b| b.primary()).when(saved, |b| b.ghost()).label(if saved { "已保存" } else { "保存" })
                 .on_click(cx.listener(|this, _, _, cx| this.save_doc(cx)))))
         .child(div().w_full().h(px(440.)).rounded(px(8.)).border_1().border_color(t.border).overflow_hidden()
             .child(Editor::new(&doc.editor).bordered(false).appearance(false).size_full())))
 }
 
-/// 记忆页:按加载顺序列出记忆文件,点选后在下方编辑。
+/// 规则页(记忆文件):页头 + 按层分组的文件列表(按 Claude 的加载顺序),点选后在下方编辑。
 pub fn memory(wb: &mut Workbench, window: &mut Window, cx: &mut Context<Workbench>) -> AnyElement {
     let tab = CustomizeTab::Rules;
     let files = wb.forms().memory_files.clone();
@@ -52,26 +53,32 @@ pub fn memory(wb: &mut Workbench, window: &mut Window, cx: &mut Context<Workbenc
     }
     let t = cx.theme().clone();
     let current = wb.forms().doc.as_ref().map(|d| d.path.clone());
-    let mut last_group = "";
-    let mut list = v_flex().w_full().gap_0p5();
+    let mut groups: Vec<(&'static str, Vec<AnyElement>)> = Vec::new();
     for (i, f) in files.into_iter().enumerate() {
-        if f.group != last_group {
-            last_group = f.group;
-            list = list.child(section_title(f.group, cx));
-        }
-        let on = current.as_ref() == Some(&f.path);
         let path = f.path.clone();
-        list = list.child(h_flex().id(SharedString::from(format!("mem-{i}"))).w_full().h(px(32.)).px_2().gap_2().items_center().rounded(px(6.)).cursor_pointer()
-            .when(on, |d| d.bg(t.list_active)).hover(|d| d.bg(t.list_hover))
-            .on_click(cx.listener(move |this, _, window, cx| this.open_doc(path.clone(), tab, window, cx)))
-            .child(icon(IconName::FileText, 13., if f.exists { t.foreground } else { t.muted_foreground }))
-            .child(div().flex_1().min_w_0().truncate().font_family(MONO).text_size(px(12.)).child(f.path.display().to_string()))
-            .child(caption(f.label.clone(), cx))
-            .when(!f.exists, |d| d.child(pill("未创建", t.muted_foreground, t.muted))));
+        let mut row = Row::new(format!("mem-{i}"), IconName::FileText, f.path.file_name().map(|n| n.to_string_lossy().to_string()).unwrap_or_default());
+        row.tint = Some(if f.exists { t.primary } else { t.muted_foreground });
+        row.subtitle = Some(format!("{} · {}", f.label, super::fields::tilde(&f.path)));
+        row.lines = 1;
+        if !f.exists {
+            row.badges.push(tag("未创建", None, cx).into_any_element());
+        }
+        if current.as_ref() == Some(&f.path) {
+            row.badges.push(tag("编辑中", Some(t.primary), cx).into_any_element());
+        }
+        row.on_click = Some(std::rc::Rc::new(move |this, window, cx| this.open_doc(path.clone(), tab, window, cx)));
+        let el = row.render(cx);
+        match groups.last_mut() {
+            Some((g, rows)) if *g == f.group => rows.push(el),
+            _ => groups.push((f.group, vec![el])),
+        }
     }
-    v_flex().w_full()
-        .child(page_title("记忆"))
-        .child(caption("Claude 启动时按从上到下的顺序加载这些文件,后加载的优先。规则文件放在 .claude/rules/*.md;AGENTS.md 不会自动加载,需在 CLAUDE.md 里写 @AGENTS.md 导入", cx))
+    let mut list = v_flex().w_full().gap_2();
+    for (g, rows) in groups {
+        list = list.child(ext_label(g, Some(rows.len()), cx)).child(ext_card(rows, cx));
+    }
+    v_flex().w_full().gap_3()
+        .child(ext_header(IconName::Brain, "规则", "Claude 启动时按从上到下的顺序加载这些记忆文件,后加载的优先。规则文件放在 .claude/rules/*.md;AGENTS.md 不会自动加载,需在 CLAUDE.md 里写 @AGENTS.md 导入。", div(), cx))
         .children(error_banner(wb, cx))
         .child(list)
         .children(doc_editor(wb, tab, false, cx))

@@ -72,7 +72,8 @@ pub fn parse_settings(json: &str, scope: Scope) -> ClaudeConfig {
 pub(crate) fn parse_spec(cfg: &Value) -> McpSpec {
     let url = cfg.get("url").and_then(Value::as_str).unwrap_or("").to_string();
     let transport = cfg.get("type").and_then(Value::as_str).map(str::to_string).unwrap_or_else(|| if url.is_empty() { "stdio".into() } else { "http".into() });
-    McpSpec { transport, command: cfg.get("command").and_then(Value::as_str).unwrap_or("").to_string(), args: string_list(cfg.get("args")), url }
+    let keys = |k: &str| cfg.get(k).and_then(Value::as_object).map(|m| m.keys().cloned().collect()).unwrap_or_default();
+    McpSpec { transport, command: cfg.get("command").and_then(Value::as_str).unwrap_or("").to_string(), args: string_list(cfg.get("args")), url, env_names: keys("env"), header_names: keys("headers") }
 }
 
 /// 解析 `mcpServers` 对象(`.mcp.json`、`~/.claude.json` 通用)。启用状态先只看旧式 `disabled` 字段,`load` 再按层修正。

@@ -69,7 +69,7 @@ fn mcp_增改删与改名保留_env() {
     let home = temp_dir("mcp");
     let proj = home.join("proj");
     put(&home.join(".claude.json"), r#"{"numStartups":3,"mcpServers":{"old":{"command":"a","env":{"K":"v"}}}}"#);
-    let spec = McpSpec { transport: "stdio".into(), command: "npx".into(), args: vec!["-y".into(), "x".into()], url: String::new() };
+    let spec = McpSpec { transport: "stdio".into(), command: "npx".into(), args: vec!["-y".into(), "x".into()], ..Default::default() };
     upsert_mcp(&home, None, Scope::User, Some("old"), "new", &spec).unwrap();
     let v = read_json(&home.join(".claude.json"));
     assert_eq!(v["numStartups"], 3);

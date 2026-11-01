@@ -120,3 +120,8 @@ impl Workbench {
         prompt.update(cx, |i, cx| i.set_value(s.append_prompt.clone(), window, cx));
     }
 }
+
+/// 把家目录缩写成 `~` 的路径文字。
+pub fn tilde(path: &std::path::Path) -> String {
+    loom_config::diag::redact_home(&path.display().to_string())
+}

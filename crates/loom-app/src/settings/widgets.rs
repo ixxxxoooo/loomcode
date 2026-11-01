@@ -74,3 +74,14 @@ pub fn error_banner(wb: &Workbench, cx: &App) -> Option<Div> {
     let t = cx.theme();
     wb.forms().error.clone().map(|e| div().w_full().mt_3().px_3().py_2().rounded(px(8.)).bg(t.danger.opacity(0.1)).text_color(t.danger).text_size(px(12.5)).child(e))
 }
+
+/// 表单内的紧凑配置层选择:「写入到 [用户|项目|本地]」;没有项目时只能选用户层。
+pub fn scope_chooser(wb: &Workbench, cx: &mut Context<Workbench>) -> Div {
+    use loom_config::Scope;
+    let has_project = wb.claude_cfg_root.is_some();
+    let options: Vec<(Scope, &'static str)> = Scope::ALL.into_iter().filter(|s| has_project || !s.needs_project()).map(|s| (s, s.label())).collect();
+    h_flex().gap_3().items_center()
+        .child(div().text_size(px(12.5)).child("写入到"))
+        .child(segmented("form-scope", options, wb.effective_scope(), cx, |this, v, cx| { this.cfg_scope = v; cx.notify(); }))
+        .when(!has_project, |d| d.child(caption("打开项目会话后可选项目层 / 本地层", cx)))
+}

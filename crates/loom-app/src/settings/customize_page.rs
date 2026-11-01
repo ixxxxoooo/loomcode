@@ -3,9 +3,8 @@
 //!
 //! @author ixxxxoooo
 
-use super::widgets::page_title;
 use super::{claude_pages, hooks_page, items_page, mcp_page, plugins_page};
-use crate::ui::{icon, caption};
+use crate::ui::icon;
 use crate::workbench::Workbench;
 use gpui_kit::assets::IconName;
 use gpui_kit::component::button::{Button, ButtonVariants};
@@ -76,20 +75,21 @@ pub fn render(wb: &mut Workbench, window: &mut Window, cx: &mut Context<Workbenc
         CustomizeTab::Hooks => hooks_page::hooks(wb, &filter, cx),
     };
     let t = cx.theme().clone();
-    v_flex().w_full().gap_3()
-        .child(h_flex().w_full().items_center().gap_2()
-            .child(div().flex_1().child(Input::new(wb.field("search")).small().prefix(icon(IconName::Search, 14., t.muted_foreground))))
-            .child(Button::new("customize-refresh").small().ghost().icon(IconName::RefreshCw).tooltip("重新读取")
-                .on_click(cx.listener(|this, _, _, cx| { this.reload_claude_cfg(); this.refresh_plugins(); cx.notify(); }))))
-        .child(h_flex().gap_1().flex_wrap().children(CustomizeTab::ALL.into_iter().map(|c| {
-            let on = c == tab;
-            h_flex().id(SharedString::from(format!("cz-{}", c.label()))).h(px(28.)).px_3().items_center().rounded(px(6.)).cursor_pointer().text_size(px(13.))
-                .when(on, |d| d.bg(t.primary.opacity(0.12)).text_color(t.primary).font_weight(FontWeight::MEDIUM))
-                .when(!on, |d| d.bg(t.muted).hover(|d| d.bg(t.list_hover)))
-                .on_click(cx.listener(move |this, _, _, cx| { this.customize_tab = c; cx.notify(); }))
-                .child(c.label())
-        })))
-        .when(tab == CustomizeTab::Plugins, |d| d.child(page_title("插件")))
+    v_flex().w_full().gap_4()
+        .child(v_flex().w_full().gap_3()
+            .child(h_flex().w_full().items_center().gap_2()
+                .child(div().flex_1().child(Input::new(wb.field("search")).small().prefix(icon(IconName::Search, 14., t.muted_foreground))))
+                .child(Button::new("customize-refresh").small().ghost().icon(IconName::RefreshCw).tooltip("重新读取")
+                    .on_click(cx.listener(|this, _, _, cx| { this.reload_claude_cfg(); this.refresh_plugins(); cx.notify(); }))))
+            .child(h_flex().gap_1p5().flex_wrap().children(CustomizeTab::ALL.into_iter().map(|c| {
+                let on = c == tab;
+                h_flex().id(SharedString::from(format!("cz-{}", c.label()))).h(px(28.)).px_3().items_center().rounded(px(6.)).border_1().cursor_pointer().text_size(px(13.))
+                    .when(on, |d| d.bg(t.primary.opacity(0.12)).border_color(t.primary.opacity(0.35)).text_color(t.primary).font_weight(FontWeight::MEDIUM))
+                    .when(!on, |d| d.bg(t.muted).border_color(t.border).hover(|d| d.bg(t.list_hover)))
+                    .on_click(cx.listener(move |this, _, _, cx| { this.customize_tab = c; cx.notify(); }))
+                    .child(c.label())
+            }))))
+        .child(div().w_full().h(px(1.)).bg(t.border))
         .child(body)
         .into_any_element()
 }
@@ -98,6 +98,6 @@ pub fn render(wb: &mut Workbench, window: &mut Window, cx: &mut Context<Workbenc
 pub fn render_page(wb: &mut Workbench, window: &mut Window, cx: &mut Context<Workbench>) -> AnyElement {
     let content = render(wb, window, cx);
     div().id("customize-scroll").size_full().overflow_y_scroll().flex().justify_center().px_6().pb_10()
-        .child(v_flex().w_full().max_w(px(900.)).pt_4().child(content).child(div().h(px(24.)).child(caption("", cx))))
+        .child(v_flex().w_full().max_w(px(900.)).pt_4().child(content))
         .into_any_element()
 }

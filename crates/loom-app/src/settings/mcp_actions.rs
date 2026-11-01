@@ -67,6 +67,7 @@ impl Workbench {
                 command: f.command.read(cx).value().trim().to_string(),
                 args: f.args.read(cx).value().split_whitespace().map(str::to_string).collect(),
                 url: f.url.read(cx).value().trim().to_string(),
+                ..Default::default()
             };
             let old = f.editing.clone();
             match old {
@@ -92,5 +93,78 @@ impl Workbench {
     pub fn toggle_mcp(&mut self, server: &McpServer, enabled: bool, cx: &mut Context<Self>) {
         let result = loom_config::claude::set_mcp_enabled(&self.claude_home, self.cfg_project(), server.scope, &server.name, enabled);
         self.finish_cfg_write(result, cx);
+    }
+}
+
+impl Workbench {
+    /// 展开 / 收起一个服务器的详情。
+    pub fn toggle_mcp_open(&mut self, name: &str, cx: &mut Context<Self>) {
+        let open = &mut self.forms_mut().mcp_open;
+        *open = if open.as_deref() == Some(name) { None } else { Some(name.to_string()) };
+        cx.notify();
+    }
+
+    /// 切换范围筛选(`None` 为全部)。
+    pub fn set_mcp_filter(&mut self, scope: Option<loom_config::Scope>, cx: &mut Context<Self>) {
+        self.forms_mut().mcp_filter = scope;
+        cx.notify();
+    }
+
+    /// 检测连接:后台运行 `claude mcp list`(最多 90 秒),按名称记下每个服务器的状态。
+    /// 演示模式不运行命令,给出一组示例状态。
+    pub fn check_mcp_health(&mut self, cx: &mut Context<Self>) {
+        use loom_config::claude::Health;
+        if self.forms().mcp_checking {
+            return;
+        }
+        if self.demo {
+            let h = &mut self.forms_mut().mcp_health;
+            h.clear();
+            h.insert("filesystem".into(), (Health::Connected, "Connected".into()));
+            h.insert("github".into(), (Health::NeedsAuth, "Needs authentication".into()));
+            h.insert("playwright".into(), (Health::Failed, "Failed to connect".into()));
+            cx.notify();
+            return;
+        }
+        let Some(bin) = loom_claude::options::find_claude(self.settings.claude_path.as_deref()) else {
+            self.forms_mut().error = Some("未找到 claude 命令,可以在「高级」页指定路径".into());
+            cx.notify();
+            return;
+        };
+        self.forms_mut().mcp_checking = true;
+        self.forms_mut().error = None;
+        let (cwd, env) = (self.claude_cfg_root.clone(), self.settings.session_env());
+        cx.notify();
+        cx.spawn(async move |this, cx| {
+            let result = cx.background_spawn(async move { super::cli::run(&bin, &["mcp".to_string(), "list".to_string()], cwd.as_deref(), env, 90) }).await;
+            let _ = this.update(cx, |this, cx| {
+                this.forms_mut().mcp_checking = false;
+                match result {
+                    Ok(text) => {
+                        this.forms_mut().mcp_health = loom_config::claude::parse_mcp_list(&text).into_iter().map(|(n, h, d)| (n, (h, d))).collect();
+                    }
+                    Err(e) => {
+                        loom_config::diag::error(&format!("claude mcp list 失败:{e}"));
+                        this.forms_mut().error = Some(format!("检测失败:{e}"));
+                    }
+                }
+                cx.notify();
+            });
+        })
+        .detach();
+    }
+
+    /// 从 Claude Desktop 导入服务器到用户层(Desktop 的配置本来就是全局的)。
+    pub fn import_mcp_desktop(&mut self, cx: &mut Context<Self>) {
+        let scope = loom_config::Scope::User;
+        let desktop = loom_config::claude::desktop_config_path(&std::path::PathBuf::from(std::env::var_os("HOME").unwrap_or_default()));
+        let result = loom_config::claude::import_from_desktop(&desktop, &self.claude_home, self.cfg_project(), scope);
+        match result {
+            Ok(0) => self.forms_mut().error = Some("Claude Desktop 里没有可导入的 MCP 服务器".into()),
+            Ok(_) => self.forms_mut().error = None,
+            Err(e) => self.forms_mut().error = Some(format!("导入失败:{e}")),
+        }
+        self.reload_claude_cfg();
+        cx.notify();
     }
 }
