@@ -11,7 +11,6 @@ use crate::ui::empty_state;
 use gpui_kit::assets::IconName;
 use gpui_kit::component::button::{Button, ButtonVariants};
 use gpui_kit::component::{ActiveTheme, Sizable, h_flex, v_flex};
-use gpui_kit::prelude::FluentBuilder as _;
 use gpui_kit::*;
 
 /// 底部终端面板。
@@ -93,16 +92,10 @@ impl Render for BottomTerminal {
             .child(div().pr_2().text_size(px(11.)).text_color(t.muted_foreground).child("终端"))
             .children(tabs.iter().map(|(id, title, exit, _)| {
                 let id = *id;
-                let label = crate::term_panel::clip_label(title);
                 let (hub_a, root_a, hub_c, root_c) = (hub.clone(), root.clone(), hub.clone(), root.clone());
-                div().id(SharedString::from(format!("bt-tab-{id}"))).h(px(24.)).px_2().flex().items_center().gap_1().rounded(px(6.)).cursor_pointer().text_size(px(12.))
-                    .when(shown == Some(id), |d| d.bg(t.list_active).font_weight(FontWeight::MEDIUM))
-                    .when(shown != Some(id), |d| d.text_color(t.muted_foreground).hover(|d| d.bg(t.list_hover)))
-                    .when(exit.is_some(), |d| d.text_color(t.muted_foreground))
-                    .on_click(move |_, _, cx| hub_a.update(cx, |h, cx| h.activate(&root_a, TermSel::Term(id), cx)))
-                    .child(label)
-                    .child(Button::new(SharedString::from(format!("bt-close-{id}"))).xsmall().ghost().icon(IconName::X).tooltip("关闭终端")
-                        .on_click(move |_, _, cx| { cx.stop_propagation(); hub_c.update(cx, |h, cx| h.close(&root_c, id, cx)); }))
+                crate::term_tabs::term_tab("bt", id, title, shown == Some(id), exit.is_some(), 24.,
+                    move |_, _, cx| hub_a.update(cx, |h, cx| h.activate(&root_a, TermSel::Term(id), cx)),
+                    move |_, _, cx| hub_c.update(cx, |h, cx| h.close(&root_c, id, cx)), cx)
             }))
             .child(Button::new("bt-new").xsmall().ghost().icon(IconName::Plus).tooltip("新建终端(⌃⇧`)")
                 .on_click(cx.listener(|this, _, window, cx| this.new_terminal(window, cx))));

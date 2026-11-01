@@ -41,6 +41,24 @@ pub struct ProjectTerminals {
 pub struct TerminalHub(pub Entity<ProjectTerminals>);
 impl Global for TerminalHub {}
 
+/// 项目根目录的统一写法(终端分组的键):去掉末尾的 `/`,存在的路径取真实路径(解开符号链接)。
+/// 这样 `/a/b`、`/a/b/`、指向它的符号链接都落在同一组,Agent 与 IDE 不会各开各的终端。
+/// 结果按原字符串缓存,界面每帧调用也只做一次文件系统查询。
+pub fn normalize_root(root: &str) -> String {
+    use std::sync::{Mutex, OnceLock};
+    static CACHE: OnceLock<Mutex<HashMap<String, String>>> = OnceLock::new();
+    let cache = CACHE.get_or_init(Default::default);
+    if let Some(v) = cache.lock().ok().and_then(|c| c.get(root).cloned()) {
+        return v;
+    }
+    let trimmed = if root.len() > 1 { root.trim_end_matches('/') } else { root };
+    let out = std::fs::canonicalize(trimmed).map(|p| p.to_string_lossy().to_string()).unwrap_or_else(|_| trimmed.to_string());
+    if let Ok(mut c) = cache.lock() {
+        c.insert(root.to_string(), out.clone());
+    }
+    out
+}
+
 /// 关闭一个标签后该选中谁:关的不是当前标签就不变;关的是当前标签则选左边相邻的,
 /// 左边没有了就变成「没有选中」。
 ///
@@ -71,14 +89,22 @@ impl ProjectTerminals {
         self.groups.values().map(|g| g.tabs.len()).sum()
     }
 
+    /// 正在运行命令的终端标签名(退出 / 重启前提醒用),如「zsh · cargo」;全部空闲返回空。
+    pub fn busy_labels(&self, cx: &App) -> Vec<String> {
+        self.groups.iter().flat_map(|(root, g)| {
+            let folder = root.rsplit('/').next().unwrap_or("").to_string();
+            g.tabs.iter().filter(|t| t.view.read(cx).is_busy()).map(move |t| t.view.read(cx).label(&folder)).collect::<Vec<_>>()
+        }).collect()
+    }
+
     /// 某个项目的终端标签。
     pub fn tabs(&self, root: &str) -> &[TermTab] {
-        self.groups.get(root).map_or(&[], |g| &g.tabs)
+        self.groups.get(&normalize_root(root)).map_or(&[], |g| &g.tabs)
     }
 
     /// 某个项目当前选中的子标签。
     pub fn active(&self, root: &str) -> TermSel {
-        self.groups.get(root).map(|g| g.active).unwrap_or_default()
+        self.groups.get(&normalize_root(root)).map(|g| g.active).unwrap_or_default()
     }
 
     /// 在项目目录里新开一个终端并选中它。
@@ -90,7 +116,7 @@ impl ProjectTerminals {
         let view = TerminalView::start(root, command, cx)?;
         self.next_id += 1;
         let id = self.next_id;
-        let g = self.groups.entry(root.to_string()).or_default();
+        let g = self.groups.entry(normalize_root(root)).or_default();
         g.counter += 1;
         // 终端有输出 / 改标题时,面板的标签条也要跟着重绘
         let sub = cx.observe(&view, |_, _, cx| cx.notify());
@@ -102,7 +128,7 @@ impl ProjectTerminals {
 
     /// 选中一个子标签。
     pub fn activate(&mut self, root: &str, sel: TermSel, cx: &mut Context<Self>) {
-        if let Some(g) = self.groups.get_mut(root) {
+        if let Some(g) = self.groups.get_mut(&normalize_root(root)) {
             g.active = sel;
             cx.notify();
         }
@@ -110,7 +136,7 @@ impl ProjectTerminals {
 
     /// 关闭一个终端(丢弃视图会结束它的 shell 进程)。
     pub fn close(&mut self, root: &str, id: u64, cx: &mut Context<Self>) {
-        let Some(g) = self.groups.get_mut(root) else { return };
+        let Some(g) = self.groups.get_mut(&normalize_root(root)) else { return };
         let ids: Vec<u64> = g.tabs.iter().map(|t| t.id).collect();
         g.active = selection_after_close(&ids, id, g.active);
         g.tabs.retain(|t| t.id != id);
@@ -121,6 +147,24 @@ impl ProjectTerminals {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[::core::prelude::v1::test]
+    fn 根目录写法统一() {
+        // 不存在的路径:只去掉末尾斜杠
+        assert_eq!(normalize_root("/no/such/dir/"), "/no/such/dir");
+        assert_eq!(normalize_root("/no/such/dir"), "/no/such/dir");
+        assert_eq!(normalize_root("/"), "/");
+        // 存在的路径:带不带斜杠、经符号链接访问,都是同一个键
+        let base = std::env::temp_dir().join(format!("loom-norm-{}", std::process::id()));
+        let real = base.join("real");
+        std::fs::create_dir_all(&real).unwrap();
+        let link = base.join("link");
+        let _ = std::os::unix::fs::symlink(&real, &link);
+        let a = normalize_root(&real.to_string_lossy());
+        assert_eq!(a, normalize_root(&format!("{}/", real.display())));
+        assert_eq!(a, normalize_root(&link.to_string_lossy()));
+        let _ = std::fs::remove_dir_all(base);
+    }
 
     #[::core::prelude::v1::test]
     fn 关闭非当前标签选中项不变() {

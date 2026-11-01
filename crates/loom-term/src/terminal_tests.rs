@@ -152,3 +152,22 @@ fn 越界坐标被夹到边缘不会崩() {
     t.update_selection(0, 0, false);
     assert!(t.snapshot().selection.is_some());
 }
+
+#[test]
+fn 前台命令运行时算忙碌() {
+    let t = Terminal::spawn(SpawnOptions { command: Some(vec!["/bin/sh".into()]), cols: 80, rows: 24, ..Default::default() }, || {}).unwrap();
+    // shell 刚起来、空闲:不忙
+    std::thread::sleep(Duration::from_millis(300));
+    assert!(!t.is_busy());
+    // 跑一条 sleep:前台进程组变成 sleep,算忙碌
+    t.write(b"sleep 3\n");
+    let start = Instant::now();
+    while !t.is_busy() && start.elapsed() < Duration::from_secs(3) {
+        std::thread::sleep(Duration::from_millis(50));
+    }
+    assert!(t.is_busy(), "sleep 运行时应当忙碌");
+    // 结束后:shell 退出,不再忙碌
+    t.write(b"\x03exit 0\n");
+    wait_for(&t, |s| s.exit_code.is_some());
+    assert!(!t.is_busy());
+}

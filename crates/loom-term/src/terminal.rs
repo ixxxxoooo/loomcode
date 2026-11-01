@@ -283,6 +283,19 @@ impl Terminal {
         self.master.lock().ok()?.process_group_leader()
     }
 
+    /// 终端里是否有命令正在前台运行:shell 还活着,且前台进程组不是 shell 自己。
+    /// 用来在退出 / 重启前提醒「会结束正在运行的命令」。取不到进程信息时按「不忙」处理。
+    pub fn is_busy(&self) -> bool {
+        if self.exit_code().is_some() {
+            return false;
+        }
+        let shell = self.child.lock().ok().and_then(|c| c.process_id());
+        match (shell, self.foreground_pid()) {
+            (Some(sh), Some(fg)) => fg as u32 != sh,
+            _ => false,
+        }
+    }
+
     /// 结束子进程(重复调用无害)。
     pub fn kill(&self) {
         let _ = self.child.lock().unwrap().kill();

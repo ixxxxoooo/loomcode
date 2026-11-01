@@ -116,20 +116,14 @@ impl RightPanel {
         h_flex().h(px(34.)).px_2().gap_1().items_center().border_b_1().border_color(t.border)
             .children(tabs.iter().map(|(id, title, exit, _)| {
                 let id = *id;
-                let label = crate::term_panel::clip_label(title);
                 let (hub_a, root_a) = (hub.clone(), root.to_string());
                 let (hub_c, root_c) = (hub.clone(), root.to_string());
                 let selected = active == TermSel::Term(id) || (active == TermSel::Nothing && active_run.is_none() && tabs.last().map(|x| x.0) == Some(id));
-                tab_btn(SharedString::from(format!("term-tab-{id}")), label, selected)
-                    .when(exit.is_some(), |d| d.text_color(t.muted_foreground))
-                    .on_click(cx.listener(move |this, _, _, cx| {
-                        this.active_run = None;
-                        hub_a.update(cx, |h, cx| h.activate(&root_a, TermSel::Term(id), cx));
-                    }))
-                    .child(
-                        Button::new(SharedString::from(format!("term-close-{id}"))).xsmall().ghost().icon(IconName::X).tooltip("关闭终端")
-                            .on_click(move |_, _, cx| { cx.stop_propagation(); hub_c.update(cx, |h, cx| h.close(&root_c, id, cx)); }),
-                    )
+                let on_select = cx.listener(move |this, _, _, cx| {
+                    this.active_run = None;
+                    hub_a.update(cx, |h, cx| h.activate(&root_a, TermSel::Term(id), cx));
+                });
+                crate::term_tabs::term_tab("term", id, title, selected, exit.is_some(), 26., on_select, move |_, _, cx| hub_c.update(cx, |h, cx| h.close(&root_c, id, cx)), cx)
             }))
             .children(self.run_tabs.iter().filter_map(|rid| runs.iter().find(|r| &r.id == rid)).map(|run| {
                 let rid = run.id.clone();

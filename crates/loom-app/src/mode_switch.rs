@@ -108,6 +108,9 @@ impl Workbench {
         } else {
             ("切换到真实模式?", "将重启 LoomCode,连接本机 claude 并读取真实的项目与会话。未保存的编辑与输入框草稿会丢失。")
         };
+        // 终端里还有命令在跑时重启会结束它们,在确认框里点明
+        let busy = crate::term_store::ProjectTerminals::hub(cx).read(cx).busy_labels(cx);
+        let body = if busy.is_empty() { body.to_string() } else { format!("{body}\n\n注意:有 {} 个终端正在运行命令({}),重启会结束它们。", busy.len(), busy.join("、")) };
         window.open_dialog(cx, move |dialog, _, _| {
             let wb = wb.clone();
             let footer = DialogFooter::new()
@@ -116,7 +119,7 @@ impl Workbench {
                     window.close_all_dialogs(cx);
                     let _ = wb.update(cx, |this, cx| this.switch_mode_now(to_demo, cx));
                 }));
-            dialog.title(title).child(body).footer(footer)
+            dialog.title(title).child(body.clone()).footer(footer)
         });
     }
 

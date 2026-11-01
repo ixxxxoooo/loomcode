@@ -34,6 +34,8 @@ pub struct TerminalView {
     dragged: bool,
     /// 滚轮累计的未满一行的像素(平滑滚动 / 触控板每次只给几像素)
     wheel_acc: f32,
+    /// 负责决定终端尺寸的窗口(同一个终端被两个窗口同时显示时,只听它的,避免 SIGWINCH 来回抖动)及其最近一次绘制时间
+    size_owner: Option<(WindowId, std::time::Instant)>,
     /// 前台进程名的缓存(查询时间, 进程名),见 `label`
     fg_cache: std::cell::RefCell<(std::time::Instant, Option<String>)>,
     _pump: Task<()>,
@@ -81,7 +83,7 @@ impl TerminalView {
                 })
                 .detach();
             }
-            Self { term, focus: cx.focus_handle(), metrics: metrics_of(tp.font_size), cell_w: None, grid: (80, 24), bounds: None, selecting: false, dragged: false, wheel_acc: 0., fg_cache: std::cell::RefCell::new((std::time::Instant::now() - std::time::Duration::from_secs(10), None)), _pump: pump }
+            Self { term, focus: cx.focus_handle(), metrics: metrics_of(tp.font_size), cell_w: None, grid: (80, 24), bounds: None, size_owner: None, selecting: false, dragged: false, wheel_acc: 0., fg_cache: std::cell::RefCell::new((std::time::Instant::now() - std::time::Duration::from_secs(10), None)), _pump: pump }
         }))
     }
 
@@ -111,8 +113,31 @@ impl TerminalView {
         self.focus.clone()
     }
 
+    /// 是否有命令正在这个终端里运行(退出 / 重启前提醒用)。
+    pub fn is_busy(&self) -> bool {
+        self.term.is_busy()
+    }
+
+    /// 这个窗口现在能不能决定终端尺寸:没有负责窗口、自己就是负责窗口、自己有键盘焦点、或负责窗口已经半秒没画过(关了 / 切走了)就可以。
+    ///
+    /// 参数:`win` 当前绘制的窗口;`focused` 终端在该窗口里是否有焦点。
+    fn claim_size(&mut self, win: WindowId, focused: bool) -> bool {
+        let now = std::time::Instant::now();
+        let ok = match self.size_owner {
+            None => true,
+            Some((w, seen)) => w == win || focused || now.duration_since(seen) > std::time::Duration::from_millis(500),
+        };
+        if ok {
+            self.size_owner = Some((win, now));
+        }
+        ok
+    }
+
     /// 由容器尺寸换算成列数 / 行数并通知终端调整大小。
-    fn apply_bounds(&mut self, bounds: Bounds<Pixels>, cx: &mut Context<Self>) {
+    fn apply_bounds(&mut self, bounds: Bounds<Pixels>, win: WindowId, focused: bool, cx: &mut Context<Self>) {
+        if !self.claim_size(win, focused) {
+            return;
+        }
         self.bounds = Some(bounds);
         let Some(cell_w) = self.cell_w else { return };
         let cols = (((bounds.size.width - px(2. * PAD)) / cell_w).floor().max(2.)) as u16;
@@ -340,6 +365,6 @@ impl Render for TerminalView {
                 div().absolute().bottom_0().left_0().right_0().px_2().py_1().bg(t.muted).text_color(t.muted_foreground)
                     .child(format!("进程已退出(退出码 {code}),可以关闭这个终端标签"))))
             // 隐形的测量层:拿到容器尺寸后换算列数 / 行数
-            .child(canvas(move |bounds, _, cx| view.update(cx, |v, cx| v.apply_bounds(bounds, cx)), |_, _, _, _| {}).absolute().size_full())
+            .child(canvas(move |bounds, window, cx| { let (win, focused) = (window.window_handle().window_id(), view.read(cx).focus.is_focused(window)); view.update(cx, |v, cx| v.apply_bounds(bounds, win, focused, cx)) }, |_, _, _, _| {}).absolute().size_full())
     }
 }

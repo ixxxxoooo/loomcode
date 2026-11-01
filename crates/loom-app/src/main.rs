@@ -107,6 +107,7 @@ mod term_geom;
 mod term_palette;
 mod term_panel;
 mod term_store;
+mod term_tabs;
 mod terminal_view;
 mod theme;
 mod timeline;
