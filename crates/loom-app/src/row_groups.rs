@@ -119,6 +119,11 @@ pub fn build_rows(items: &[TimelineItem], working: bool, density: ToolDensity, d
     let mut rows = Vec::with_capacity(items.len());
     let mut i = 0;
     while i < items.len() {
+        // 待处理的权限 / 提问在输入框上方显示,时间线里不占行
+        if crate::dock_cards::hidden_in_timeline(&items[i]) {
+            i += 1;
+            continue;
+        }
         if let Some(d) = digests.iter().find(|d| d.start == i) {
             rows.push(Row::Digest(d.clone()));
             i = d.end;

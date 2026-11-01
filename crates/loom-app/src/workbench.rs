@@ -1178,6 +1178,7 @@ pub fn chat_panel_with_footer(parts: Option<(Entity<SessionModel>, Entity<Compos
     };
     let scroller_state = model.read(cx).scroller.clone();
     let wheel_model = model.clone();
+    let model_for_dock = model.clone();
     v_flex().size_full().bg(t.background)
         .child(
             div().flex_1().min_h_0().w_full()
@@ -1189,6 +1190,7 @@ pub fn chat_panel_with_footer(parts: Option<(Entity<SessionModel>, Entity<Compos
                 crate::chat_scroll::chat_scroller("timeline", scroller_state, move |ix, window, cx| timeline::render_row(&model, ix, window, cx), cx),
             ),
         )
+        .children(crate::dock_cards::render(&model_for_dock, cx))
         .child(composer)
         .child(footer)
         .into_any_element()

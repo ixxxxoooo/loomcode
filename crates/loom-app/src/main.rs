@@ -8,6 +8,10 @@
 #![recursion_limit = "512"]
 
 mod ansi;
+mod ask_cards;
+mod dock_cards;
+mod subagent_card;
+mod wizard_card;
 mod appearance;
 mod app_icon;
 mod automation_page;
