@@ -19,6 +19,9 @@ pub struct SessionModel {
     /// 提问向导已选答案草稿(按提问 id → 每题的已选项)
     pub wizard_draft: std::collections::HashMap<String, Vec<Vec<String>>>,
     /// 一次滚轮手势里累计的垂直位移与防抖任务是否已排队(用来吸附误触的微小滚动)
+    /// 显示行(连续工具调用折成一行)与「条目下标 → 行下标」映射
+    pub rows: Vec<crate::row_groups::Row>,
+    pub item_row: Vec<usize>,
     pub wheel_acc: f32,
     pub wheel_pending: bool,
     wheel_last: f32,
@@ -53,6 +56,8 @@ impl SessionModel {
             queued: Vec::new(),
             wizard_step: Default::default(),
             wizard_draft: Default::default(),
+            rows: Vec::new(),
+            item_row: Vec::new(),
             wheel_acc: 0.,
             wheel_pending: false,
             wheel_last: 0.,
@@ -75,27 +80,28 @@ impl SessionModel {
                 }
             }
         }
-        let new_count = self.state.items.len();
-        let scroller = self.scroller.clone();
-        scroller.update(cx, |s, cx| {
-            let old = s.item_count();
-            if new_count > old {
-                s.append(new_count - old, cx);
-            } else if new_count < old {
-                s.reset(new_count, cx);
+        // 重新算显示行;只有尾部会变,把变化的那一段整体替换,并重新测量内容变了的行
+        let old_rows = std::mem::take(&mut self.rows);
+        self.rows = crate::row_groups::build_rows(&self.state.items, self.state.phase == Phase::Running);
+        self.item_row = crate::row_groups::item_to_row(&self.rows, self.state.items.len());
+        let common = old_rows.iter().zip(&self.rows).take_while(|(a, b)| a == b).count();
+        let dirty: Vec<usize> = {
+            let mut v: Vec<usize> = dirty_rows.iter().filter_map(|i| self.item_row.get(*i).copied()).filter(|r| *r < common).collect();
+            v.sort_unstable();
+            v.dedup();
+            v
+        };
+        let (old_len, new_len) = (old_rows.len(), self.rows.len());
+        self.scroller.update(cx, |s, cx| {
+            if old_len != common || new_len != common {
+                s.splice(common..old_len, new_len - common, cx);
             }
-            dirty_rows.sort_unstable();
-            dirty_rows.dedup();
-            let dirty_last = new_count > 0 && dirty_rows.last() == Some(&(new_count - 1));
-            for row in dirty_rows {
-                if row < old.min(new_count) {
-                    s.remeasure_items(row..row + 1, cx);
-                }
+            for row in dirty {
+                s.remeasure_items(row..row + 1, cx);
             }
-            // 流式输出时最后一行也需要重新测量
-            // (已在脏行里的不重复测量,避免同一帧重复失效造成跳动)
-            if new_count > 0 && new_count <= old && !dirty_last {
-                s.remeasure_items(new_count - 1..new_count, cx);
+            // 流式输出时最后一行内容在变,每批重新测量一次
+            if common > 0 && common == old_len && common == new_len {
+                s.remeasure_items(new_len - 1..new_len, cx);
             }
         });
         if turn_ended {
@@ -119,7 +125,9 @@ impl SessionModel {
         }
         self.state.items.extend(live);
         // 条目整体变了:一次性重置虚拟列表,避免逐条增量与高度缓存错位
-        let n = self.state.items.len();
+        self.rows = crate::row_groups::build_rows(&self.state.items, self.state.phase == Phase::Running);
+        self.item_row = crate::row_groups::item_to_row(&self.rows, self.state.items.len());
+        let n = self.rows.len();
         self.scroller.update(cx, |s, cx| s.reset(n, cx));
         cx.notify();
     }
@@ -195,7 +203,9 @@ impl SessionModel {
     }
 
     fn remeasure_id(&mut self, id: &str, cx: &mut Context<Self>) {
-        if let Some(row) = self.state.row_of(id) {
+        // 折叠组的 key 是「grp:首个工具 id」
+        let id = id.strip_prefix("grp:").unwrap_or(id);
+        if let Some(row) = self.state.row_of(id).and_then(|i| self.item_row.get(i).copied()) {
             self.scroller.update(cx, |s, cx| {
                 s.remeasure_items(row..row + 1, cx);
             });

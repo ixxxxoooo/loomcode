@@ -32,11 +32,6 @@ impl ChatScroll {
         Self { list }
     }
 
-    /// 当前行数。
-    pub fn item_count(&self) -> usize {
-        self.list.item_count()
-    }
-
     /// 是否离开了底部(用滚动位置判断,不依赖行高是否全部测量)。
     pub fn is_away_from_bottom(&self) -> bool {
         let max = f32::from(self.list.max_offset_for_scrollbar().y);
@@ -54,12 +49,21 @@ impl ChatScroll {
         cx.notify();
     }
 
-    /// 在末尾追加 `count` 行;末行状态可能变了,重新测量新的末行。
-    pub fn append(&mut self, count: usize, cx: &mut Context<Self>) {
+    /// 把 `range` 这段行替换成 `count` 个新行(用于尾部变化)。
+    /// 末行带额外底部留白,「是不是末行」变了的相邻行要重新测量。
+    pub fn splice(&mut self, range: Range<usize>, count: usize, cx: &mut Context<Self>) {
         let n = self.list.item_count();
-        self.list.splice(n..n, count);
-        if n > 0 {
-            self.list.remeasure_items(n - 1..n);
+        if range.start > range.end || range.end > n {
+            return;
+        }
+        let start = range.start;
+        self.list.splice(range, count);
+        let total = self.list.item_count();
+        if start > 0 && start <= total {
+            self.list.remeasure_items(start - 1..start);
+        }
+        if total > 0 {
+            self.list.remeasure_items(total - 1..total);
         }
         cx.notify();
     }

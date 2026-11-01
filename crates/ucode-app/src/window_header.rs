@@ -108,16 +108,23 @@ impl Workbench {
                     .child(div().truncate().child(title)),
             ))
             .child(div().flex_1().h_full())
-            .when(right_hidden, |d| d.child(self.right_buttons(cx)))
+            .when(right_hidden, |d| d.child(self.right_buttons(false, cx)))
     }
 
     /// 右端按钮:右面板开关 + IDE 入口。右面板展开时放在它自己的标签行末尾。
-    pub fn right_buttons(&self, cx: &mut Context<Self>) -> impl IntoElement {
+    ///
+    /// 参数:`compact` 为 true 时 IDE 入口只显示图标(右面板较窄,标签行放不下带文字的按钮)。
+    pub fn right_buttons(&self, compact: bool, cx: &mut Context<Self>) -> impl IntoElement {
+        let ide_icon = if self.settings.fused_ide { IconName::Code } else { IconName::ExternalLink };
         h_flex().gap_1().items_center()
             .child(no_drag(Button::new("hd-right").small().ghost().icon(IconName::PanelRight).tooltip("右侧面板(⌥⌘B)")
                 .on_click(cx.listener(|this, _, _, cx| { this.right_open = !this.right_open; cx.notify(); }))))
-            .child(no_drag(mode_switch("hd-ide", "IDE", if self.settings.fused_ide { IconName::Code } else { IconName::ExternalLink }, false)
-                .w(px(92.)).tooltip("切换到 IDE(⇧⌘E)")
-                .on_click(cx.listener(|this, _, window, cx| this.toggle_ide(window, cx)))))
+            .child(no_drag(if compact {
+                Button::new("hd-ide").small().ghost().icon(ide_icon).tooltip("切换到 IDE(⇧⌘E)")
+                    .on_click(cx.listener(|this, _, window, cx| this.toggle_ide(window, cx)))
+            } else {
+                mode_switch("hd-ide", "IDE", ide_icon, false).w(px(92.)).tooltip("切换到 IDE(⇧⌘E)")
+                    .on_click(cx.listener(|this, _, window, cx| this.toggle_ide(window, cx)))
+            }))
     }
 }

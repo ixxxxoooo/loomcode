@@ -91,8 +91,9 @@ pub fn render_tool(session: &Entity<SessionModel>, tool: &ToolCall, cx: &App) ->
                     .child(div().text_color(t.danger).child(format!("−{r}"))),
             )
         })
-        .when_some(tool.duration_ms.filter(|_| tool.status.is_finished()), |d, ms| {
-            d.child(div().text_size(px(11.)).text_color(t.muted_foreground).child(format!("{ms} ms")))
+        // 只在耗时较长(≥1 秒)时显示,太短的耗时只是噪音
+        .when_some(tool.duration_ms.filter(|ms| tool.status.is_finished() && *ms >= 1000), |d, ms| {
+            d.child(div().text_size(px(11.)).text_color(t.muted_foreground).child(format!("{:.1} s", ms as f64 / 1000.)))
         })
         .child(status_indicator(tool.status, cx))
         .when(has_body, |d| {

@@ -207,7 +207,7 @@ impl RightPanel {
         crate::window_header::draggable(h_flex().id("rt-tabbar").h(px(crate::window_header::HEADER_H)).flex_none().px_2().gap_0p5().items_center())
             .children(RightTab::ALL.into_iter().map(|rt| {
                 let on = rt == tab;
-                h_flex().id(SharedString::from(format!("rt-{}", rt.label()))).h(px(26.)).px_2().gap_1().items_center().rounded(px(6.)).cursor_pointer()
+                h_flex().id(SharedString::from(format!("rt-{}", rt.label()))).h(px(26.)).px_1p5().gap_1().items_center().rounded(px(6.)).cursor_pointer()
                     .text_size(px(12.))
                     .text_color(if on { t.foreground } else { t.muted_foreground })
                     .when(on, |d| d.bg(t.muted))

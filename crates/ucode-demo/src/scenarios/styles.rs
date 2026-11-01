@@ -12,6 +12,9 @@ pub fn scenarios() -> Vec<Scenario> {
         Scenario { id: "markdown-edge", title: "Markdown 边界:嵌套、宽表格与回退", group: "会话流样式", kind: Kind::Auto, prompt: "测试 Markdown 的边界情况", build: markdown_edge },
         Scenario { id: "mermaid", title: "Mermaid 图表:架构文档", group: "会话流样式", kind: Kind::Auto, prompt: "画出整体架构", build: mermaid },
         Scenario { id: "chart", title: "内联图表:折线与 K 线", group: "会话流样式", kind: Kind::Auto, prompt: "画一下近 30 天的访问量", build: chart },
+        Scenario { id: "tool-runs", title: "工具调用折叠:读 / 搜 / 改 / 跑混合的一轮", group: "会话流样式", kind: Kind::Auto, prompt: "帮我把 router 里的大小写匹配问题修一下", build: tool_runs },
+        Scenario { id: "tool-runs-live", title: "工具调用折叠:有失败与未结束(默认展开)", group: "会话流样式", kind: Kind::Frozen, prompt: "跑一下完整的检查", build: tool_runs_live },
+        Scenario { id: "working-state", title: "处理中:工具跑完后等模型继续", group: "会话流样式", kind: Kind::Frozen, prompt: "继续", build: working_state },
         Scenario { id: "user-variants", title: "用户消息:图片、@文件与长文折叠", group: "会话流样式", kind: Kind::Auto, prompt: "展示各种用户消息", build: user_variants },
     ]
 }
@@ -61,5 +64,44 @@ fn user_variants() -> Script {
     b.user("**不会被渲染成 Markdown** 的原样文本 `code`");
     b.user("中英混排 mixed text 12345 测试");
     b.say("以上是各类用户消息的样式。");
+    b.build()
+}
+
+/// 一轮真实感的对话:先思考,再连续读 / 搜 / 跑命令(折成摘要),再改文件,最后总结。
+fn tool_runs() -> Script {
+    let mut b = ScriptBuilder::new();
+    b.think("先看看路由匹配的实现,再决定在哪一层做大小写折叠。");
+    b.say("我先梳理一下路由层的结构。");
+    b.tool("Read", "读取 src/router.rs", json!({}), vec![ToolContent::Text("pub fn match_route(path: &str) -> Option<&Route> { ... }".into())]);
+    b.tool("Read", "读取 src/route_table.rs", json!({}), vec![ToolContent::Text("pub struct RouteTable { ... }".into())]);
+    b.tool("Grep", "搜索 match_route", json!({}), vec![ToolContent::Text("src/router.rs:12\nsrc/server.rs:48".into())]);
+    b.tool("Bash", "cargo test router", json!({}), vec![ToolContent::Terminal { command: "cargo test router".into(), output: "test router::case_sensitive ... FAILED".into(), exit_code: Some(0) }]);
+    b.say("定位到了:`match_route` 直接用 `==` 比较路径。我把比较改成忽略 ASCII 大小写,并补一个测试。");
+    b.tool("Edit", "编辑 src/router.rs", json!({}), vec![ToolContent::Diff { path: "src/router.rs".into(), old: "if route.path == path {".into(), new: "if route.path.eq_ignore_ascii_case(path) {".into() }]);
+    b.tool("Write", "新建 tests/case_insensitive.rs", json!({}), vec![ToolContent::Text("#[test]\nfn matches_any_case() {}".into())]);
+    b.tool("Bash", "cargo test", json!({}), vec![ToolContent::Terminal { command: "cargo test".into(), output: "test result: ok. 14 passed".into(), exit_code: Some(0) }]);
+    b.say("改好了,全部测试通过:\n\n- `src/router.rs`:路径比较改为 `eq_ignore_ascii_case`\n- `tests/case_insensitive.rs`:新增大小写测试\n\n注意:查询串仍然区分大小写。");
+    b.build()
+}
+
+/// 带失败、还有未结束工具的一段:默认展开,方便看到问题。
+fn tool_runs_live() -> Script {
+    let mut b = ScriptBuilder::new();
+    b.say("开始检查。");
+    b.tool("Read", "读取 Cargo.toml", json!({}), vec![ToolContent::Text("[workspace]".into())]);
+    b.tool_fail("Bash", "cargo clippy", json!({}), vec![ToolContent::Terminal { command: "cargo clippy".into(), output: "error: this could be simplified".into(), exit_code: Some(1) }]);
+    b.tool("Grep", "搜索 TODO", json!({}), vec![ToolContent::Text("src/lib.rs:3".into())]);
+    b.tool_start(ToolCall::new("live-1", "Bash", "cargo test --workspace").with_input(json!({"command": "cargo test --workspace"})));
+    b.hold();
+    b.build()
+}
+
+/// 工具都结束了,回合还在进行:末尾显示「处理中」提示。
+fn working_state() -> Script {
+    let mut b = ScriptBuilder::new();
+    b.say("我先读一下配置。");
+    b.tool("Read", "读取 settings.json", json!({}), vec![ToolContent::Text("{}".into())]);
+    b.tool("Read", "读取 Cargo.toml", json!({}), vec![ToolContent::Text("[package]".into())]);
+    b.hold();
     b.build()
 }

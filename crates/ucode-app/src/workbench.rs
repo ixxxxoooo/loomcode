@@ -192,7 +192,7 @@ impl Workbench {
             let weak = cx.entity().downgrade();
             panel.update(cx, |p, _| {
                 p.trailing = Some(std::rc::Rc::new(move |_, cx| {
-                    weak.update(cx, |wb, cx| wb.right_buttons(cx).into_any_element()).unwrap_or_else(|_| div().into_any_element())
+                    weak.update(cx, |wb, cx| wb.right_buttons(true, cx).into_any_element()).unwrap_or_else(|_| div().into_any_element())
                 }));
             });
         }

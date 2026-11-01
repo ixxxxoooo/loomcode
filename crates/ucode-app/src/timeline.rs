@@ -6,7 +6,7 @@ use crate::tool_card;
 use crate::ui::{icon, pill};
 use gpui_kit::assets::IconName;
 use gpui_kit::component::shimmer::ShimmerText;
-use gpui_kit::component::{ActiveTheme, h_flex, v_flex};
+use gpui_kit::component::{ActiveTheme, Sizable as _, h_flex, v_flex};
 use gpui_kit::prelude::FluentBuilder as _;
 use gpui_kit::*;
 use ucode_core::*;
@@ -16,9 +16,20 @@ pub const CONTENT_MAX_W: f32 = 820.;
 
 /// 虚拟列表的一行:加上居中容器与垂直间距。
 pub fn render_row(session: &Entity<SessionModel>, ix: usize, window: &mut Window, cx: &mut App) -> AnyElement {
-    let item = session.read(cx).state.items.get(ix).cloned();
-    let Some(item) = item else { return div().into_any_element() };
-    let count = session.read(cx).state.items.len();
+    let (row, count) = {
+        let m = session.read(cx);
+        (m.rows.get(ix).cloned(), m.rows.len())
+    };
+    let Some(row) = row else { return div().into_any_element() };
+    let body = match row {
+        crate::row_groups::Row::Item(i) => {
+            let item = session.read(cx).state.items.get(i).cloned();
+            let Some(item) = item else { return div().into_any_element() };
+            render_item(session, &item, 0, window, cx)
+        }
+        crate::row_groups::Row::Tools(range) => crate::tool_group::render_group(session, range, cx),
+        crate::row_groups::Row::Working => render_working(cx),
+    };
     div()
         .w_full()
         .flex()
@@ -28,7 +39,17 @@ pub fn render_row(session: &Entity<SessionModel>, ix: usize, window: &mut Window
         // 首行顶部、末行底部留白(不能用列表内边距,见 workbench 里的说明);要放在 py 之后才生效
         .when(ix == 0, |d| d.pt(px(13.)))
         .when(ix + 1 == count, |d| d.pb(px(25.)))
-        .child(div().w_full().max_w(px(CONTENT_MAX_W)).child(render_item(session, &item, 0, window, cx)))
+        .child(div().w_full().max_w(px(CONTENT_MAX_W)).child(body))
+        .into_any_element()
+}
+
+/// 回合进行中、暂时没有内容在流出时的「处理中」提示行。
+fn render_working(cx: &App) -> AnyElement {
+    let t = cx.theme();
+    h_flex().h(px(26.)).px_2().gap_2().items_center()
+        .child(gpui_kit::component::spinner::Spinner::new().xsmall())
+        .child(ShimmerText::new("处理中…").id("working-shimmer"))
+        .text_size(px(13.)).text_color(t.muted_foreground)
         .into_any_element()
 }
 

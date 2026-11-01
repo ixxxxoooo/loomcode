@@ -38,6 +38,8 @@ mod ide_close;
 mod ide_tabs;
 mod chat_scroll;
 mod nav_history;
+mod row_groups;
+mod tool_group;
 mod window_header;
 mod ide_window;
 mod layout_rules;
