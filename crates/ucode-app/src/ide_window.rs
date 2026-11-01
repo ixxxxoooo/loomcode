@@ -9,7 +9,8 @@ use crate::ide_status;
 use crate::ide::{CloseTab, FindInProject, GoToLine, IdeView, NextTab, PrevTab, QuickOpen};
 use crate::right_panel::{PanelEvent, RightPanel};
 use crate::ui::{icon, no_drag};
-use crate::workbench::{Page, RightTab, SaveFile, ToggleIde, ToggleLeft, ToggleRight, Workbench, chat_panel};
+use gpui_kit::component::Disableable as _;
+use crate::workbench::{RightTab, SaveFile, ToggleIde, ToggleLeft, ToggleRight, Workbench, chat_panel};
 use gpui_kit::assets::IconName;
 use gpui_kit::component::TitleBar;
 use gpui_kit::component::button::{Button, ButtonVariants};
@@ -154,14 +155,23 @@ impl IdeWindow {
         }
     }
 
-    /// 标题栏:左侧面板开关、居中的项目名搜索框、右侧对话栏开关 / 设置 / 回 Agent。
+    /// 标题栏:左侧侧栏开关 / 搜索 / 后退 / 前进、居中的项目名搜索框、右侧对话栏开关 + 回 Agent(与 Agent 窗口同位置)。
     fn title_bar(&self, project: String, fused: bool, cx: &mut Context<Self>) -> impl IntoElement {
         let t = cx.theme().clone();
+        let (can_back, can_fwd) = { let nav = &self.wb.read(cx).nav; (nav.can_back(), nav.can_forward()) };
         // 高度与 Agent 窗口的顶部行一致,切换按钮在两个窗口里位置不变
         TitleBar::new().h(px(crate::window_header::HEADER_H)).child(
             h_flex().w_full().items_center().gap_1().pr_2()
-                .child(no_drag(Button::new("iw-left").small().ghost().icon(IconName::PanelLeft).tooltip("侧栏(⌘B)")
-                    .on_click(cx.listener(|this, _, _, cx| { this.left_open = !this.left_open; cx.notify(); }))))
+                // 左侧按钮组与 Agent 窗口的 left_buttons 完全一致(同样的按钮、间距、起始位置),切换窗口时不跳动
+                .child(h_flex().gap_0p5()
+                    .child(no_drag(Button::new("iw-left").small().ghost().icon(IconName::PanelLeft).tooltip("侧栏(⌘B)")
+                        .on_click(cx.listener(|this, _, _, cx| { this.left_open = !this.left_open; cx.notify(); }))))
+                    .child(no_drag(Button::new("iw-search").small().ghost().icon(IconName::Search).tooltip("搜索(⌘K)")
+                        .on_click(cx.listener(|this, _, window, cx| this.toggle_quick(window, cx)))))
+                    .child(no_drag(Button::new("iw-back-nav").small().ghost().icon(IconName::ArrowLeft).tooltip("后退").disabled(!can_back)
+                        .on_click(cx.listener(|this, _, window, cx| this.wb.update(cx, |wb, cx| wb.navigate(false, window, cx))))))
+                    .child(no_drag(Button::new("iw-fwd-nav").small().ghost().icon(IconName::ArrowRight).tooltip("前进").disabled(!can_fwd)
+                        .on_click(cx.listener(|this, _, window, cx| this.wb.update(cx, |wb, cx| wb.navigate(true, window, cx)))))))
                 .child(div().flex_1().flex().justify_center().child(no_drag(
                     h_flex().id("iw-quick").cursor_pointer().on_click(cx.listener(|this, _, window, cx| this.toggle_quick(window, cx)))
                         .w(px(420.)).max_w_full().h(px(26.)).px_3().gap_2().items_center().justify_center().rounded(px(7.))
@@ -171,11 +181,6 @@ impl IdeWindow {
                 )))
                 .child(no_drag(Button::new("iw-chat").small().ghost().icon(IconName::PanelRight).tooltip("对话栏(⌥⌘B)")
                     .on_click(cx.listener(|this, _, _, cx| { this.chat_open = !this.chat_open; cx.notify(); }))))
-                .child(no_drag(Button::new("iw-settings").small().ghost().icon(IconName::Settings).tooltip("设置")
-                    .on_click(cx.listener(|this, _, _, cx| {
-                        this.wb.update(cx, |wb, cx| wb.set_page(Page::Settings, cx));
-                        this.back_to_agent(cx);
-                    }))))
                 .child(no_drag(crate::ui::mode_switch("iw-agent", "Agent", if fused { IconName::MessageSquare } else { IconName::ExternalLink }, true).tooltip("切换到 Agent(⇧⌘E)")
                     .on_click(cx.listener(|this, _, _, cx| this.back_to_agent(cx))))),
         )
