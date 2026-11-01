@@ -227,6 +227,8 @@ fn main() {
         .detach();
         markdown_editor::init(cx);
         theme::apply(theme::ThemeKind::PaperLight, None, cx);
+        // 编辑器标签快捷键(⌘W 等)全局注册:Agent 右栏「文件」标签里的编辑器也要能用,不能等 IDE 窗口创建
+        ide_window::bind_ide_keys(cx);
         cx.bind_keys([
             KeyBinding::new("cmd-k", workbench::TogglePalette, None),
             KeyBinding::new("cmd-b", workbench::ToggleLeft, None),

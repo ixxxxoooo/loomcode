@@ -310,7 +310,7 @@ impl Render for IdeWindow {
 }
 
 /// 注册编辑器快捷键(⌘W 关闭标签、⌥⌘←/→ 切换标签);全局只注册一次。
-fn bind_ide_keys(cx: &mut App) {
+pub(crate) fn bind_ide_keys(cx: &mut App) {
     static ONCE: std::sync::Once = std::sync::Once::new();
     ONCE.call_once(|| {
         cx.bind_keys([
