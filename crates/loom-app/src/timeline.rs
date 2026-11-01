@@ -6,7 +6,7 @@ use crate::tool_card;
 use crate::ui::{icon, pill};
 use gpui_kit::assets::IconName;
 use gpui_kit::component::shimmer::ShimmerText;
-use gpui_kit::component::{ActiveTheme, Sizable as _, h_flex, v_flex};
+use gpui_kit::component::{ActiveTheme, h_flex, v_flex};
 use gpui_kit::prelude::FluentBuilder as _;
 use gpui_kit::*;
 use loom_core::*;
@@ -62,7 +62,7 @@ pub fn render_row(session: &Entity<SessionModel>, ix: usize, window: &mut Window
 fn render_working(cx: &App) -> AnyElement {
     let t = cx.theme();
     h_flex().h(px(26.)).px_2().gap_2().items_center()
-        .child(gpui_kit::component::spinner::Spinner::new().xsmall())
+        .child(crate::appearance::glyph_spinner("working", t.primary, cx))
         .child(ShimmerText::new(crate::appearance::working_text(cx)).id("working-shimmer"))
         .text_size(px(13.)).text_color(t.muted_foreground)
         .into_any_element()
@@ -158,7 +158,7 @@ fn render_thinking(session: &Entity<SessionModel>, id: &str, text: &str, streami
         .child(
             h_flex().id(SharedString::from(format!("think-{id}"))).gap_1p5().items_center().cursor_pointer().h(px(24.))
                 .on_click(move |_, _, cx| { s.update(cx, |m, cx| m.toggle(&sid, cx)); })
-                .child(icon(IconName::Brain, 14., t.muted_foreground))
+                .child(if streaming { crate::appearance::glyph_spinner(&format!("think-{id}"), t.primary, cx) } else { icon(IconName::Brain, 14., t.muted_foreground).into_any_element() })
                 .child(if streaming {
                     ShimmerText::new(crate::appearance::thinking_text(cx)).id(SharedString::from(format!("think-shimmer-{id}"))).into_any_element()
                 } else {

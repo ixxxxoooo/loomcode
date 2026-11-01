@@ -6,6 +6,7 @@ use crate::UiPrefs;
 use gpui_kit::component::Theme;
 use gpui_kit::component::scroll::ScrollbarMode;
 use gpui_kit::*;
+use std::time::Duration;
 use loom_config::{ScrollbarStyle, SpinnerStyle};
 
 /// 各风格的文案:(风格名, 说明用示例, 处理中, 思考中)。
@@ -41,4 +42,38 @@ pub fn apply_scrollbar(style: ScrollbarStyle, cx: &mut App) {
         ScrollbarStyle::Auto => Theme::set_scrollbar_mode(ScrollbarMode::Scrolling, cx),
         ScrollbarStyle::Always => Theme::set_scrollbar_mode(ScrollbarMode::Always, cx),
     }
+}
+
+/// 各风格的动画字符帧(与 OhMyAgent 一致)。
+pub fn glyph_frames(style: SpinnerStyle) -> &'static [&'static str] {
+    match style {
+        SpinnerStyle::Classic | SpinnerStyle::Fun | SpinnerStyle::ClaudeCode => &["·", "✢", "✳", "✶", "✻", "✽", "✻", "✶", "✳", "✢"],
+        SpinnerStyle::Poetic => &["◜", "◠", "◝", "◞", "◡", "◟"],
+        SpinnerStyle::Geek => &["⠋", "⠙", "⠹", "⠸", "⠼", "⠴", "⠦", "⠧", "⠇", "⠏"],
+        SpinnerStyle::Minimal => &["●", "◉", "○", "◉"],
+    }
+}
+
+/// 静态展示用的代表字符(设置页每一行左侧)。
+pub fn glyph_static(style: SpinnerStyle) -> &'static str {
+    match style {
+        SpinnerStyle::Classic | SpinnerStyle::Fun | SpinnerStyle::ClaudeCode => "✻",
+        SpinnerStyle::Poetic => "◠",
+        SpinnerStyle::Geek => "⠿",
+        SpinnerStyle::Minimal => "●",
+    }
+}
+
+/// 当前风格的动画字符:所有帧叠在同一格里,按时间轮流显示一帧(重复播放)。
+///
+/// 参数:`id` 元素 id 前缀;`color` 字符颜色;`cx` 应用上下文(读取当前风格)。
+pub fn glyph_spinner(id: &str, color: Hsla, cx: &App) -> AnyElement {
+    let style = cx.try_global::<UiPrefs>().map_or(SpinnerStyle::Classic, |p| p.spinner);
+    let frames = glyph_frames(style);
+    let n = frames.len();
+    div().relative().size(px(16.)).flex_none().children(frames.iter().enumerate().map(|(i, g)| {
+        div().absolute().size_full().flex().items_center().justify_center().text_size(px(14.)).text_color(color).child(g.to_string())
+            .with_animation(SharedString::from(format!("{id}-g{i}")), Animation::new(Duration::from_millis(110 * n as u64)).repeat(),
+                move |d, t| d.opacity(if ((t * n as f32) as usize).min(n - 1) == i { 1. } else { 0. }))
+    })).into_any_element()
 }

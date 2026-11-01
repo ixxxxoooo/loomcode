@@ -21,6 +21,7 @@ pub fn sections(wb: &Workbench, cx: &mut Context<Workbench>) -> Vec<AnyElement> 
         h_flex().id(SharedString::from(format!("spin-{i}"))).w_full().px_3().py_2().gap_3().items_center().rounded(px(8.)).cursor_pointer()
             .when(on, |d| d.bg(t.primary.opacity(0.1))).hover(|d| d.bg(t.muted))
             .on_click(cx.listener(move |this, _, _, cx| this.update_settings(cx, |s| s.appearance.spinner = style)))
+            .child(div().w(px(20.)).flex().justify_center().text_size(px(15.)).text_color(t.primary).child(crate::appearance::glyph_static(style)))
             .child(v_flex().flex_1().gap_0p5()
                 .child(div().text_size(px(13.)).child(name.to_string()))
                 .child(div().text_size(px(12.)).text_color(t.muted_foreground).child(sample.to_string())))
