@@ -14,7 +14,9 @@ Rust + gpui-kit 0.8 的 Claude Code 工作台。只支持 Claude Code,直连本�
 | `loom-automation` | 自动化的计划、存储与运行器 |
 | `loom-browser` | 内置阅读模式浏览器的抓取与正文提取 |
 | `loom-term` | 伪终端内核:`portable-pty` 起 shell + `alacritty_terminal` 解析,输出画面快照与按键编码(与界面无关) |
-| `loom-app` | gpui-kit 界面(二进制名 `loomcode`) |
+| `loom-app` | gpui-kit 界面(二进制名 `loomcode`);`app_icon.rs` 管 Dock 图标(随主题切浅/深色)与菜单栏托盘 |
+
+图标源文件在 `assets/icon/`:`gen.py` 生成 SVG,`build.sh` 渲染出 PNG 与 `.icns`(产物已提交,改设计后重跑 `assets/icon/build.sh`)。
 
 数据流:`AgentBackend` → `AgentEvent` → `SessionState::apply`(纯函数归约)→ `SessionModel` 实体 → 界面。界面只读 `SessionState`,所有交互都转成 `AgentCommand` 发给后端,因此演示与真实后端共用同一套界面。
 

@@ -5,6 +5,7 @@
 //! - 其余情况使用真实 `claude`:读取 `~/.claude/projects` 的历史会话,按需惰性启动子进程。
 
 mod ansi;
+mod app_icon;
 mod automation_page;
 mod branch_bar;
 mod browser_page;
@@ -119,6 +120,7 @@ fn main() {
         options.window_min_size = Some(size(px(640.), px(480.)));
         open_window(options, cx, move |window, cx| cx.new(|cx| Workbench::new(demo, session_arg, window, cx)))
             .expect("打开主窗口失败");
+        app_icon::install_tray();
         cx.activate(true);
     });
 }

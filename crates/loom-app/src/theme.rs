@@ -31,8 +31,14 @@ fn hex(v: u32) -> Hsla {
     rgb(v).into()
 }
 
-/// 应用主题到全局。
+/// 应用主题到全局,并让 Dock 图标切到对应的浅色 / 深色版。
 pub fn apply(kind: ThemeKind, window: Option<&mut Window>, cx: &mut App) {
+    apply_colors(kind, window, cx);
+    crate::app_icon::set_dock_icon(cx.theme().is_dark());
+}
+
+/// 覆盖主题色值。参数:`kind` 主题;`window` 当前窗口(可选);`cx` 应用上下文。
+fn apply_colors(kind: ThemeKind, window: Option<&mut Window>, cx: &mut App) {
     match kind {
         ThemeKind::System => {
             Theme::sync_system_appearance(window, cx);

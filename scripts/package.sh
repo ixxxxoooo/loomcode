@@ -13,6 +13,8 @@ APP=dist/LoomCode.app
 rm -rf "$APP"
 mkdir -p "$APP/Contents/MacOS" "$APP/Contents/Resources"
 cp target/release/loomcode "$APP/Contents/MacOS/loomcode"
+# 应用图标(浅色版;运行中 Dock 图标会随主题切到深色版)。重新生成图标:assets/icon/build.sh
+cp assets/icon/LoomCode.icns "$APP/Contents/Resources/LoomCode.icns"
 
 cat > "$APP/Contents/Info.plist" <<PLIST
 <?xml version="1.0" encoding="UTF-8"?>
@@ -23,6 +25,7 @@ cat > "$APP/Contents/Info.plist" <<PLIST
   <key>CFBundleDisplayName</key><string>LoomCode</string>
   <key>CFBundleIdentifier</key><string>dev.loomcode.app</string>
   <key>CFBundleExecutable</key><string>loomcode</string>
+  <key>CFBundleIconFile</key><string>LoomCode</string>
   <key>CFBundlePackageType</key><string>APPL</string>
   <key>CFBundleShortVersionString</key><string>$VERSION</string>
   <key>CFBundleVersion</key><string>$VERSION</string>

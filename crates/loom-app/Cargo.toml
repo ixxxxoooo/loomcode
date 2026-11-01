@@ -21,3 +21,9 @@ serde_json.workspace = true
 async-channel = "2"
 similar = "2"
 uuid = { version = "1", features = ["v4"] }
+
+# Dock 图标随主题切换、菜单栏托盘(与 gpui 用同一版本的 objc2,不新增依赖树)
+[target.'cfg(target_os = "macos")'.dependencies]
+objc2 = "0.6"
+objc2-foundation = { version = "0.3.2", default-features = false, features = ["std", "NSData", "NSGeometry", "NSString"] }
+objc2-app-kit = { version = "0.3.2", default-features = false, features = ["std", "NSApplication", "NSResponder", "NSImage", "NSMenu", "NSMenuItem", "NSStatusBar", "NSStatusItem", "NSStatusBarButton", "NSButton", "NSControl", "NSView"] }
