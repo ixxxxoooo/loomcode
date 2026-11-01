@@ -40,7 +40,7 @@ fn session_row(wb: &Workbench, project_ix: usize, meta: &SessionMeta, cx: &mut C
         .rounded(px(8.))
         .cursor_pointer()
         // 选中行:主色淡染的底色(参考样式的薄紫蓝)
-        .when(active, |d| d.bg(t.info.opacity(0.16)))
+        .when(active, |d| d.bg(t.primary.opacity(0.14)))
         .hover(|d| d.bg(t.sidebar_accent))
         .on_click(cx.listener(move |this, _, window, cx| this.open_session(project_ix, &id, window, cx)))
         .child(div().w(px(8.)).flex_none().child(status_dot(badge, cx).unwrap_or_else(|| div().size(px(6.)).m(px(1.)).rounded_full().flex_none().bg(t.muted_foreground.opacity(0.7)))))
@@ -155,7 +155,7 @@ pub fn render(wb: &Workbench, cx: &mut Context<Workbench>) -> impl IntoElement {
                                 .child(icon(
                                     if workspace.is_some() { IconName::Folders } else if worktree { IconName::GitFork } else if expanded { IconName::FolderOpen } else { IconName::Folder },
                                     15.,
-                                    if expanded { t.info } else { t.muted_foreground },
+                                    if expanded { t.primary } else { t.muted_foreground },
                                 ))
                                 .child(div().flex_1().truncate().text_size(px(13.)).font_weight(FontWeight::MEDIUM).child(p.name.clone()))
                                 .when(pinned, |d| d.child(icon(IconName::Pin, 11., t.muted_foreground)))
