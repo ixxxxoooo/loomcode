@@ -32,27 +32,28 @@ fn session_row(wb: &Workbench, project_ix: usize, meta: &SessionMeta, cx: &mut C
         .id(SharedString::from(format!("sess-{}", meta.id)))
         .group(group.clone())
         .w_full()
-        .h(px(30.))
-        .pl(px(26.))
+        .h(px(32.))
+        .pl(px(20.))
         .pr_2()
-        .gap_2()
+        .gap_2p5()
         .items_center()
-        .rounded(px(6.))
+        .rounded(px(8.))
         .cursor_pointer()
-        .when(active, |d| d.bg(t.sidebar_accent))
+        // 选中行:主色淡染的底色(参考样式的薄紫蓝)
+        .when(active, |d| d.bg(t.info.opacity(0.16)))
         .hover(|d| d.bg(t.sidebar_accent))
         .on_click(cx.listener(move |this, _, window, cx| this.open_session(project_ix, &id, window, cx)))
-        .child(div().w(px(8.)).flex_none().children(status_dot(badge, cx)))
-        .child(div().flex_1().min_w_0().truncate().text_size(px(13.)).when(archived, |d| d.text_color(t.muted_foreground)).child(meta.title.clone()))
+        .child(div().w(px(8.)).flex_none().child(status_dot(badge, cx).unwrap_or_else(|| div().size(px(6.)).m(px(1.)).rounded_full().flex_none().bg(t.muted_foreground.opacity(0.7)))))
+        .child(div().flex_1().min_w_0().truncate().text_size(px(13.5)).when(archived, |d| d.text_color(t.muted_foreground)).child(meta.title.clone()))
         .child(
-            div().relative().w(px(44.)).h_full().flex_none()
+            div().relative().w(px(52.)).h_full().flex_none()
                 .child(
-                    h_flex().size_full().justify_end().items_center().gap_1().text_size(px(11.)).text_color(t.muted_foreground)
+                    h_flex().size_full().justify_end().items_center().gap_1().text_size(px(12.)).text_color(t.muted_foreground)
                         .when(pinned, |d| d.child(icon(IconName::Pin, 11., t.muted_foreground)))
-                        .child(meta.updated.clone()),
+                        .child(short_time(&meta.updated)),
                 )
                 .child(
-                    h_flex().absolute().inset_0().justify_end().items_center().gap_0p5().bg(t.sidebar_accent).invisible()
+                    h_flex().absolute().inset_0().justify_end().items_center().gap_0p5().bg(if active { t.sidebar } else { t.sidebar_accent }).invisible()
                         .group_hover(group, |d| d.visible())
                         .on_mouse_down(MouseButton::Left, stop)
                         .child(Button::new(SharedString::from(format!("pin-{}", meta.id))).xsmall().ghost()
@@ -64,6 +65,13 @@ fn session_row(wb: &Workbench, project_ix: usize, meta: &SessionMeta, cx: &mut C
                 ),
         )
         .context_menu(menu)
+}
+
+/// 把「5 分钟前 / 1 小时前 / 昨天」压成侧栏用的短时间(「5分钟」「1小时」「昨天」)。
+///
+/// 参数:`s` 原始相对时间文案。返回:去掉「前」和空格后的短文案。
+fn short_time(s: &str) -> String {
+    s.trim_end_matches('前').replace(' ', "")
 }
 
 /// 侧栏顶部的一行入口(图标 + 文字 + 可选快捷键)。
@@ -125,7 +133,7 @@ pub fn render(wb: &Workbench, cx: &mut Context<Workbench>) -> impl IntoElement {
                     .on_click(cx.listener(|this, _, _, cx| this.toggle_show_archived(cx)))),
         )
         .child(
-            v_flex().id("projects").flex_1().min_h_0().overflow_y_scroll().px_2().py_1().gap_0p5()
+            v_flex().id("projects").flex_1().min_h_0().overflow_y_scroll().px_2().py_1().gap_1()
                 .on_drop(cx.listener(|this, paths: &ExternalPaths, window, cx| this.drop_projects(paths.paths(), window, cx)))
                 .children(shown.into_iter().map(|(pi, sessions)| {
                     let p = &projects[pi];
@@ -138,19 +146,25 @@ pub fn render(wb: &Workbench, cx: &mut Context<Workbench>) -> impl IntoElement {
                     let group = SharedString::from(format!("proj-group-{pi}"));
                     v_flex()
                         .child(
-                            h_flex().id(SharedString::from(format!("proj-{pi}"))).group(group.clone()).h(px(28.)).px_1().gap_1p5().items_center().rounded(px(6.)).cursor_pointer()
-                                .hover(|d| d.bg(t.sidebar_accent))
+                            h_flex().id(SharedString::from(format!("proj-{pi}"))).group(group.clone()).h(px(34.)).px_2().gap_2p5().items_center().rounded(px(8.)).cursor_pointer()
+                                // 展开的项目行带灰底;折叠的悬停时才有底色
+                                .when(expanded, |d| d.bg(t.foreground.opacity(0.07)))
+                                .hover(|d| d.bg(t.foreground.opacity(0.07)))
                                 .on_click(cx.listener(move |this, _, _, cx| this.toggle_project(pi, cx)))
-                                .child(icon(if expanded { IconName::ChevronDown } else { IconName::ChevronRight }, 12., t.muted_foreground))
-                                .child(icon(if workspace.is_some() { IconName::Folders } else if worktree { IconName::GitFork } else { IconName::Folder }, 14., t.muted_foreground))
-                                .child(div().flex_1().truncate().text_size(px(13.)).font_weight(FontWeight::MEDIUM).child(p.name.clone()))
+                                // 展开 = 蓝色打开的文件夹,折叠 = 灰色合上的文件夹
+                                .child(icon(
+                                    if workspace.is_some() { IconName::Folders } else if worktree { IconName::GitFork } else if expanded { IconName::FolderOpen } else { IconName::Folder },
+                                    17.,
+                                    if expanded { t.info } else { t.muted_foreground },
+                                ))
+                                .child(div().flex_1().truncate().text_size(px(14.5)).font_weight(FontWeight::SEMIBOLD).child(p.name.clone()))
                                 .when(pinned, |d| d.child(icon(IconName::Pin, 11., t.muted_foreground)))
                                 .when_some(workspace.as_ref(), |d, w| d.child(div().text_size(px(11.)).text_color(t.muted_foreground).child(format!("{} 个文件夹", w.folders.len()))))
                                 // 折叠时把项目里最需要关注的会话状态带到这一行:等待你 > 运行中 > 未读
                                 .when(!expanded, |d| d.children(status_dot(summary_badge(&p.sessions), cx)))
                                 // 悬停时才出现的操作:在这个项目里新建会话、更多菜单(同右键菜单)
                                 .child(
-                                    h_flex().gap_0p5().items_center().invisible().group_hover(group.clone(), |d| d.visible())
+                                    h_flex().gap_0p5().items_center().when(!expanded, |d| d.invisible()).group_hover(group.clone(), |d| d.visible())
                                         .on_mouse_down(MouseButton::Left, |_, _, cx| cx.stop_propagation())
                                         .child(Button::new(SharedString::from(format!("proj-new-{pi}"))).xsmall().ghost().icon(IconName::Plus).tooltip("在此项目新建会话")
                                             .on_click(cx.listener(move |this, _, window, cx| this.new_session(pi, window, cx))))
