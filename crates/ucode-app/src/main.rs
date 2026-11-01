@@ -58,6 +58,7 @@ mod session_menu;
 mod settings;
 mod right_panel;
 mod sidebar;
+mod smooth_scroll;
 mod sidebar_filter;
 mod term_actions;
 mod term_geom;

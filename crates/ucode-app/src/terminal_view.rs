@@ -31,6 +31,8 @@ pub struct TerminalView {
     selecting: bool,
     /// 这次按下之后鼠标是否移动过(没动过的单击要清掉选区)
     dragged: bool,
+    /// 滚轮累计的未满一行的像素(平滑滚动 / 触控板每次只给几像素)
+    wheel_acc: f32,
     _pump: Task<()>,
 }
 
@@ -65,7 +67,7 @@ impl TerminalView {
                 })
                 .detach();
             }
-            Self { term, focus: cx.focus_handle(), cell_w: None, grid: (80, 24), bounds: None, selecting: false, dragged: false, _pump: pump }
+            Self { term, focus: cx.focus_handle(), cell_w: None, grid: (80, 24), bounds: None, selecting: false, dragged: false, wheel_acc: 0., _pump: pump }
         }))
     }
 
@@ -180,12 +182,17 @@ impl TerminalView {
         cx.notify();
     }
 
+    /// 滚轮回看:像素累计满一行才滚一行,余数留到下次,小步增量不会被吞掉。
+    ///
+    /// 参数:`ev` 滚轮事件;`cx` 视图上下文。
     fn on_wheel(&mut self, ev: &ScrollWheelEvent, cx: &mut Context<Self>) {
-        let lines = (ev.delta.pixel_delta(px(LINE_H)).y / px(LINE_H)).round() as i32;
-        if lines != 0 {
-            self.term.scroll(lines);
+        self.wheel_acc += f32::from(ev.delta.pixel_delta(px(LINE_H)).y);
+        let lines = (self.wheel_acc / LINE_H).trunc();
+        cx.stop_propagation();
+        if lines != 0. {
+            self.wheel_acc -= lines * LINE_H;
+            self.term.scroll(lines as i32);
             cx.notify();
-            cx.stop_propagation();
         }
     }
 }

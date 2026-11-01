@@ -215,6 +215,8 @@ impl Render for IdeWindow {
         };
         v_flex()
             .key_context("IdeWindow")
+            // 平滑滚动拦截层:必须是第一个子元素
+            .child(crate::smooth_scroll::layer())
             .track_focus(&self.focus)
             .on_action(cx.listener(|this, _: &SaveFile, _, cx| this.save(cx)))
             .on_action(cx.listener(|this, a: &OpenPath, window, cx| this.open_path(&a.path, window, cx)))

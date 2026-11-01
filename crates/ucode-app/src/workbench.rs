@@ -1096,6 +1096,8 @@ impl Render for Workbench {
             .size_full()
             .bg(t.background)
             .text_color(t.foreground)
+            // 平滑滚动拦截层:必须是第一个子元素
+            .child(crate::smooth_scroll::layer())
             .when_some(ide_shell, |d, shell| d.child(div().flex_1().min_h_0().w_full().child(shell)))
             .when(!show_ide, |d| d
                 .child(

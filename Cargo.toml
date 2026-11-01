@@ -14,3 +14,11 @@ gpui-kit = { version = "0.8.0", features = ["tree-sitter", "tree-sitter-rust", "
 serde = { version = "1", features = ["derive"] }
 serde_json = { version = "1", features = ["preserve_order"] }
 thiserror = "2"
+
+# 开发版也要滚动流畅:未优化的 gpui(布局、排版、绘制)在重内容场景每帧约 70ms,
+# 依赖全开优化后与 release 一样稳定 60fps;自己的 crate 只开 1 级,增量编译仍然快。
+[profile.dev]
+opt-level = 1
+
+[profile.dev.package."*"]
+opt-level = 3
