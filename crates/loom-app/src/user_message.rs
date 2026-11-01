@@ -87,6 +87,7 @@ fn render_card(session: &Entity<SessionModel>, id: &str, text: &str, images: &[S
     let group = SharedString::from(format!("umsg-{id}"));
     let (s_fold, id_fold) = (session.clone(), id.to_string());
     let (s_edit, id_edit, text_edit) = (session.clone(), id.to_string(), text.clone());
+    let (s_retry, id_retry) = (session.clone(), id.to_string());
     let (s_click, id_click, text_click) = (session.clone(), id.to_string(), text.clone());
     let copy_text = text.clone();
     let icon_btn = |bid: String, ic: IconName, tip: &'static str| {
@@ -95,7 +96,7 @@ fn render_card(session: &Entity<SessionModel>, id: &str, text: &str, images: &[S
             .tooltip(move |window, cx| gpui_kit::component::tooltip::Tooltip::new(tip).build(window, cx))
             .child(icon(ic, 12., t.muted_foreground))
     };
-    v_flex().id(SharedString::from(format!("umsg-card-{id}"))).group(group.clone()).relative().w_full().gap_2().px(px(14.)).py(px(10.)).pr(px(44.)).rounded(px(12.)).bg(t.muted).cursor_pointer()
+    v_flex().id(SharedString::from(format!("umsg-card-{id}"))).group(group.clone()).relative().w_full().gap_2().px(px(14.)).py(px(10.)).pr(px(76.)).rounded(px(12.)).bg(t.muted).cursor_pointer()
         .on_click(move |_, window, cx| {
             let (id, text) = (id_click.clone(), text_click.clone());
             s_click.update(cx, |m, cx| m.begin_edit(&id, &text, window, cx));
@@ -114,6 +115,8 @@ fn render_card(session: &Entity<SessionModel>, id: &str, text: &str, images: &[S
         // 悬停时右下角出现:复制、编辑
         .child(
             h_flex().absolute().right(px(8.)).bottom(px(6.)).gap_0p5().invisible().group_hover(group, |d| d.visible())
+                .child(icon_btn(format!("umsg-retry-{id}"), IconName::RotateCcw, "重试(原样重新发送)")
+                    .on_click(move |_, _, cx| { cx.stop_propagation(); s_retry.update(cx, |m, cx| m.retry_user(&id_retry, cx)); }))
                 .child(icon_btn(format!("umsg-copy-{id}"), IconName::Copy, "复制消息")
                     .on_click(move |_, _, cx| { cx.stop_propagation(); cx.write_to_clipboard(ClipboardItem::new_string(copy_text.clone())); }))
                 .child(icon_btn(format!("umsg-edit-{id}"), IconName::SquarePen, "编辑并重新发送")
@@ -178,6 +181,26 @@ impl SessionModel {
         self.editing = Some(UserEdit { id: id.to_string(), input, _sub: sub });
         self.remeasure_id(id, cx);
         cx.notify();
+    }
+
+    /// 重试:把这条用户消息原样重新发送(新消息,原消息与回复保留);回合进行中排到本轮结束后。
+    ///
+    /// 参数:`id` 消息 id。
+    pub fn retry_user(&mut self, id: &str, cx: &mut Context<Self>) {
+        let found = self.state.items.iter().find_map(|i| match i {
+            loom_core::TimelineItem::User { id: uid, text, images, files } if uid == id => Some((text.clone(), images.clone(), files.clone())),
+            _ => None,
+        });
+        let Some((text, images, files)) = found else { return };
+        let text = display_text(&text);
+        if text.is_empty() && images.is_empty() {
+            return;
+        }
+        if self.state.phase == loom_core::Phase::Running && images.is_empty() {
+            self.queue_prompt(text, cx);
+        } else {
+            self.send_prompt_with(text, images, files, cx);
+        }
     }
 
     /// 结束编辑(取消或发送后)。

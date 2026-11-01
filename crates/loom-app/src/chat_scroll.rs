@@ -48,6 +48,15 @@ impl ChatScroll {
         (o.item_ix, f32::from(o.offset_in_item))
     }
 
+    /// 指定行的卡片顶边是否已经滚过视口顶边(真正「到顶」才算,未到顶保持原状)。
+    pub fn row_scrolled_past(&self, row: usize) -> bool {
+        match self.list.bounds_for_item(row) {
+            // 行内上方有 5px 间距,卡片顶边 = 行顶 + 5
+            Some(b) => b.top() + px(5.) < self.list.viewport_bounds().top(),
+            None => self.list.logical_scroll_top().item_ix > row,
+        }
+    }
+
     /// 滚到指定行顶部(暂停贴底跟随)。
     pub fn scroll_to_row(&mut self, row: usize, cx: &mut Context<Self>) {
         self.list.scroll_to(ListOffset { item_ix: row, offset_in_item: px(0.) });
@@ -138,6 +147,11 @@ pub fn chat_scroller(
                     let _ = weak.update(cx, |_, cx| cx.notify());
                 }))
                 .vertical_scrollbar(&list),
+        )
+        // 底部(输入框上方)渐隐过渡
+        .child(
+            div().absolute().left_0().right_0().bottom_0().h(px(28.))
+                .bg(linear_gradient(180., linear_color_stop(t.background.opacity(0.), 0.), linear_color_stop(t.background, 1.))),
         )
         .children(sticky)
         .when(away, |d| {
