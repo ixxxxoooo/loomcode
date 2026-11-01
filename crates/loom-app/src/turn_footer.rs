@@ -32,7 +32,15 @@ pub fn render(session: &Entity<SessionModel>, id: &str, text: &str, group: Share
                     s.update(cx, |m, cx| m.mark_copied(&cid, cx));
                 })
                 .child(icon(if copied { IconName::Check } else { IconName::Copy }, 12., if copied { t.success } else { t.muted_foreground }))
-                .child(if copied { "已复制" } else { "复制" }),
+                .tooltip(move |window, cx| gpui_kit::component::tooltip::Tooltip::new(if copied { "已复制" } else { "复制" }).build(window, cx)),
+        )
+        .child(
+            h_flex().id(SharedString::from(format!("fork-{id}"))).h(px(22.)).px_1p5().items_center().rounded(px(5.)).cursor_pointer()
+                .on_mouse_down(MouseButton::Left, |_, _, cx| cx.stop_propagation())
+                .hover(|d| d.bg(t.list_hover))
+                .on_click(|_, window, cx| window.dispatch_action(Box::new(crate::workbench::ForkActive), cx))
+                .tooltip(move |window, cx| gpui_kit::component::tooltip::Tooltip::new("从这里创建分支会话").build(window, cx))
+                .child(icon(IconName::GitFork, 12., t.muted_foreground)),
         )
         .into_any_element()
 }

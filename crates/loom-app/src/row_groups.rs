@@ -130,6 +130,11 @@ pub fn build_rows(items: &[TimelineItem], working: bool, density: ToolDensity, d
             i += 1;
             continue;
         }
+        // 「本轮改动」汇总等回合结束后再显示(进行中的最后一轮先不显示)
+        if working && matches!(items[i], TimelineItem::Changes { .. }) && !items[i + 1..].iter().any(|x| matches!(x, TimelineItem::User { .. })) {
+            i += 1;
+            continue;
+        }
         if let Some(d) = digests.iter().find(|d| d.start == i) {
             rows.push(Row::Digest(d.clone()));
             i = d.end;

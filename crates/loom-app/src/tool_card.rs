@@ -215,10 +215,10 @@ pub fn render_content(content: &ToolContent, run_id: Option<&str>, cx: &App) -> 
                         .when_some(run_id.map(str::to_string), |d, id| {
                             // 只有 Agent 窗口处理这个动作(IDE 窗口里没有对应面板,等于无操作)
                             d.child(
-                                div().id(SharedString::from(format!("view-run-{id}"))).flex_none().cursor_pointer().text_size(px(11.)).text_color(t.muted_foreground)
-                                    .hover(|s| s.text_color(t.primary))
+                                div().id(SharedString::from(format!("view-run-{id}"))).flex_none().cursor_pointer().tooltip(move |window, cx| gpui_kit::component::tooltip::Tooltip::new("在终端面板查看").build(window, cx))
+                                    .hover(|s| s.opacity(0.7))
                                     .on_click(move |_, window, cx| window.dispatch_action(Box::new(crate::workbench::ViewAgentRun { id: id.clone() }), cx))
-                                    .child("在终端面板查看"),
+                                    .child(icon(IconName::Terminal, 14., t.muted_foreground)),
                             )
                         }),
                 )

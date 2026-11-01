@@ -33,6 +33,11 @@ pub struct ViewAgentRun {
     pub id: String,
 }
 
+/// 从当前会话分叉出新会话(回复操作条的分叉图标)。
+#[derive(Clone, PartialEq, Action)]
+#[action(namespace = loomcode, no_json)]
+pub struct ForkActive;
+
 actions!(loomcode, [TogglePalette, ToggleLeft, ToggleRight, OpenSettings, CycleMode, NewSession, Escape, SaveFile, ToggleIde, SwitchMode]);
 
 /// 主区域当前页面。
@@ -1275,6 +1280,11 @@ impl Render for Workbench {
                 let id = a.id.clone();
                 this.panel.update(cx, |p, cx| p.open_run(id, cx));
                 cx.notify();
+            }))
+            .on_action(cx.listener(|this, _: &ForkActive, window, cx| {
+                let (Some(id), Some(ix)) = (this.active.clone(), this.current_project_ix()) else { return };
+                let Some(cwd) = this.projects.get(ix).map(|p| p.path.clone()) else { return };
+                this.fork_session(&id, &cwd, window, cx);
             }))
             .on_action(cx.listener(|this, _: &TogglePalette, window, cx| this.toggle_palette(window, cx)))
             .on_action(cx.listener(|this, _: &crate::term_actions::ToggleTerminal, window, cx| this.toggle_terminal(window, cx)))
