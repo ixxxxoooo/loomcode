@@ -10,6 +10,7 @@ use crate::ui::empty_state;
 use gpui_kit::assets::IconName;
 use gpui_kit::component::input::{Editor, EditorState, InputEvent};
 use gpui_kit::component::{ActiveTheme, h_flex, v_flex};
+use gpui_kit::prelude::FluentBuilder as _;
 use gpui_kit::*;
 use std::collections::HashMap;
 use std::path::{Path, PathBuf};
@@ -71,12 +72,14 @@ pub struct IdeView {
     pub(crate) recent: Vec<String>,
     /// 切换项目后待恢复的标签记忆(渲染时有窗口再恢复)
     pub(crate) pending_restore: Option<loom_config::IdeMemory>,
+    /// Markdown 文件的预览 / 源码模式与就地编辑状态
+    pub(crate) md: HashMap<PathBuf, crate::ide_markdown::MdUi>,
 }
 
 impl IdeView {
     /// 创建空的编辑器视图。
     pub fn new() -> Self {
-        Self { root: String::new(), docs: HashMap::new(), tabs: TabModel::default(), note: None, images: Default::default(), minimap_ui: Default::default(), applied: None, edit_gen: 0, nav: Default::default(), nav_quiet: false, fresh_open: false, recent: Vec::new(), pending_restore: None }
+        Self { root: String::new(), docs: HashMap::new(), tabs: TabModel::default(), note: None, images: Default::default(), minimap_ui: Default::default(), applied: None, edit_gen: 0, nav: Default::default(), nav_quiet: false, fresh_open: false, recent: Vec::new(), pending_restore: None, md: HashMap::new() }
     }
 
     /// 设置项目根目录(会话切换时由宿主调用)。
@@ -396,17 +399,20 @@ impl Render for IdeView {
         if self.docs.get(&path).is_some_and(|d| !std::sync::Arc::ptr_eq(&d.mm_key.0, &want.0) || d.mm_key.1 != want.1) {
             self.rebuild_minimap(&path, None, cx);
         }
+        let is_md = crate::ide_markdown::is_markdown(&path);
+        let md_mode = if is_md { self.md_mode(&path) } else { crate::ide_markdown::MdMode::Source };
         let doc = &self.docs[&path];
         let editor = doc.editor.clone();
         root.child(tab_bar(self.tab_items(&path), cx))
             .child(breadcrumbs(&path, &self.root, doc.saved, self.note.clone().or_else(|| doc.stale.then(|| "磁盘上的文件已被修改,点右侧刷新按钮载入(会丢弃你的修改)".to_string())), cx))
+            .when(is_md, |d| d.child(self.md_mode_bar(&path, cx)))
             .child({
                 let prefs = crate::prefs(cx).editor;
                 let ui = self.minimap_ui.clone();
                 // 编辑区太窄时自动隐藏迷你地图(宽度取自上一帧的测量)
                 let wide = ui.row_width.get() == 0. || ui.row_width.get() >= crate::ide_minimap::MIN_EDITOR_W;
                 let mm = (prefs.minimap && wide).then(|| crate::ide_minimap::minimap(&editor, doc.minimap.clone(), doc.hunks.clone(), ui.clone(), crate::ide_minimap::MinimapOpts::from_prefs(&prefs), cx));
-                h_flex().relative().flex_1().min_h_0().w_full()
+                let source = h_flex().relative().flex_1().min_w_0().min_h_0().w_full().h_full()
                     .child(canvas(move |b, _, _| ui.row_width.set(f32::from(b.size.width)), |_, _, _, _| {}).absolute().size_full())
                     // 迷你地图兼作滚动条:把编辑器多撑出 16px 并裁掉,盖住它自带的纵向滚动条(自动换行时保留,否则折行会被裁)
                     .child({
@@ -415,7 +421,12 @@ impl Render for IdeView {
                             .child(div().absolute().top_0().left_0().bottom_0().right(px(if hide { -16. } else { 0. }))
                                 .child(Editor::new(&editor).bordered(false).appearance(false).size_full()))
                     })
-                    .children(mm)
+                    .children(mm);
+                match md_mode {
+                    crate::ide_markdown::MdMode::Source => h_flex().flex_1().min_h_0().w_full().child(source).into_any_element(),
+                    crate::ide_markdown::MdMode::Preview => h_flex().flex_1().min_h_0().w_full().child(self.md_preview(&path, cx)).into_any_element(),
+                    crate::ide_markdown::MdMode::Split => h_flex().flex_1().min_h_0().w_full().child(div().flex_1().min_w_0().h_full().child(source)).child(div().w(px(1.)).h_full().bg(t.border)).child(self.md_preview(&path, cx)).into_any_element(),
+                }
             })
             .into_any_element()
     }

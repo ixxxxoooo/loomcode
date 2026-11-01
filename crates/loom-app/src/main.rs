@@ -28,6 +28,7 @@ mod git_actions;
 mod git_changes;
 mod ide;
 mod ide_activity;
+mod ide_markdown;
 mod ide_minimap;
 mod minimap_model;
 mod ide_quick;
