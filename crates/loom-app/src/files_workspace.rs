@@ -48,6 +48,7 @@ impl RightPanel {
         let Some(path) = self.nav.get(self.nav_ix).cloned() else { return };
         self.files.reveal(&path);
         self.current = Some(FilePreview::load(path, window, cx));
+        cx.emit(crate::right_panel::PanelEvent::StateChanged);
         cx.notify();
     }
 
@@ -92,7 +93,7 @@ impl RightPanel {
             .child(
                 div().id("fw-tree-toggle").p_1().rounded(px(4.)).cursor_pointer().hover(|d| d.bg(t.list_hover))
                     .tooltip(move |window, cx| gpui_kit::component::tooltip::Tooltip::new(if collapsed { "展开资源管理器" } else { "收起资源管理器" }).build(window, cx))
-                    .on_click(cx.listener(|this, _, _, cx| { this.tree_collapsed = !this.tree_collapsed; cx.notify(); }))
+                    .on_click(cx.listener(|this, _, _, cx| { this.tree_collapsed = !this.tree_collapsed; cx.emit(crate::right_panel::PanelEvent::StateChanged); cx.notify(); }))
                     .child(icon(IconName::ListTree, 13., t.muted_foreground)),
             );
         let left = match &self.current {

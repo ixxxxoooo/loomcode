@@ -1,0 +1,50 @@
+//! 右栏状态的记忆:把已打开的标签、选中的标签、预览的文件写进 / 读出 [`LastState`]。
+//!
+//! @author ixxxxoooo
+
+use crate::right_panel::RightPanel;
+use crate::workbench::RightTab;
+use loom_config::LastState;
+
+impl RightTab {
+    /// 由键(见 [`RightTab::key`])还原;未知键返回 `None`。
+    pub fn from_key(key: &str) -> Option<RightTab> {
+        RightTab::ALL.into_iter().find(|t| t.key() == key)
+    }
+}
+
+impl RightPanel {
+    /// 把右栏当前状态写进 `last`(会话 id 与对话栏标签不在这里管)。
+    pub fn write_last(&self, last: &mut LastState) {
+        last.right_tabs = Some(self.open.iter().map(|t| t.key().to_string()).collect());
+        last.right_tab = Some(self.tab.key().to_string());
+        last.files_current = self.current.as_ref().map(|c| c.path.to_string_lossy().to_string());
+        last.tree_collapsed = self.tree_collapsed;
+    }
+
+    /// 按上次的状态恢复标签与树的收起状态;预览文件要等项目目录确定后才能打开(见 `set_session`)。
+    pub fn restore_last(&mut self, last: &LastState) {
+        if let Some(keys) = &last.right_tabs {
+            self.open = keys.iter().filter_map(|k| RightTab::from_key(k)).collect();
+        }
+        let wanted = last.right_tab.as_deref().and_then(RightTab::from_key).filter(|t| self.open.contains(t));
+        if let Some(t) = wanted.or_else(|| self.open.first().copied()) {
+            self.tab = t;
+        }
+        self.tree_collapsed = last.tree_collapsed;
+        self.restore_file = last.files_current.clone();
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[::core::prelude::v1::test]
+    fn 键往返() {
+        for t in RightTab::ALL {
+            assert_eq!(RightTab::from_key(t.key()), Some(t));
+        }
+        assert_eq!(RightTab::from_key("nope"), None);
+    }
+}

@@ -66,6 +66,8 @@ impl IdeWindow {
     /// 创建窗口视图。`demo`、`root` 由调用方传入,避免在工作台更新期间回读它。
     pub fn new(wb: Entity<Workbench>, demo: bool, root: String, window: &mut Window, cx: &mut Context<Self>) -> Self {
         bind_ide_keys(cx);
+        // 恢复上次关闭时对话栏的会话标签
+        let wb_tabs = wb.read(cx).ui_state.last.chat_tabs.clone();
         crate::window_memory::track("ide", window, cx);
         let panel = cx.new(|cx| RightPanel::new(root.clone(), demo, window, cx));
         panel.update(cx, |p, cx| {
@@ -88,6 +90,8 @@ impl IdeWindow {
         subs.push(cx.subscribe_in(&panel, window, |this, _, ev: &PanelEvent, window, cx| match ev {
             PanelEvent::OpenFile(path) => this.open_file(path.clone(), window, cx),
             PanelEvent::OpenFilePinned(path) => this.open_path(&path.to_string_lossy(), window, cx),
+            // IDE 窗口的左栏不记右栏标签状态
+            PanelEvent::StateChanged => {}
         }));
         // 工作台变化(切换会话等)→ 同步面板与根目录
         subs.push(cx.observe(&wb, |this, _, cx| this.sync(cx)));
@@ -102,7 +106,7 @@ impl IdeWindow {
         // 调试用:LOOM_IDE_TERM=1 启动时就展开底部终端面板,方便截图
         let term_open = std::env::var("LOOM_IDE_TERM").is_ok_and(|v| v == "1");
         // 此时工作台可能正处于更新中,不在这里回读它;首次渲染时再同步
-        Self { wb, panel, ide, focus, left_open: true, chat_open: true, left_narrow: false, left_before: true, chat_narrow: false, chat_before: true, synced: None, mem_gen: 0, _subs: subs, search, search_open: false, quick: None, _quick_sub: None, term_open, term, chat_tabs: Vec::new(), chat_last_active: None, chat_empty: false, chat_wide: std::env::var("LOOM_CHAT_WIDE").is_ok() }
+        Self { wb, panel, ide, focus, left_open: true, chat_open: true, left_narrow: false, left_before: true, chat_narrow: false, chat_before: true, synced: None, mem_gen: 0, _subs: subs, search, search_open: false, quick: None, _quick_sub: None, term_open, term, chat_tabs: wb_tabs, chat_last_active: None, chat_empty: false, chat_wide: std::env::var("LOOM_CHAT_WIDE").is_ok() }
     }
 
     /// 让面板与根目录跟随工作台当前会话。

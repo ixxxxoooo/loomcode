@@ -29,6 +29,8 @@ pub struct UiState {
     pub workspaces: Vec<WorkspaceDef>,
     /// 项目路径 → 该项目的 IDE 记忆(标签、最近文件、展开的目录)
     pub ide: BTreeMap<String, IdeMemory>,
+    /// 上次关闭时的界面状态(正在看的会话、对话栏标签、右栏标签),下次启动恢复
+    pub last: crate::last_state::LastState,
 }
 
 /// 最近文件最多记多少个。

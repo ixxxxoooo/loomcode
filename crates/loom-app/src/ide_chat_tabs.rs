@@ -31,7 +31,8 @@ fn title_of(wb: &Workbench, id: &str) -> String {
 
 impl IdeWindow {
     /// 同步标签:当前会话变了(新建、从别处打开)就确保它在标签里;关光所有标签后保持空状态直到有新会话。
-    pub(crate) fn sync_chat_tabs(&mut self, cx: &App) {
+    pub(crate) fn sync_chat_tabs(&mut self, cx: &mut Context<Self>) {
+        let before = self.chat_tabs.clone();
         let active = self.wb.read(cx).active.clone();
         if active != self.chat_last_active {
             if let Some(id) = &active && !self.chat_tabs.contains(id) {
@@ -40,9 +41,27 @@ impl IdeWindow {
             self.chat_empty = false;
             self.chat_last_active = active;
         }
-        // 已被删除的会话不再留标签
+        // 已被删除的会话不再留标签(历史还没加载完时先保留,免得误删)
         let wb = self.wb.read(cx);
-        self.chat_tabs.retain(|id| wb.views.contains_key(id) || wb.projects.iter().any(|p| p.sessions.iter().any(|s| &s.id == id)));
+        if !wb.projects.is_empty() || wb.demo {
+            self.chat_tabs.retain(|id| wb.views.contains_key(id) || wb.projects.iter().any(|p| p.sessions.iter().any(|s| &s.id == id)));
+        }
+        if self.chat_tabs != before {
+            // 渲染期间不能直接更新工作台,放到渲染之后保存
+            let me = cx.entity();
+            cx.defer(move |cx| me.update(cx, |this, cx| this.save_chat_tabs(cx)));
+        }
+    }
+
+    /// 把对话栏标签写进 `state.json`(内容没变就不写),下次启动恢复。
+    pub(crate) fn save_chat_tabs(&mut self, cx: &mut Context<Self>) {
+        let tabs = self.chat_tabs.clone();
+        self.wb.update(cx, |wb, _| {
+            if wb.ui_state.last.chat_tabs != tabs {
+                wb.ui_state.last.chat_tabs = tabs;
+                wb.persist_ui_state();
+            }
+        });
     }
 
     /// 切到某个标签(没有就加上)。
@@ -51,6 +70,7 @@ impl IdeWindow {
             self.chat_tabs.push(id.to_string());
         }
         self.chat_empty = false;
+        self.save_chat_tabs(cx);
         let target = id.to_string();
         let Some(ix) = project_of(self.wb.read(cx), id) else { return };
         let _ = self.wb.update(cx, |wb, cx| wb.open_session(ix, &target, window, cx));
@@ -61,6 +81,7 @@ impl IdeWindow {
     pub(crate) fn close_chat_tab(&mut self, id: &str, window: &mut Window, cx: &mut Context<Self>) {
         let Some(pos) = self.chat_tabs.iter().position(|t| t == id) else { return };
         self.chat_tabs.remove(pos);
+        self.save_chat_tabs(cx);
         if self.wb.read(cx).active.as_deref() == Some(id) {
             match self.chat_tabs.get(pos).or_else(|| self.chat_tabs.last()).cloned() {
                 Some(next) => self.activate_chat_tab(&next, window, cx),

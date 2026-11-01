@@ -131,6 +131,8 @@ pub enum PanelEvent {
     OpenFile(std::path::PathBuf),
     /// 用户在文件树里双击了一个文件(IDE 里固定为正式标签)
     OpenFilePinned(std::path::PathBuf),
+    /// 面板的标签 / 预览文件 / 树收起状态变了(工作台据此记住,下次启动恢复)
+    StateChanged,
 }
 
 impl EventEmitter<PanelEvent> for RightPanel {}
@@ -144,6 +146,8 @@ pub struct RightPanel {
     pub nav: Vec<std::path::PathBuf>,
     pub nav_ix: usize,
     pub tree_collapsed: bool,
+    /// 启动时要恢复的预览文件:第一次切换会话时(项目目录确定后)才打开
+    pub restore_file: Option<String>,
     /// 「终端」标签里为单条 Claude 命令打开的只读标签(工具调用 id),以及当前选中的一个
     pub run_tabs: Vec<String>,
     pub active_run: Option<String>,
@@ -177,6 +181,7 @@ impl RightPanel {
             nav: Vec::new(),
             nav_ix: 0,
             tree_collapsed: false,
+            restore_file: None,
             run_tabs: Vec::new(),
             active_run: None,
             show_tabs: true,
@@ -207,7 +212,11 @@ impl RightPanel {
         self.active_run = None;
         self.git.reset();
         self.root = root.clone();
-        self.files.set_root(root);
+        self.files.set_root(root.clone());
+        // 启动恢复:上次预览的文件还在这个项目里就重新打开
+        if let Some(f) = self.restore_file.take().filter(|f| std::path::Path::new(f).starts_with(&root) && std::path::Path::new(f).is_file()) {
+            self.pending_open = Some(f);
+        }
         self.reload_files(cx);
         cx.notify();
     }

@@ -308,7 +308,10 @@ impl Workbench {
                 wb.open_scenario(&id, window, cx);
             }
         } else {
-            wb.pending_open = session;
+            // 没指定会话时,恢复上次关闭时正在看的会话与右栏状态
+            let last = wb.ui_state.last.clone();
+            wb.panel.update(cx, |p, _| p.restore_last(&last));
+            wb.pending_open = session.or(last.session);
             wb.reload_projects(window, cx);
         }
         window.focus(&wb.focus, cx);
@@ -751,6 +754,7 @@ impl Workbench {
         if let Some(root) = self.active_project_path() {
             self.panel.update(cx, |p, cx| p.set_session(model, root, cx));
         }
+        self.remember(cx);
     }
 
     /// 新会话默认落在哪个项目:当前会话所在项目,否则第一个。
@@ -909,6 +913,7 @@ impl Workbench {
                 self.canvas.update(cx, |c, cx| c.select(&id, cx));
             }
             UiRequest::SessionSettled => {
+                self.remember(cx);
                 if !self.demo {
                     // 刷新发出事件的会话所属项目,而不是当前激活会话的项目
                     let owner = source.and_then(|sid| self.views.iter().find(|(_, v)| v.model.entity_id() == sid));
@@ -939,10 +944,29 @@ impl Workbench {
 
     fn on_panel_event(&mut self, ev: &PanelEvent, window: &mut Window, cx: &mut Context<Self>) {
         match ev {
+            PanelEvent::StateChanged => self.remember(cx),
             PanelEvent::OpenFile(path) | PanelEvent::OpenFilePinned(path) => {
                 let path = path.clone();
                 self.panel.update(cx, |p, cx| p.open_in_place(path, window, cx));
             }
+        }
+    }
+
+    /// 记住当前界面状态(正在看的会话、右栏标签与预览文件),下次启动恢复;内容没变就不写盘。
+    pub fn remember(&mut self, cx: &mut Context<Self>) {
+        let mut last = self.ui_state.last.clone();
+        // 还没打开任何会话(例如刚启动、历史还在加载)时不覆盖上次记下的会话
+        // (还没发过消息的新会话没写进历史,下次启动找不到它,也不记)
+        if let Some(id) = &self.active {
+            let sent = self.views.get(id).is_some_and(|v| !v.model.read(cx).state.items.is_empty());
+            if !self.new_sessions.contains(id) || sent {
+                last.session = Some(id.clone());
+            }
+        }
+        self.panel.read(cx).write_last(&mut last);
+        if last != self.ui_state.last {
+            self.ui_state.last = last;
+            self.persist_ui_state();
         }
     }
 

@@ -5,6 +5,7 @@
 pub mod claude;
 pub mod diag;
 pub mod items;
+pub mod last_state;
 pub mod legacy;
 pub mod plugins;
 pub mod update;
@@ -14,4 +15,5 @@ pub mod ui_state;
 
 pub use claude::{ClaudeConfig, HookEntry, LayerSettings, McpServer, McpSpec, PermissionRules, Rule, Scope};
 pub use settings::{AppSettings, AppearancePrefs, ScrollbarStyle, SpinnerStyle, ToolDensity, AutoSave, BrowserPrefs, CursorShape, EditorPrefs, IntelPrefs, ProxyMode, ScmPrefs, TerminalPrefs, ThemeChoice};
+pub use last_state::LastState;
 pub use ui_state::{IdeMemory, IdeTabMemory, UiState};

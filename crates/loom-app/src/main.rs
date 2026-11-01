@@ -72,6 +72,7 @@ mod session_fork;
 mod split_layout;
 mod session_menu;
 mod settings;
+mod right_memory;
 mod right_panel;
 mod right_rail;
 mod right_tabs;

@@ -36,6 +36,7 @@ impl RightPanel {
             self.open.push(tab);
         }
         self.tab = tab;
+        cx.emit(crate::right_panel::PanelEvent::StateChanged);
         cx.notify();
     }
 
@@ -46,6 +47,7 @@ impl RightPanel {
         if self.tab == tab && let Some(next) = self.open.get(ix).or_else(|| self.open.last()) {
             self.tab = *next;
         }
+        cx.emit(crate::right_panel::PanelEvent::StateChanged);
         cx.notify();
     }
 
