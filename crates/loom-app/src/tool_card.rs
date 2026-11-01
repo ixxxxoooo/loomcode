@@ -220,8 +220,10 @@ pub fn render_content(content: &ToolContent, run_id: Option<&str>, lang: &str, c
             mono_box(cx)
                 .child(
                     h_flex().gap_2().mb_1().items_start()
-                        // 长命令在卡片内折行,不再把右侧的状态与「在终端面板查看」挤出去
-                        .child(div().flex_1().min_w_0().text_color(t.muted_foreground).child(crate::code_hl::shell_text(command.lines().next().unwrap_or(""), "$ ", cx)))
+                        // 长命令在卡片内折行,不再把右侧的状态与「在终端面板查看」挤出去;
+                        // 命令第一行与右侧状态簇同高(22),垂直居中对齐,折行后右侧仍贴着第一行
+                        .child(div().flex_1().min_w_0().line_height(px(22.)).text_color(t.muted_foreground).child(crate::code_hl::shell_text(command.lines().next().unwrap_or(""), "$ ", cx)))
+                        .child(h_flex().flex_none().h(px(22.)).gap_2().items_center()
                         .when_some(*exit_code, |d, code| {
                             let (fg, bg) = if code == 0 { (t.success, t.background) } else { (t.danger, t.background) };
                             d.child(div().flex_none().child(pill(format!("退出码 {code}"), fg, bg)))
@@ -234,7 +236,7 @@ pub fn render_content(content: &ToolContent, run_id: Option<&str>, lang: &str, c
                                     .on_click(move |_, window, cx| window.dispatch_action(Box::new(crate::workbench::ViewAgentRun { id: id.clone() }), cx))
                                     .child(icon(IconName::Terminal, 14., t.muted_foreground)),
                             )
-                        }),
+                        })),
                 )
                 .child(StyledText::new(parsed.text).with_highlights(parsed.runs))
                 .when(more > 0, |d| d.child(div().mt_1().text_color(t.muted_foreground).child(format!("… 还有 {more} 行"))))
