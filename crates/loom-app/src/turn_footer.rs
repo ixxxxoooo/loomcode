@@ -24,6 +24,7 @@ pub fn render(session: &Entity<SessionModel>, id: &str, text: &str, group: Share
         .when(!copied, |d| d.invisible().group_hover(group, |d| d.visible()))
         .child(
             h_flex().id(SharedString::from(format!("copy-{id}"))).h(px(22.)).px_1p5().gap_1().items_center().rounded(px(5.)).cursor_pointer()
+                .on_mouse_down(MouseButton::Left, |_, _, cx| cx.stop_propagation())
                 .text_size(px(12.)).text_color(t.muted_foreground)
                 .hover(|d| d.bg(t.list_hover).text_color(t.foreground))
                 .on_click(move |_, _, cx| {

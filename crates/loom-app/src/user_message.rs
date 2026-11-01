@@ -46,11 +46,22 @@ pub fn display_text(text: &str) -> String {
 
 /// 渲染一条用户消息:编辑中显示编辑卡,否则显示消息卡。
 pub fn render_user(session: &Entity<SessionModel>, id: &str, text: &str, images: &[String], files: &[String], cx: &App) -> AnyElement {
-    let editing = session.read(cx).editing.as_ref().filter(|e| e.id == id).map(|e| e.input.clone());
+    let editing = session.read(cx).editing.as_ref().filter(|e| e.id == id && !e.pinned).map(|e| e.input.clone());
     match editing {
         Some(input) => render_editor(session, &input, images, cx),
         None => render_card(session, id, text, images, files, cx),
     }
+}
+
+/// 悬浮在会话流顶部的编辑卡(从吸顶卡发起的编辑);没有这样的编辑时返回 None。
+pub fn render_pinned_editor(session: &Entity<SessionModel>, cx: &App) -> Option<AnyElement> {
+    let m = session.read(cx);
+    let e = m.editing.as_ref().filter(|e| e.pinned)?;
+    let images = m.state.items.iter().find_map(|i| match i {
+        loom_core::TimelineItem::User { id, images, .. } if id == &e.id => Some(images.clone()),
+        _ => None,
+    }).unwrap_or_default();
+    Some(render_editor(session, &e.input.clone(), &images, cx))
 }
 
 /// 图片缩略图:本地文件存在就画图(点击预览大图),否则(演示数据)退回文件名 chip。
@@ -92,6 +103,8 @@ fn render_card(session: &Entity<SessionModel>, id: &str, text: &str, images: &[S
     let copy_text = text.clone();
     let icon_btn = |bid: String, ic: IconName, tip: &'static str| {
         div().id(SharedString::from(bid)).size(px(24.)).flex().items_center().justify_center().rounded(px(6.)).cursor_pointer()
+            // 按下不再冒泡给消息卡,避免点按钮时进入选择文本状态
+            .on_mouse_down(MouseButton::Left, |_, _, cx| cx.stop_propagation())
             .hover(|d| d.bg(t.foreground.opacity(0.08)))
             .tooltip(move |window, cx| gpui_kit::component::tooltip::Tooltip::new(tip).build(window, cx))
             .child(icon(ic, 12., t.muted_foreground))
@@ -99,7 +112,7 @@ fn render_card(session: &Entity<SessionModel>, id: &str, text: &str, images: &[S
     v_flex().id(SharedString::from(format!("umsg-card-{id}"))).group(group.clone()).relative().w_full().gap_2().px(px(14.)).py(px(10.)).pr(px(76.)).rounded(px(12.)).bg(t.muted).cursor_pointer()
         .on_click(move |_, window, cx| {
             let (id, text) = (id_click.clone(), text_click.clone());
-            s_click.update(cx, |m, cx| m.begin_edit(&id, &text, window, cx));
+            s_click.update(cx, |m, cx| m.begin_edit(&id, &text, false, window, cx));
         })
         .when(!images.is_empty() || !files.is_empty(), |d| {
             d.child(h_flex().flex_wrap().gap_1p5().children(images.iter().map(|n| thumb(n, cx))).children(files.iter().map(|n| file_chip(n, cx))))
@@ -123,14 +136,14 @@ fn render_card(session: &Entity<SessionModel>, id: &str, text: &str, images: &[S
                     .on_click(move |_, window, cx| {
                         cx.stop_propagation();
                         let (id, text) = (id_edit.clone(), text_edit.clone());
-                        s_edit.update(cx, |m, cx| m.begin_edit(&id, &text, window, cx));
+                        s_edit.update(cx, |m, cx| m.begin_edit(&id, &text, false, window, cx));
                     })),
         )
         .into_any_element()
 }
 
 /// 就地编辑卡:附件(只读)+ 文本框 + 取消 / 重新发送。
-fn render_editor(session: &Entity<SessionModel>, input: &Entity<TextareaState>, images: &[String], cx: &App) -> AnyElement {
+pub(crate) fn render_editor(session: &Entity<SessionModel>, input: &Entity<TextareaState>, images: &[String], cx: &App) -> AnyElement {
     let t = cx.theme();
     let running = session.read(cx).state.phase == loom_core::Phase::Running;
     let has_text = !input.read(cx).value().trim().is_empty();
@@ -154,14 +167,16 @@ fn render_editor(session: &Entity<SessionModel>, input: &Entity<TextareaState>, 
 pub struct UserEdit {
     pub id: String,
     pub input: Entity<TextareaState>,
+    /// 从吸顶卡发起:编辑卡悬浮在会话流顶部、向下展开,不推挤会话流
+    pub pinned: bool,
     pub(crate) _sub: Subscription,
 }
 
 impl SessionModel {
     /// 开始编辑一条用户消息(同一时刻只编辑一条)。
     ///
-    /// 参数:`id` 消息 id;`text` 要放进文本框的正文(已去掉占位符)。
-    pub fn begin_edit(&mut self, id: &str, text: &str, window: &mut Window, cx: &mut Context<Self>) {
+    /// 参数:`id` 消息 id;`text` 要放进文本框的正文(已去掉占位符);`pinned` 是否从吸顶卡发起(悬浮编辑)。
+    pub fn begin_edit(&mut self, id: &str, text: &str, pinned: bool, window: &mut Window, cx: &mut Context<Self>) {
         if self.editing.as_ref().is_some_and(|e| e.id == id) {
             return;
         }
@@ -178,7 +193,7 @@ impl SessionModel {
             InputEvent::PressEnter { shift: false, .. } => this.submit_edit(window, cx),
             _ => {}
         });
-        self.editing = Some(UserEdit { id: id.to_string(), input, _sub: sub });
+        self.editing = Some(UserEdit { id: id.to_string(), input, pinned, _sub: sub });
         self.remeasure_id(id, cx);
         cx.notify();
     }

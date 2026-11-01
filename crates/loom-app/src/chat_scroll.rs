@@ -57,10 +57,10 @@ impl ChatScroll {
         }
     }
 
-    /// 滚到指定行顶部(暂停贴底跟随)。
-    pub fn scroll_to_row(&mut self, row: usize, cx: &mut Context<Self>) {
-        self.list.scroll_to(ListOffset { item_ix: row, offset_in_item: px(0.) });
-        cx.notify();
+    /// 指定行卡片顶边相对视口顶边的 Y(未渲染返回 None)。
+    pub fn row_top(&self, row: usize) -> Option<f32> {
+        let b = self.list.bounds_for_item(row)?;
+        Some(f32::from(b.top() + px(5.) - self.list.viewport_bounds().top()))
     }
 
     /// 重置为 `item_count` 行并恢复跟随。
