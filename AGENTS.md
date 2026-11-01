@@ -47,7 +47,7 @@ scripts/publish.sh                  # 发布:先在根 Cargo.toml 提升版本�
 - 不提交构建产物(`target`、`dist`)。
 - 在 `loom-app` 里 `use gpui_kit::*` 会遮蔽内置 `#[test]`,单元测试请写 `#[::core::prelude::v1::test]`;其他 crate 用普通 `#[test]`。
 - 设置页分四组(客户端 / Claude Code / 工作台 / 其他),分类枚举与导航在 `settings/mod.rs`、`settings/nav.rs`;编辑器 / 终端 / 浏览器 / 源代码管理 / 代码智能偏好存在 `AppSettings` 里,界面用全局 `crate::prefs(cx)` 读取。每个项目的 IDE 标签记忆存 `~/.loomcode/state.json` 的 `ide`(`ide_memory.rs`);迷你地图的纯模型在 `minimap_model.rs`。
-- Agent 窗口右侧是一个可折叠面板,以动态标签呈现(`right_tabs.rs`:改动/文件/终端/计划/输出可开关,「+」新增;「文件」标签是左内容 + 右树的工作区,树里单击原地预览,`files_workspace.rs`);收起时有快捷竖条(`right_rail.rs`);「终端」分段允许多个终端标签(`term_store.rs` 按项目根分组、各窗口共用,标签条在 `term_panel.rs`,第一个固定标签是只读的「Agent 命令」);IDE 编辑器支持多标签(逻辑在 `ide_tabs.rs`,参考 Zed Pane:预览标签、就近插入、关闭回到最近使用)。
+- Agent 窗口右侧是一个可折叠面板,以动态标签呈现(`right_tabs.rs`:改动/文件/终端/计划/输出可开关,「+」新增;「文件」标签是左内容 + 右树的工作区,树里单击原地预览,`files_workspace.rs`);收起时有快捷竖条(`right_rail.rs`);「终端」分段允许多个终端标签(`term_store.rs` 按项目根分组、各窗口共用,标签条在 `term_panel.rs`,Claude 的命令通过工具卡片的「在终端面板查看」为单条命令开只读标签);IDE 编辑器支持多标签(逻辑在 `ide_tabs.rs`,参考 Zed Pane:预览标签、就近插入、关闭回到最近使用)。
 - 编译零警告;改动后跑 `cargo test --workspace`。
 
 ## Claude 协议要点(已对真实 claude 2.1.x 验证)

@@ -104,7 +104,7 @@ pub fn render_tool(session: &Entity<SessionModel>, tool: &ToolCall, cx: &App) ->
         .w_full()
         .child(header)
         .when(expanded && has_body, |d| {
-            d.child(v_flex().w_full().pl(px(30.)).pr_2().py_1().gap_1p5().children(tool.content.iter().map(|c| render_content(c, cx))))
+            d.child(v_flex().w_full().pl(px(30.)).pr_2().py_1().gap_1p5().children(tool.content.iter().map(|c| render_content(c, Some(&tool.id), cx))))
         })
         .into_any_element()
 }
@@ -119,7 +119,8 @@ fn clip_lines(text: &str, max: usize) -> (String, usize) {
 }
 
 /// 渲染一个内容块。
-pub fn render_content(content: &ToolContent, cx: &App) -> AnyElement {
+/// 参数:`run_id` 所属工具调用的 id;终端块用它显示「在终端面板查看」。
+pub fn render_content(content: &ToolContent, run_id: Option<&str>, cx: &App) -> AnyElement {
     let t = cx.theme();
     match content {
         ToolContent::Text(text) => {
@@ -139,6 +140,16 @@ pub fn render_content(content: &ToolContent, cx: &App) -> AnyElement {
                         .when_some(*exit_code, |d, code| {
                             let (fg, bg) = if code == 0 { (t.success, t.background) } else { (t.danger, t.background) };
                             d.child(pill(format!("退出码 {code}"), fg, bg))
+                        })
+                        .child(div().flex_1())
+                        .when_some(run_id.map(str::to_string), |d, id| {
+                            // 只有 Agent 窗口处理这个动作(IDE 窗口里没有对应面板,等于无操作)
+                            d.child(
+                                div().id(SharedString::from(format!("view-run-{id}"))).cursor_pointer().text_size(px(11.)).text_color(t.muted_foreground)
+                                    .hover(|s| s.text_color(t.primary))
+                                    .on_click(move |_, window, cx| window.dispatch_action(Box::new(crate::workbench::ViewAgentRun { id: id.clone() }), cx))
+                                    .child("在终端面板查看"),
+                            )
                         }),
                 )
                 .child(StyledText::new(parsed.text).with_highlights(parsed.runs))

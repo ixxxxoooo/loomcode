@@ -112,7 +112,7 @@ pub fn render_subagent(session: &Entity<SessionModel>, card_data: &SubagentCard,
 /// 权限请求卡。
 pub fn render_permission(session: &Entity<SessionModel>, req: &PermissionRequest, cx: &App) -> AnyElement {
     let t = cx.theme();
-    let preview: Vec<AnyElement> = req.tool.content.iter().map(|c| render_content(c, cx)).collect();
+    let preview: Vec<AnyElement> = req.tool.content.iter().map(|c| render_content(c, None, cx)).collect();
     let cmd = req.tool.input.get("command").and_then(|v| v.as_str()).map(str::to_string);
     let waiting = req.resolved.is_none();
     card(cx)

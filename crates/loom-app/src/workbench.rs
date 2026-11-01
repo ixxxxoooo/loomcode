@@ -26,6 +26,13 @@ use loom_core::*;
 use loom_claude::{ClaudeBackend, LazyBackend};
 use loom_demo::DemoBackend;
 
+/// 在右栏终端里查看某条 Claude 命令(工具调用 id)。
+#[derive(Clone, PartialEq, Action)]
+#[action(namespace = loomcode, no_json)]
+pub struct ViewAgentRun {
+    pub id: String,
+}
+
 actions!(loomcode, [TogglePalette, ToggleLeft, ToggleRight, OpenSettings, CycleMode, NewSession, Escape, SaveFile, ToggleIde]);
 
 /// 主区域当前页面。
@@ -1104,6 +1111,12 @@ impl Render for Workbench {
             .track_focus(&self.focus)
             .on_action(cx.listener(|this, _: &ToggleLeft, _, cx| { this.left_open = !this.left_open; cx.notify(); }))
             .on_action(cx.listener(|this, _: &ToggleRight, _, cx| { this.right_open = !this.right_open; cx.notify(); }))
+            .on_action(cx.listener(|this, a: &ViewAgentRun, _, cx| {
+                this.right_open = true;
+                let id = a.id.clone();
+                this.panel.update(cx, |p, cx| p.open_run(id, cx));
+                cx.notify();
+            }))
             .on_action(cx.listener(|this, _: &TogglePalette, window, cx| this.toggle_palette(window, cx)))
             .on_action(cx.listener(|this, _: &crate::term_actions::ToggleTerminal, window, cx| this.toggle_terminal(window, cx)))
             .on_action(cx.listener(|this, _: &crate::term_actions::NewTerminal, window, cx| this.open_new_terminal(window, cx)))

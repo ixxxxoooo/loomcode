@@ -45,7 +45,7 @@ impl crate::right_panel::RightPanel {
             let h = hub.read(cx);
             match h.active(&root) {
                 TermSel::Term(id) => Some(id),
-                TermSel::Agent => h.tabs(&root).last().map(|t| t.id),
+                TermSel::Nothing => h.tabs(&root).last().map(|t| t.id),
             }
         };
         let Some(id) = target else {

@@ -59,6 +59,8 @@ pub fn collect_changes(items: &[TimelineItem]) -> Vec<FileChange> {
 /// 一条终端记录。
 #[derive(Debug, Clone, PartialEq)]
 pub struct TerminalRun {
+    /// 产生它的工具调用 id(「在终端面板查看」用它定位)
+    pub id: String,
     pub command: String,
     pub output: String,
     pub exit_code: Option<i32>,
@@ -73,6 +75,7 @@ pub fn collect_terminal(items: &[TimelineItem]) -> Vec<TerminalRun> {
             for c in &t.content {
                 if let ToolContent::Terminal { command, output, exit_code } = c {
                     out.push(TerminalRun {
+                        id: t.id.clone(),
                         command: command.clone(),
                         output: output.clone(),
                         exit_code: *exit_code,
@@ -141,6 +144,9 @@ pub struct RightPanel {
     pub nav: Vec<std::path::PathBuf>,
     pub nav_ix: usize,
     pub tree_collapsed: bool,
+    /// 「终端」标签里为单条 Claude 命令打开的只读标签(工具调用 id),以及当前选中的一个
+    pub run_tabs: Vec<String>,
+    pub active_run: Option<String>,
     /// 是否显示顶部分段栏(IDE 窗口用活动栏切换,不显示)
     pub show_tabs: bool,
     /// 标签行末尾的额外控件(Agent 窗口放右面板开关与 IDE 入口),由工作台注入
@@ -171,6 +177,8 @@ impl RightPanel {
             nav: Vec::new(),
             nav_ix: 0,
             tree_collapsed: false,
+            run_tabs: Vec::new(),
+            active_run: None,
             show_tabs: true,
             trailing: None,
             model: None,
@@ -195,6 +203,8 @@ impl RightPanel {
         self.model = model;
         self.open_changes.clear();
         self.clear_files_workspace();
+        self.run_tabs.clear();
+        self.active_run = None;
         self.git.reset();
         self.root = root.clone();
         self.files.set_root(root);

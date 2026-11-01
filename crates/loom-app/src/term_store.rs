@@ -9,9 +9,9 @@ use std::collections::HashMap;
 /// 终端分段里当前选中的子标签。
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
 pub enum TermSel {
-    /// 只读的「Agent 命令」记录
+    /// 没有选中任何终端
     #[default]
-    Agent,
+    Nothing,
     Term(u64),
 }
 
@@ -43,7 +43,7 @@ pub struct TerminalHub(pub Entity<ProjectTerminals>);
 impl Global for TerminalHub {}
 
 /// 关闭一个标签后该选中谁:关的不是当前标签就不变;关的是当前标签则选左边相邻的,
-/// 左边没有了就回到「Agent 命令」。
+/// 左边没有了就变成「没有选中」。
 ///
 /// 参数:`ids` 关闭前的标签 id(按顺序);`closing` 要关的标签;`active` 关闭前的选中项。
 pub fn selection_after_close(ids: &[u64], closing: u64, active: TermSel) -> TermSel {
@@ -52,7 +52,7 @@ pub fn selection_after_close(ids: &[u64], closing: u64, active: TermSel) -> Term
     }
     match ids.iter().position(|&i| i == closing) {
         Some(ix) if ix > 0 => TermSel::Term(ids[ix - 1]),
-        _ => TermSel::Agent,
+        _ => TermSel::Nothing,
     }
 }
 
@@ -120,15 +120,15 @@ mod tests {
     #[::core::prelude::v1::test]
     fn 关闭非当前标签选中项不变() {
         assert_eq!(selection_after_close(&[1, 2, 3], 1, TermSel::Term(3)), TermSel::Term(3));
-        assert_eq!(selection_after_close(&[1, 2], 2, TermSel::Agent), TermSel::Agent);
+        assert_eq!(selection_after_close(&[1, 2], 2, TermSel::Nothing), TermSel::Nothing);
     }
 
     #[::core::prelude::v1::test]
     fn 关闭当前标签选左邻否则回到_agent() {
         assert_eq!(selection_after_close(&[1, 2, 3], 3, TermSel::Term(3)), TermSel::Term(2));
         assert_eq!(selection_after_close(&[1, 2, 3], 2, TermSel::Term(2)), TermSel::Term(1));
-        assert_eq!(selection_after_close(&[1, 2], 1, TermSel::Term(1)), TermSel::Agent);
-        // 不存在的 id:保守回到 Agent
-        assert_eq!(selection_after_close(&[1], 9, TermSel::Term(9)), TermSel::Agent);
+        assert_eq!(selection_after_close(&[1, 2], 1, TermSel::Term(1)), TermSel::Nothing);
+        // 不存在的 id:保守回到没有选中
+        assert_eq!(selection_after_close(&[1], 9, TermSel::Term(9)), TermSel::Nothing);
     }
 }

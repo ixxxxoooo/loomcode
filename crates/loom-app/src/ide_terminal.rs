@@ -43,7 +43,7 @@ impl BottomTerminal {
             let h = hub.read(cx);
             match h.active(&root) {
                 TermSel::Term(id) => Some(id),
-                TermSel::Agent => h.tabs(&root).last().map(|t| t.id),
+                TermSel::Nothing => h.tabs(&root).last().map(|t| t.id),
             }
         };
         match target {
@@ -90,7 +90,7 @@ impl Render for BottomTerminal {
         // 「Agent 命令」在这里没有对应标签:当前选中它时就显示最后一个终端
         let shown = match active {
             TermSel::Term(id) => Some(id),
-            TermSel::Agent => tabs.last().map(|x| x.0),
+            TermSel::Nothing => tabs.last().map(|x| x.0),
         };
         let strip = h_flex().h(px(30.)).px_2().gap_1().items_center().border_b_1().border_color(t.border).bg(t.sidebar)
             .child(div().pr_2().text_size(px(11.)).text_color(t.muted_foreground).child("终端"))

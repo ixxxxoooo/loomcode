@@ -147,7 +147,7 @@ impl IdeWindow {
     pub(crate) fn chat_empty_view(&self, cx: &mut Context<Self>) -> AnyElement {
         h_flex().size_full().items_center().justify_center().child(
             gpui_kit::component::v_flex().items_center().gap_3()
-                .child(empty_state(IconName::MessageSquare, "没有打开的会话", "点「+」新建,或从历史会话里打开", cx))
+                .child(empty_state(IconName::MessageSquare, "没有打开的会话", "点「+」新建,或从历史会话里打开", cx).h_auto().w_auto())
                 .child(Button::new("ct-empty-new").small().primary().icon(IconName::Plus).label("新会话")
                     .on_click(cx.listener(|this, _, window, cx| this.new_chat(window, cx)))),
         ).into_any_element()

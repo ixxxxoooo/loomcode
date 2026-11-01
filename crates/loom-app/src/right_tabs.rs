@@ -98,7 +98,7 @@ impl RightPanel {
     pub(crate) fn empty_tabs_view(&self, cx: &mut Context<Self>) -> AnyElement {
         let t = cx.theme().clone();
         v_flex().size_full().items_center().justify_center().gap_3().px_4()
-            .child(empty_state(IconName::PanelRight, "右栏为空", "打开下面的入口,它们会以标签显示在这里", cx))
+            .child(empty_state(IconName::PanelRight, "右栏为空", "打开下面的入口,它们会以标签显示在这里", cx).h_auto().w_auto())
             .child(v_flex().w_full().max_w(px(300.)).gap_0p5().children(RightTab::ALL.into_iter().map(|rt| {
                 h_flex().id(SharedString::from(format!("rt-entry-{}", rt.key()))).h(px(32.)).px_2().gap_2().items_center().rounded(px(6.)).cursor_pointer()
                     .hover(|d| d.bg(t.list_hover))
