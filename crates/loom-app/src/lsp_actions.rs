@@ -39,6 +39,11 @@ pub fn apply_edits(full: &str, rope: &Rope, edits: &[lsp_types::TextEdit]) -> Re
 
 impl IdeView {
     /// 当前标签的语言服务器句柄、全文、Rope 与光标偏移;没有服务器返回 `None`。
+    pub(crate) fn lsp_context_pub(&self, cx: &App) -> Option<(PathBuf, Arc<DocSync>, String, Rope, usize)> {
+        self.lsp_context(cx)
+    }
+
+    /// 同 `lsp_context`。
     fn lsp_context(&self, cx: &App) -> Option<(PathBuf, Arc<DocSync>, String, Rope, usize)> {
         let path = self.tabs.active()?.to_path_buf();
         let doc = self.docs.get(&path)?;
@@ -54,6 +59,16 @@ impl IdeView {
 
     /// 转到光标处符号的类型定义(右键菜单)。
     pub(crate) fn go_to_type_definition(&mut self, window: &mut Window, cx: &mut Context<Self>) {
+        self.goto_request("textDocument/typeDefinition", "类型定义", window, cx);
+    }
+
+    /// 转到光标处符号的实现(右键菜单)。
+    pub(crate) fn go_to_implementation(&mut self, window: &mut Window, cx: &mut Context<Self>) {
+        self.goto_request("textDocument/implementation", "实现", window, cx);
+    }
+
+    /// 向语言服务器发一个「转到…」请求(类型定义 / 实现),取第一个结果跳转;`what` 用在提示里。
+    fn goto_request(&mut self, method: &'static str, what: &'static str, window: &mut Window, cx: &mut Context<Self>) {
         let Some((_, sync, full, rope, offset)) = self.lsp_context(cx) else { return };
         cx.spawn_in(window, async move |this, cx| {
             let res: Result<Option<(PathBuf, u32, u32)>> = cx
@@ -61,7 +76,7 @@ impl IdeView {
                     let lines = split_lines(&full);
                     let pos = to_lsp_pos(&rope, offset, &lines);
                     sync.sync(&full);
-                    let rx = sync.client.request("textDocument/typeDefinition", json!({ "textDocument": { "uri": sync.uri }, "position": pos }));
+                    let rx = sync.client.request(method, json!({ "textDocument": { "uri": sync.uri }, "position": pos }));
                     let v = rx.recv().await.map_err(|e| anyhow!("{e}"))?.map_err(|e| anyhow!(e))?;
                     if v.is_null() {
                         return Ok(None);
@@ -79,8 +94,8 @@ impl IdeView {
                 .await;
             let _ = this.update_in(cx, |this, window, cx| match res {
                 Ok(Some((path, line, col))) => this.open_at(path, line, col, window, cx),
-                Ok(None) => window.push_notification(Notification::info("没有找到类型定义"), cx),
-                Err(e) => window.push_notification(Notification::error(format!("转到类型定义失败:{e}")), cx),
+                Ok(None) => window.push_notification(Notification::info(format!("没有找到{what}")), cx),
+                Err(e) => window.push_notification(Notification::error(format!("转到{what}失败:{e}")), cx),
             });
         })
         .detach();

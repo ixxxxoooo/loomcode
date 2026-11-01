@@ -1508,6 +1508,15 @@ impl Workbench {
                 this.fork_session(&id, &cwd, window, cx);
             }))
             .on_action(cx.listener(|this, _: &TogglePalette, window, cx| this.toggle_palette(window, cx)))
+            .on_action(cx.listener(|this, _: &crate::ide::OpenCommandPalette, window, cx| this.toggle_palette(window, cx)))
+            .on_action(cx.listener(|this, _: &crate::ide::ShowFileHistory, _, cx| {
+                if let Some(path) = this.editor.read(cx).tabs.active().map(|p| p.to_path_buf()) {
+                    this.scm.update(cx, |s, cx| s.show_file_history(&path, cx));
+                    this.panel.update(cx, |p, cx| p.set_tab(RightTab::Changes, cx));
+                    this.right_open = true;
+                    cx.notify();
+                }
+            }))
             .on_action(cx.listener(|this, _: &crate::term_actions::ToggleTerminal, window, cx| this.toggle_terminal(window, cx)))
             .on_action(cx.listener(|this, _: &crate::term_actions::NewTerminal, window, cx| this.open_new_terminal(window, cx)))
             .on_action(cx.listener(|this, _: &OpenSettings, _, cx| {

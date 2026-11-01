@@ -14,7 +14,7 @@ use gpui_kit::*;
 use std::collections::HashMap;
 use std::path::{Path, PathBuf};
 
-actions!(ide, [GoToTypeDefinition, FormatDocument, CloseTab, NextTab, PrevTab, QuickOpen, GoToLine, FindInProject, NavBack, NavForward, ShowScm, TogglePanel]);
+actions!(ide, [GoToImplementation, FindReferences, RenameSymbol, ChangeAllOccurrences, ShowRefactor, ShowSourceActions, ToggleBlameAnnotations, CompareWithSaved, CompareWithClipboard, ToggleWordWrap, ShowFileHistory, OpenCommandPalette, GoToTypeDefinition, FormatDocument, CloseTab, NextTab, PrevTab, QuickOpen, GoToLine, FindInProject, NavBack, NavForward, ShowScm, TogglePanel]);
 
 /// 超过这个大小的文件不在编辑器里打开。
 
@@ -100,6 +100,9 @@ pub struct IdeView {
     pub(crate) blame_ui: std::rc::Rc<crate::ide_blame::BlameUi>,
     /// 已启动诊断监听
     pub(crate) lsp_listening: bool,
+    /// 右键菜单结果浮层(引用 / 重命名 / 代码操作 / 差异)
+    pub(crate) overlay: Option<crate::ide_overlay::Overlay>,
+    pub(crate) overlay_sub: Option<Subscription>,
     /// 悬停卡片的收起计时与鼠标靠近判断
     pub(crate) hover_ui: crate::ide_hover::HoverUi,
 }
@@ -107,7 +110,7 @@ pub struct IdeView {
 impl IdeView {
     /// 创建空的编辑器视图。
     pub fn new() -> Self {
-        Self { root: String::new(), docs: HashMap::new(), tabs: TabModel::default(), note: None, images: Default::default(), sheets: HashMap::new(), sheet_subs: HashMap::new(), as_text: Default::default(), minimap_ui: Default::default(), applied: None, edit_gen: 0, nav: Default::default(), nav_quiet: false, fresh_open: false, recent: Vec::new(), pending_restore: None, md: HashMap::new(), blame_gutter: false, blame_ui: Default::default(), lsp_listening: false, hover_ui: Default::default() }
+        Self { root: String::new(), docs: HashMap::new(), tabs: TabModel::default(), note: None, images: Default::default(), sheets: HashMap::new(), sheet_subs: HashMap::new(), as_text: Default::default(), minimap_ui: Default::default(), applied: None, edit_gen: 0, nav: Default::default(), nav_quiet: false, fresh_open: false, recent: Vec::new(), pending_restore: None, md: HashMap::new(), blame_gutter: false, blame_ui: Default::default(), lsp_listening: false, hover_ui: Default::default(), overlay: None, overlay_sub: None }
     }
 
     /// 设置项目根目录(会话切换时由宿主调用)。
@@ -435,6 +438,16 @@ impl Render for IdeView {
             .bg(t.background)
             .on_action(cx.listener(|this, _: &CloseTab, window, cx| this.close_active(window, cx)))
             .on_action(cx.listener(|this, _: &GoToTypeDefinition, window, cx| this.go_to_type_definition(window, cx)))
+            .on_action(cx.listener(|this, _: &GoToImplementation, window, cx| this.go_to_implementation(window, cx)))
+            .on_action(cx.listener(|this, _: &FindReferences, window, cx| this.find_references(window, cx)))
+            .on_action(cx.listener(|this, _: &RenameSymbol, window, cx| this.begin_rename(false, window, cx)))
+            .on_action(cx.listener(|this, _: &ChangeAllOccurrences, window, cx| this.begin_rename(true, window, cx)))
+            .on_action(cx.listener(|this, _: &ShowRefactor, window, cx| this.show_code_actions("refactor", "重构", window, cx)))
+            .on_action(cx.listener(|this, _: &ShowSourceActions, window, cx| this.show_code_actions("source", "源代码操作", window, cx)))
+            .on_action(cx.listener(|this, _: &ToggleBlameAnnotations, _, cx| this.toggle_blame_gutter(cx)))
+            .on_action(cx.listener(|this, _: &CompareWithSaved, window, cx| this.compare_with_saved(window, cx)))
+            .on_action(cx.listener(|this, _: &CompareWithClipboard, window, cx| this.compare_with_clipboard(window, cx)))
+            .on_action(cx.listener(|this, _: &ToggleWordWrap, _, cx| this.toggle_word_wrap(cx)))
             .on_action(cx.listener(|this, _: &FormatDocument, window, cx| this.format_document(window, cx)))
             .on_action(cx.listener(|this, _: &NextTab, window, cx| this.cycle(1, window, cx)))
             .on_action(cx.listener(|this, _: &PrevTab, window, cx| this.cycle(-1, window, cx)));
@@ -463,6 +476,7 @@ impl Render for IdeView {
         let ed0 = self.docs[&path].editor.clone();
         let md_view = is_md.then(|| self.md.entry(path.clone()).or_insert_with(|| cx.new(|cx| crate::ide_markdown::MdDocView::new(ed0, None, window, cx))).clone());
         let md_mode = md_view.as_ref().map_or(crate::ide_markdown::MdMode::Source, |v| v.read(cx).mode);
+        let overlay = self.overlay_element(cx);
         let doc = &self.docs[&path];
         let editor = doc.editor.clone();
         root.child(tab_bar(self.tab_items(&path), cx))
@@ -497,6 +511,7 @@ impl Render for IdeView {
                     crate::ide_markdown::MdMode::Split => h_flex().flex_1().min_h_0().w_full().child(div().flex_1().min_w_0().h_full().child(source)).child(div().w(px(1.)).h_full().bg(t.border)).child(div().flex_1().min_w_0().h_full().child(md_view.clone().unwrap())).into_any_element(),
                 }
             })
+            .children(overlay)
             .into_any_element()
     }
 }

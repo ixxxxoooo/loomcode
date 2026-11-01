@@ -131,7 +131,8 @@ impl ScmView {
             .hover(|d| d.bg(t.list_hover))
             .on_click(cx.listener(|this, _, _, cx| this.toggle_graph(cx)))
             .child(icon(if open { IconName::ChevronDown } else { IconName::ChevronRight }, 12., t.muted_foreground))
-            .child(div().flex_1().min_w_0().truncate().text_size(px(11.5)).font_weight(FontWeight::SEMIBOLD).child("图形"))
+            .child(div().flex_1().min_w_0().truncate().text_size(px(11.5)).font_weight(FontWeight::SEMIBOLD).child(match &g.file { Some(f) => format!("图形 · 文件历史:{}", f.rsplit('/').next().unwrap_or(f)), None => "图形".to_string() }))
+            .when(g.file.is_some(), |d| d.child(Button::new("scm-graph-unfile").xsmall().ghost().icon(IconName::X).tooltip("取消文件过滤,显示整个仓库的历史").on_click(cx.listener(|this, _, _, cx| { cx.stop_propagation(); this.graph.file = None; this.graph.sig = None; this.graph.loaded = false; this.reload_graph(cx); }))))
             .child(
                 h_flex().invisible().group_hover("scm-graph-head", |d| d.visible()).gap_0p5()
                     .child(Button::new("scm-graph-all").xsmall().ghost().icon(IconName::GitBranch).tooltip(if g.all { "显示所有分支(点击只看当前分支)" } else { "仅当前分支(点击显示所有分支)" }).selected(g.all)

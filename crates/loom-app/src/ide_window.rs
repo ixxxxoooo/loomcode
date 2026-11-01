@@ -5,7 +5,7 @@
 //! @author ixxxxoooo
 
 use crate::ide_status;
-use crate::ide::{CloseTab, FormatDocument, FindInProject, GoToLine, IdeView, NavBack, NavForward, NextTab, PrevTab, QuickOpen, ShowScm, TogglePanel};
+use crate::ide::{ChangeAllOccurrences, CloseTab, FindReferences, FormatDocument, GoToImplementation, OpenCommandPalette, RenameSymbol, ShowFileHistory, ShowRefactor, ToggleWordWrap, FindInProject, GoToLine, IdeView, NavBack, NavForward, NextTab, PrevTab, QuickOpen, ShowScm, TogglePanel};
 use crate::right_panel::{PanelEvent, RightPanel};
 use crate::ui::{icon, no_drag};
 use gpui_kit::component::Disableable as _;
@@ -271,6 +271,14 @@ impl Render for IdeWindow {
             .on_action(cx.listener(|this, _: &FindInProject, window, cx| this.show_search(window, cx)))
             .on_action(cx.listener(|this, _: &crate::ide_reference::QuoteSelection, window, cx| this.quote_selection(window, cx)))
             .on_action(cx.listener(|this, _: &ShowScm, window, cx| this.show_scm(window, cx)))
+            .on_action(cx.listener(|this, _: &OpenCommandPalette, window, cx| this.toggle_quick(window, cx)))
+            .on_action(cx.listener(|this, _: &ShowFileHistory, window, cx| {
+                if let Some(path) = this.ide.read(cx).tabs.active().map(|p| p.to_path_buf()) {
+                    let scm = this.wb.read(cx).scm.clone();
+                    scm.update(cx, |s, cx| s.show_file_history(&path, cx));
+                    this.show_scm(window, cx);
+                }
+            }))
             .on_action(cx.listener(|this, _: &TogglePanel, window, cx| this.toggle_term(window, cx)))
             .on_action(cx.listener(|this, _: &crate::term_actions::ToggleTerminal, window, cx| this.toggle_term(window, cx)))
             .on_action(cx.listener(|this, _: &crate::term_actions::NewTerminal, window, cx| this.open_new_term(window, cx)))
@@ -316,6 +324,13 @@ pub(crate) fn bind_ide_keys(cx: &mut App) {
         cx.bind_keys([
             KeyBinding::new("cmd-w", CloseTab, Some("IdeView")),
             KeyBinding::new("shift-alt-f", FormatDocument, Some("IdeView")),
+            KeyBinding::new("cmd-f12", GoToImplementation, Some("IdeView")),
+            KeyBinding::new("shift-f12", FindReferences, Some("IdeView")),
+            KeyBinding::new("f2", RenameSymbol, Some("IdeView")),
+            KeyBinding::new("cmd-f2", ChangeAllOccurrences, Some("IdeView")),
+            KeyBinding::new("ctrl-shift-r", ShowRefactor, Some("IdeView")),
+            KeyBinding::new("alt-z", ToggleWordWrap, Some("IdeView")),
+            KeyBinding::new("cmd-shift-p", OpenCommandPalette, None),
             KeyBinding::new("cmd-p", QuickOpen, Some("IdeWindow")),
             KeyBinding::new("cmd-k", QuickOpen, Some("IdeWindow")),
             KeyBinding::new("ctrl-g", GoToLine, Some("IdeWindow")),

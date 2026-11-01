@@ -41,22 +41,40 @@ pub struct GraphState {
     pub diffs: HashMap<String, Option<FileDiff>>,
     /// 储藏列表(「更多」菜单用)
     pub stashes: Vec<Stash>,
+    /// 只看这个文件的历史(仓库内相对路径);`None` 看整个仓库
+    pub file: Option<String>,
 }
 
 impl Default for GraphState {
     fn default() -> Self {
-        Self { open: true, all: true, rows: Vec::new(), limit: PAGE, has_more: false, loading: false, loaded: false, error: None, sig: None, expanded: None, files: HashMap::new(), diffs: HashMap::new(), stashes: Vec::new() }
+        Self { open: true, all: true, rows: Vec::new(), limit: PAGE, has_more: false, loading: false, loaded: false, error: None, sig: None, expanded: None, files: HashMap::new(), diffs: HashMap::new(), stashes: Vec::new(), file: None }
     }
 }
 
 impl GraphState {
     /// 清空数据(切换仓库时)。
     pub fn reset(&mut self) {
-        *self = Self { open: self.open, all: self.all, ..Self::default() };
+        *self = Self { open: self.open, all: self.all, file: self.file.clone(), ..Self::default() };
     }
 }
 
 impl ScmView {
+    /// 显示某个文件的提交历史(右键「显示历史」):图形区只列改过它的提交,并展开图形区。
+    ///
+    /// 参数:`path` 文件绝对路径。文件不在当前仓库里时什么也不做。
+    pub fn show_file_history(&mut self, path: &std::path::Path, cx: &mut Context<Self>) {
+        let Some(top) = self.top.clone() else { return };
+        let Ok(rel) = path.strip_prefix(&top) else { return };
+        self.graph.file = Some(rel.to_string_lossy().to_string());
+        self.graph.open = true;
+        self.graph.limit = PAGE;
+        self.graph.sig = None;
+        self.graph.loaded = false;
+        self.graph.expanded = None;
+        self.reload_graph(cx);
+        cx.notify();
+    }
+
     /// 展开 / 收起图形区;首次展开时读取。
     pub(crate) fn toggle_graph(&mut self, cx: &mut Context<Self>) {
         self.graph.open = !self.graph.open;
@@ -97,12 +115,12 @@ impl ScmView {
             return;
         }
         self.graph.loading = true;
-        let (limit, all) = (self.graph.limit, self.graph.all);
+        let (limit, all, file) = (self.graph.limit, self.graph.all, self.graph.file.clone());
         cx.spawn(async move |this, cx| {
             let result = cx
                 .background_spawn(async move {
                     let sig = git_log::refs_signature(&top);
-                    let commits = git_log::log(&top, limit, None, all)?;
+                    let commits = git_log::log(&top, limit, file.as_deref(), all)?;
                     let more = commits.len() >= limit && limit < MAX_COMMITS;
                     Ok::<_, String>((sig, git_log::layout(&commits), more))
                 })
