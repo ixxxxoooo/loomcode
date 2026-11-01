@@ -2233,6 +2233,18 @@ dependencies = [
 ]
 
 [[package]]
+name = "gpui-kit-markdown-editor"
+version = "0.1.1"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "bf0f11b5007c5fec0029f8c6a3028ac39bb9971d4ca04e9b5fa5bbd761e51feb"
+dependencies = [
+ "gpui-kit",
+ "gpui-pre",
+ "markdown",
+ "unicode-segmentation",
+]
+
+[[package]]
 name = "gpui-pre"
 version = "0.3.9"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -3537,6 +3549,7 @@ version = "0.1.0"
 dependencies = [
  "async-channel",
  "gpui-kit",
+ "gpui-kit-markdown-editor",
  "loom-automation",
  "loom-browser",
  "loom-canvas",

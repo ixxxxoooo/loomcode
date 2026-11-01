@@ -151,6 +151,7 @@ fn main() {
 
     application().with_assets(gpui_kit::assets::AllAssets).run(move |cx| {
         init(cx);
+        markdown_editor::init(cx);
         theme::apply(theme::ThemeKind::PaperLight, None, cx);
         cx.bind_keys([
             KeyBinding::new("cmd-k", workbench::TogglePalette, None),

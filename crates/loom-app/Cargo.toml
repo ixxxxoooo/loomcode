@@ -18,6 +18,7 @@ loom-automation = { path = "../loom-automation" }
 loom-browser = { path = "../loom-browser" }
 loom-claude = { path = "../loom-claude" }
 serde_json.workspace = true
+gpui-kit-markdown-editor = { version = "0.1.1", default-features = false }
 async-channel = "2"
 similar = "2"
 uuid = { version = "1", features = ["v4"] }

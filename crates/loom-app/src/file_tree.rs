@@ -188,7 +188,7 @@ impl FileTree {
                         let lang = language_for(&path);
                         let editor = cx.new(|cx| EditorState::new(window, cx).language(lang).default_value(text));
                         if crate::ide_markdown::is_markdown(&path) {
-                            self.md_view = Some(cx.new(|_| crate::ide_markdown::MdDocView::new(editor.clone(), Some(path.clone()))));
+                            self.md_view = Some(cx.new(|cx| crate::ide_markdown::MdDocView::new(editor.clone(), Some(path.clone()), window, cx)));
                         }
                         self.preview = Some(editor);
                     }

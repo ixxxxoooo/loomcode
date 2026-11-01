@@ -400,7 +400,7 @@ impl Render for IdeView {
         }
         let is_md = crate::ide_markdown::is_markdown(&path);
         let ed0 = self.docs[&path].editor.clone();
-        let md_view = is_md.then(|| self.md.entry(path.clone()).or_insert_with(|| cx.new(|_| crate::ide_markdown::MdDocView::new(ed0, None))).clone());
+        let md_view = is_md.then(|| self.md.entry(path.clone()).or_insert_with(|| cx.new(|cx| crate::ide_markdown::MdDocView::new(ed0, None, window, cx))).clone());
         let md_mode = md_view.as_ref().map_or(crate::ide_markdown::MdMode::Source, |v| v.read(cx).mode);
         let doc = &self.docs[&path];
         let editor = doc.editor.clone();
