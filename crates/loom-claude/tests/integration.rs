@@ -250,3 +250,53 @@ fn 性能基线_历史扫描与回放() {
         println!("回放最大会话 {:.1} MB → {} 个事件:{:?}", size as f64 / 1e6, events.len(), t.elapsed());
     }
 }
+
+/// 真实 claude 的后台任务冒烟(haiku,费用极小),默认不运行:
+/// `cargo test -p loom-claude --test integration -- --ignored --nocapture 后台任务`
+///
+/// 验证:`initialize` 带上 `perTaskStopAffordance` 等新字段后仍能握手;后台命令出现 `TaskStarted`;
+/// `StopTask` 能停掉它并得到「已停止」的终态通知。
+#[test]
+#[ignore]
+fn 真实_claude_后台任务与停止() {
+    std::fs::create_dir_all("/tmp/loom-probe").unwrap();
+    let h = ClaudeBackend::new(None)
+        .start(BackendConfig { cwd: "/tmp/loom-probe".into(), model: Some("haiku".into()), mode: Some(PermissionMode::BypassPermissions), ..Default::default() })
+        .expect("需要本机已安装 claude");
+    let ready = collect(&h, |e| matches!(e, AgentEvent::Ready { .. }));
+    assert!(matches!(ready.last(), Some(AgentEvent::Ready { .. })), "新 initialize 字段被拒绝会导致握手失败");
+    h.send(prompt("用 Bash 工具在后台运行命令 `sleep 120`(run_in_background 设为 true),启动后立刻只回复 started,不要等待它结束。"));
+    let mut state = SessionState::default();
+    // 回合 90 秒内应结束,且出现后台任务
+    let deadline = Instant::now() + Duration::from_secs(90);
+    let mut ended = false;
+    while Instant::now() < deadline && !(ended && state.running_task_count() > 0) {
+        match h.events.try_recv() {
+            Ok(e) => {
+                if matches!(e, AgentEvent::TurnEnded(_)) {
+                    ended = true;
+                }
+                // 万一弹出权限请求就放行
+                if let AgentEvent::Append { item: TimelineItem::Permission(p), .. } = &e {
+                    h.send(AgentCommand::ResolvePermission { id: p.id.clone(), option: "allow".into() });
+                }
+                state.apply(e);
+            }
+            Err(_) => std::thread::sleep(Duration::from_millis(20)),
+        }
+    }
+    println!("任务表:{:#?}", state.tasks);
+    let task = state.tasks.iter().find(|t| t.counts_as_running()).expect("应有一个运行中的后台任务").clone();
+    h.send(AgentCommand::StopTask { task_id: task.task_id.clone() });
+    let deadline = Instant::now() + Duration::from_secs(30);
+    while Instant::now() < deadline && state.task(&task.task_id).is_some_and(|t| !t.status.is_finished()) {
+        match h.events.try_recv() {
+            Ok(e) => state.apply(e),
+            Err(_) => std::thread::sleep(Duration::from_millis(20)),
+        }
+    }
+    let after = state.task(&task.task_id).expect("任务仍在表里");
+    println!("停止后:{after:#?}");
+    assert!(after.status.is_finished(), "停止后任务应进入终态,实际 {:?}", after.status);
+    h.send(AgentCommand::Shutdown);
+}
