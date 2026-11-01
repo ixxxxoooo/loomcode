@@ -266,6 +266,7 @@ fn main() {
             KeyBinding::new("f12", gpui_kit::component::input::GoToDefinition, Some("Input")),
             KeyBinding::new("cmd-shift-e", workbench::ToggleIde, None),
             KeyBinding::new("ctrl-`", term_actions::ToggleTerminal, None),
+            KeyBinding::new("cmd-j", term_actions::ToggleTerminal, None),
             KeyBinding::new("ctrl-shift-`", term_actions::NewTerminal, None),
             KeyBinding::new("shift-tab", workbench::CycleMode, Some("Workbench")),
         ]);
