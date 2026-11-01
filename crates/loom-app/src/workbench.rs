@@ -326,6 +326,21 @@ impl Workbench {
         cx.set_global(theme::Accent(wb.settings.accent.as_deref().and_then(theme::parse_hex)));
         theme::apply(kind, Some(window), cx);
         crate::app_icon::set_tray_visible(wb.settings.tray_icon);
+        // 托盘:菜单点击交给这里处理;呼吸动画每 66ms 推进一帧(没有运行中会话时什么也不做)
+        {
+            let rx = crate::tray::commands();
+            cx.spawn_in(window, async move |this, cx| {
+                while let Ok(cmd) = rx.recv().await {
+                    let _ = this.update_in(cx, |this, window, cx| this.on_tray_command(cmd, window, cx));
+                }
+            })
+            .detach();
+            cx.spawn(async move |_, cx| loop {
+                cx.background_executor().timer(std::time::Duration::from_millis(66)).await;
+                crate::tray::tick();
+            })
+            .detach();
+        }
         cx.set_global(crate::UiPrefs::from_settings(&wb.settings));
         crate::appearance::apply_scrollbar(wb.settings.appearance.scrollbar, cx);
         cx.set_global(crate::Prefs(wb.settings.clone()));
@@ -966,6 +981,50 @@ impl Workbench {
         }
     }
 
+    /// 托盘菜单的数据:有状态的会话(等待处理、运行中、未读)在前,再用侧栏里的会话补到 8 个。
+    pub fn tray_snapshot(&self, cx: &App) -> crate::tray::TraySnapshot {
+        use crate::tray::{TrayState, TraySession};
+        let attention: std::collections::HashSet<&String> = self.views.keys().chain(self.unread.iter()).collect();
+        let mut hot: Vec<(u8, TraySession)> = Vec::new();
+        let mut rest: Vec<TraySession> = Vec::new();
+        for p in &self.projects {
+            for s in p.sessions.iter().filter(|s| !s.archived) {
+                let badge = if attention.contains(&s.id) { self.live_badge(&s.id, s.badge, cx) } else { SessionBadge::Idle };
+                let (rank, state) = match badge {
+                    SessionBadge::Waiting => (0, TrayState::Waiting),
+                    SessionBadge::Running => (1, TrayState::Running),
+                    SessionBadge::Unread => (2, TrayState::Unread),
+                    SessionBadge::Idle => (3, TrayState::Idle),
+                };
+                let item = TraySession { id: s.id.clone(), title: s.title.clone(), project: p.name.clone(), state };
+                if rank < 3 { hot.push((rank, item)) } else if rest.len() < 8 { rest.push(item) }
+            }
+        }
+        hot.sort_by_key(|(r, _)| *r);
+        let sessions = hot.into_iter().map(|(_, s)| s).chain(rest).take(8).collect();
+        crate::tray::TraySnapshot { sessions }
+    }
+
+    /// 处理托盘菜单里的点击。
+    fn on_tray_command(&mut self, cmd: crate::tray::TrayCommand, window: &mut Window, cx: &mut Context<Self>) {
+        use crate::tray::TrayCommand;
+        match cmd {
+            TrayCommand::Show => {}
+            TrayCommand::NewSession => self.new_session(self.target_project(), window, cx),
+            TrayCommand::OpenSettings => self.set_page(Page::Settings, cx),
+            TrayCommand::OpenSession(id) => {
+                if let Some(pi) = self.projects.iter().position(|p| p.sessions.iter().any(|s| s.id == id)) {
+                    self.open_session(pi, &id, window, cx);
+                }
+            }
+            TrayCommand::MarkAllRead => {
+                self.unread.clear();
+                cx.notify();
+            }
+            TrayCommand::CheckUpdate => self.check_update(cx),
+        }
+    }
+
     /// 记住当前界面状态(正在看的会话、右栏标签与预览文件),下次启动恢复;内容没变就不写盘。
     pub fn remember(&mut self, cx: &mut Context<Self>) {
         let mut last = self.ui_state.last.clone();
@@ -1138,6 +1197,8 @@ pub fn chat_panel_with_footer(parts: Option<(Entity<SessionModel>, Entity<Compos
 impl Render for Workbench {
     fn render(&mut self, window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
         let t = cx.theme().clone();
+        // 托盘跟着会话状态走(内容没变不会重建菜单)
+        crate::tray::set_snapshot(self.tray_snapshot(cx));
         // 窗口太窄时自动收起侧栏(变宽后恢复)
         self.apply_responsive(window.viewport_size().width);
         self.apply_responsive_right(window.viewport_size().width);
