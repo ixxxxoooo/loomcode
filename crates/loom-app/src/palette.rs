@@ -18,6 +18,8 @@ pub enum PaletteAction {
     CycleMode,
     ToggleIde,
     OpenSettings(Option<&'static str>),
+    /// 打开「自定义」页的某个标签(plugins / mcp / skills / commands / agents / rules / hooks)
+    OpenCustomize(&'static str),
     OpenPage(&'static str),
     SetTheme(ThemeChoice),
     /// (项目下标, 会话 id)

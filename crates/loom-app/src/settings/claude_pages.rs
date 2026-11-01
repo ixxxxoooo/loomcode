@@ -2,7 +2,7 @@
 //!
 //! @author ixxxxoooo
 
-use super::SettingsTab;
+use super::CustomizeTab;
 use super::widgets::{error_banner, page_title, section_title};
 use crate::ui::{MONO, caption, icon, pill};
 use crate::workbench::Workbench;
@@ -22,8 +22,8 @@ pub fn scope_pill(scope: Scope, cx: &App) -> impl IntoElement {
 
 /// 共用的 Markdown 编辑器:路径 + 保存 / 关闭 + 编辑区。只显示属于 `tab` 的文件。
 ///
-/// 参数:`wb` 工作台;`tab` 当前设置分类;`closable` 是否显示关闭按钮。返回:编辑器元素,没有打开文件时为 `None`。
-pub fn doc_editor(wb: &Workbench, tab: SettingsTab, closable: bool, cx: &mut Context<Workbench>) -> Option<Div> {
+/// 参数:`wb` 工作台;`tab` 当前自定义标签;`closable` 是否显示关闭按钮。返回:编辑器元素,没有打开文件时为 `None`。
+pub fn doc_editor(wb: &Workbench, tab: CustomizeTab, closable: bool, cx: &mut Context<Workbench>) -> Option<Div> {
     let t = cx.theme().clone();
     let doc = wb.forms().doc.as_ref().filter(|d| d.tab == tab)?;
     let saved = doc.saved;
@@ -42,7 +42,7 @@ pub fn doc_editor(wb: &Workbench, tab: SettingsTab, closable: bool, cx: &mut Con
 
 /// 记忆页:按加载顺序列出记忆文件,点选后在下方编辑。
 pub fn memory(wb: &mut Workbench, window: &mut Window, cx: &mut Context<Workbench>) -> AnyElement {
-    let tab = SettingsTab::Memory;
+    let tab = CustomizeTab::Rules;
     let files = wb.forms().memory_files.clone();
     // 第一次进入:默认打开项目 CLAUDE.md(没有项目时打开用户级)
     if wb.forms().doc.as_ref().is_none_or(|d| d.tab != tab) {

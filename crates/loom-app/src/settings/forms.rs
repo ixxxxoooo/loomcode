@@ -2,7 +2,7 @@
 //!
 //! @author ixxxxoooo
 
-use super::SettingsTab;
+use super::CustomizeTab;
 use super::fields::Fields;
 use gpui_kit::component::input::{EditorState, InputState, TextareaState};
 use gpui_kit::*;
@@ -16,8 +16,8 @@ pub struct DocEdit {
     pub path: PathBuf,
     pub editor: Entity<EditorState>,
     pub saved: bool,
-    /// 打开它的设置分类;切到别的分类时不显示
-    pub tab: SettingsTab,
+    /// 打开它的自定义标签;切到别的标签时不显示
+    pub tab: CustomizeTab,
 }
 
 /// 模型服务商页的状态。密钥只在内存里用于注入与测试,界面不显示。

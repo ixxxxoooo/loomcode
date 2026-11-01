@@ -4,7 +4,7 @@
 //! @author ixxxxoooo
 
 use super::widgets::page_title;
-use super::{SettingsTab, claude_pages, hooks_page, items_page, mcp_page, plugins_page};
+use super::{claude_pages, hooks_page, items_page, mcp_page, plugins_page};
 use crate::ui::{icon, caption};
 use crate::workbench::Workbench;
 use gpui_kit::assets::IconName;
@@ -56,19 +56,6 @@ impl CustomizeTab {
         };
         Self::ALL.into_iter().find(|t| key(t) == name)
     }
-
-    /// 对应的设置分类(记忆文件与编辑器状态按它归属)。
-    fn settings_tab(self) -> SettingsTab {
-        match self {
-            Self::Plugins => SettingsTab::Customize,
-            Self::Mcp => SettingsTab::Mcp,
-            Self::Skills => SettingsTab::Skills,
-            Self::Commands => SettingsTab::Commands,
-            Self::Agents => SettingsTab::Agents,
-            Self::Rules => SettingsTab::Memory,
-            Self::Hooks => SettingsTab::Hooks,
-        }
-    }
 }
 
 /// 渲染自定义页内容(不含外层滚动容器)。
@@ -82,9 +69,9 @@ pub fn render(wb: &mut Workbench, window: &mut Window, cx: &mut Context<Workbenc
     let body = match tab {
         CustomizeTab::Plugins => plugins_page::render(wb, &filter, cx),
         CustomizeTab::Mcp => mcp_page::mcp(wb, &filter, cx),
-        CustomizeTab::Skills => items_page::render(wb, ItemKind::Skill, tab.settings_tab(), &filter, cx),
-        CustomizeTab::Commands => items_page::render(wb, ItemKind::Command, tab.settings_tab(), &filter, cx),
-        CustomizeTab::Agents => items_page::render(wb, ItemKind::Agent, tab.settings_tab(), &filter, cx),
+        CustomizeTab::Skills => items_page::render(wb, ItemKind::Skill, tab, &filter, cx),
+        CustomizeTab::Commands => items_page::render(wb, ItemKind::Command, tab, &filter, cx),
+        CustomizeTab::Agents => items_page::render(wb, ItemKind::Agent, tab, &filter, cx),
         CustomizeTab::Rules => claude_pages::memory(wb, window, cx),
         CustomizeTab::Hooks => hooks_page::hooks(wb, &filter, cx),
     };

@@ -433,11 +433,13 @@ impl Workbench {
         cmd("新会话", "⌘N", IconName::Plus, PaletteAction::NewSession);
         cmd("打开设置", "⌘,", IconName::Settings, PaletteAction::OpenSettings(None));
         cmd("设置:权限规则", "", IconName::Shield, PaletteAction::OpenSettings(Some("permissions")));
-        cmd("设置:MCP 服务器", "", IconName::Plug, PaletteAction::OpenSettings(Some("mcp")));
-        cmd("设置:记忆 CLAUDE.md", "", IconName::Brain, PaletteAction::OpenSettings(Some("memory")));
-        cmd("设置:斜杠命令", "", IconName::SquareTerminal, PaletteAction::OpenSettings(Some("commands")));
-        cmd("设置:子 Agent", "", IconName::Bot, PaletteAction::OpenSettings(Some("agents")));
-        cmd("设置:Skills", "", IconName::Sparkles, PaletteAction::OpenSettings(Some("skills")));
+        cmd("自定义:插件", "", IconName::Plug, PaletteAction::OpenCustomize("plugins"));
+        cmd("自定义:MCP 服务器", "", IconName::Plug, PaletteAction::OpenCustomize("mcp"));
+        cmd("自定义:技能", "", IconName::Sparkles, PaletteAction::OpenCustomize("skills"));
+        cmd("自定义:斜杠命令", "", IconName::SquareTerminal, PaletteAction::OpenCustomize("commands"));
+        cmd("自定义:子 Agent", "", IconName::Bot, PaletteAction::OpenCustomize("agents"));
+        cmd("自定义:规则与记忆 CLAUDE.md", "", IconName::Brain, PaletteAction::OpenCustomize("rules"));
+        cmd("自定义:钩子", "", IconName::Webhook, PaletteAction::OpenCustomize("hooks"));
         cmd("切换权限模式", "⇧Tab", IconName::Shield, PaletteAction::CycleMode);
         cmd("切换 IDE 模式", "⇧⌘E", IconName::Code, PaletteAction::ToggleIde);
         cmd("显示 / 隐藏左侧栏", "⌘B", IconName::PanelLeft, PaletteAction::ToggleLeft);
@@ -482,6 +484,12 @@ impl Workbench {
                 if let Some(m) = self.active_model().cloned() {
                     m.update(cx, |m, cx| { let next = m.state.mode.next(); m.set_mode(next, cx); });
                 }
+            }
+            PaletteAction::OpenCustomize(tab) => {
+                if let Some(t) = settings::CustomizeTab::from_name(tab) {
+                    self.customize_tab = t;
+                }
+                self.set_page(Page::Customize, cx);
             }
             PaletteAction::OpenSettings(tab) => {
                 if let Some(tab) = tab {

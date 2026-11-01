@@ -2,7 +2,7 @@
 //!
 //! @author ixxxxoooo
 
-use super::SettingsTab;
+use super::CustomizeTab;
 use super::claude_pages::{doc_editor, scope_pill};
 use super::widgets::{error_banner, page_title, section_title, segmented};
 use crate::ui::{MONO, caption, icon};
@@ -26,7 +26,7 @@ fn intro(kind: ItemKind) -> &'static str {
 }
 
 /// 新建表单。
-fn form(wb: &Workbench, kind: ItemKind, tab: SettingsTab, cx: &mut Context<Workbench>) -> Div {
+fn form(wb: &Workbench, kind: ItemKind, tab: CustomizeTab, cx: &mut Context<Workbench>) -> Div {
     let t = cx.theme().clone();
     let f = &wb.forms().item;
     let has_project = wb.claude_cfg_root.is_some();
@@ -46,7 +46,7 @@ fn form(wb: &Workbench, kind: ItemKind, tab: SettingsTab, cx: &mut Context<Workb
 }
 
 /// 一行条目:点击在下方编辑。
-fn item_row(i: usize, item: Item, tab: SettingsTab, current: bool, cx: &mut Context<Workbench>) -> Stateful<Div> {
+fn item_row(i: usize, item: Item, tab: CustomizeTab, current: bool, cx: &mut Context<Workbench>) -> Stateful<Div> {
     let t = cx.theme().clone();
     let (path, del) = (item.path.clone(), item.clone());
     let name = if item.kind == ItemKind::Agent { item.name.clone() } else { format!("/{}", item.name) };
@@ -65,8 +65,8 @@ fn item_row(i: usize, item: Item, tab: SettingsTab, current: bool, cx: &mut Cont
 
 /// 渲染管理页。
 ///
-/// 参数:`kind` 种类;`tab` 对应的设置分类;`filter` 搜索词(小写,空为不过滤)。
-pub fn render(wb: &Workbench, kind: ItemKind, tab: SettingsTab, filter: &str, cx: &mut Context<Workbench>) -> AnyElement {
+/// 参数:`kind` 种类;`tab` 对应的自定义标签;`filter` 搜索词(小写,空为不过滤)。
+pub fn render(wb: &Workbench, kind: ItemKind, tab: CustomizeTab, filter: &str, cx: &mut Context<Workbench>) -> AnyElement {
     let t = cx.theme().clone();
     let list: Vec<Item> = wb.forms().items.get(&kind).cloned().unwrap_or_default().into_iter().filter(|i| filter.is_empty() || format!("{} {}", i.name, i.description).to_lowercase().contains(filter)).collect();
     let current = wb.forms().doc.as_ref().filter(|d| d.tab == tab).map(|d| d.path.clone());

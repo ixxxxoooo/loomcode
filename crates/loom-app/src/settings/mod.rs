@@ -1,8 +1,9 @@
 //! 设置页:左侧分类导航 + 右侧表单。所有修改即时生效并写入 `~/.loomcode/settings.json`。
 //!
 //! 子模块:`widgets` 公共控件;`forms` / `fields` 表单状态;`pages` 通用 / 对话 / 快捷键 / 关于;
-//! Claude 配置页 `model_page` / `providers_page` / `permissions_page` / `mcp_page` / `hooks_page` /
-//! `items_page`(命令、子 Agent、Skills)/ `claude_pages`(记忆与共用编辑器)/ `env_page`;
+//! Claude 配置页 `model_page` / `providers_page` / `permissions_page` / `env_page`;
+//! 插件、MCP、技能、命令、子 Agent、规则、Hooks 统一收在「自定义」里(`customize_page`,左侧栏入口与设置分类共用),
+//! 各标签的内容是 `plugins_page` / `mcp_page` / `items_page` / `claude_pages`(记忆与共用编辑器)/ `hooks_page`;
 //! 其他 `network_page` / `usage_page` / `diagnostics_page` / `advanced_page`;`*_actions` 为对应的 Workbench 方法。
 //!
 //! @author ixxxxoooo
@@ -45,7 +46,6 @@ use gpui_kit::assets::IconName;
 use gpui_kit::component::{ActiveTheme, h_flex, v_flex};
 use gpui_kit::prelude::FluentBuilder as _;
 use gpui_kit::*;
-use loom_config::items::ItemKind;
 
 /// 设置分类。
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -57,12 +57,6 @@ pub enum SettingsTab {
     Model,
     Providers,
     Permissions,
-    Mcp,
-    Hooks,
-    Commands,
-    Agents,
-    Skills,
-    Memory,
     Env,
     Network,
     Usage,
@@ -75,7 +69,7 @@ impl SettingsTab {
     /// 导航分组。
     pub const GROUPS: [(&'static str, &'static [SettingsTab]); 3] = [
         ("客户端", &[Self::General, Self::Chat, Self::Shortcuts]),
-        ("Claude Code", &[Self::Customize, Self::Model, Self::Providers, Self::Permissions, Self::Mcp, Self::Hooks, Self::Commands, Self::Agents, Self::Skills, Self::Memory, Self::Env]),
+        ("Claude Code", &[Self::Customize, Self::Model, Self::Providers, Self::Permissions, Self::Env]),
         ("其他", &[Self::Network, Self::Usage, Self::Diagnostics, Self::Advanced, Self::About]),
     ];
 
@@ -99,12 +93,6 @@ impl SettingsTab {
             Self::Model => "模型与思考",
             Self::Providers => "模型服务商",
             Self::Permissions => "权限",
-            Self::Mcp => "MCP 服务器",
-            Self::Hooks => "钩子",
-            Self::Commands => "斜杠命令",
-            Self::Agents => "子 Agent",
-            Self::Skills => "Skills",
-            Self::Memory => "记忆",
             Self::Env => "环境变量",
             Self::Network => "网络",
             Self::Usage => "用量",
@@ -124,12 +112,6 @@ impl SettingsTab {
             Self::Model => IconName::Sparkle,
             Self::Providers => IconName::Server,
             Self::Permissions => IconName::Shield,
-            Self::Mcp => IconName::Plug,
-            Self::Hooks => IconName::Webhook,
-            Self::Commands => IconName::SquareTerminal,
-            Self::Agents => IconName::Bot,
-            Self::Skills => IconName::Sparkles,
-            Self::Memory => IconName::Brain,
             Self::Env => IconName::Variable,
             Self::Network => IconName::Globe,
             Self::Usage => IconName::ChartColumn,
@@ -168,12 +150,6 @@ pub fn render(wb: &mut Workbench, window: &mut Window, cx: &mut Context<Workbenc
         SettingsTab::Diagnostics => diagnostics_page::render(wb, cx),
         SettingsTab::Advanced => advanced_page::render(wb, cx),
         SettingsTab::Permissions => permissions_page::permissions(wb, cx),
-        SettingsTab::Mcp => mcp_page::mcp(wb, "", cx),
-        SettingsTab::Hooks => hooks_page::hooks(wb, "", cx),
-        SettingsTab::Commands => items_page::render(wb, ItemKind::Command, tab, "", cx),
-        SettingsTab::Agents => items_page::render(wb, ItemKind::Agent, tab, "", cx),
-        SettingsTab::Skills => items_page::render(wb, ItemKind::Skill, tab, "", cx),
-        SettingsTab::Memory => claude_pages::memory(wb, window, cx),
         SettingsTab::Shortcuts => pages::shortcuts(cx),
         SettingsTab::About => pages::about(wb, cx),
     };

@@ -3,7 +3,7 @@
 //!
 //! @author ixxxxoooo
 
-use super::SettingsTab;
+use super::CustomizeTab;
 use super::forms::DocEdit;
 use crate::composer::Composer;
 use crate::workbench::Workbench;
@@ -46,8 +46,8 @@ impl Workbench {
 
     /// 在编辑器里打开一个 Markdown 文件(不存在时为空,保存时新建)。
     ///
-    /// 参数:`path` 文件;`tab` 打开它的设置分类。
-    pub fn open_doc(&mut self, path: PathBuf, tab: SettingsTab, window: &mut Window, cx: &mut Context<Self>) {
+    /// 参数:`path` 文件;`tab` 打开它的自定义标签。
+    pub fn open_doc(&mut self, path: PathBuf, tab: CustomizeTab, window: &mut Window, cx: &mut Context<Self>) {
         if self.forms().doc.as_ref().is_some_and(|d| d.path == path && d.tab == tab) {
             return;
         }
@@ -100,8 +100,8 @@ impl Workbench {
 
     /// 按表单新建一条扩展,成功后在编辑器里打开它。
     ///
-    /// 参数:`kind` 种类;`tab` 当前设置分类。
-    pub fn create_item_from_form(&mut self, kind: ItemKind, tab: SettingsTab, window: &mut Window, cx: &mut Context<Self>) {
+    /// 参数:`kind` 种类;`tab` 当前自定义标签。
+    pub fn create_item_from_form(&mut self, kind: ItemKind, tab: CustomizeTab, window: &mut Window, cx: &mut Context<Self>) {
         let f = &self.forms().item;
         let (name, desc, scope) = (f.name.read(cx).value().trim().to_string(), f.description.read(cx).value().trim().to_string(), f.scope);
         let scope = if scope == Scope::Project && self.claude_cfg_root.is_none() { Scope::User } else { scope };
