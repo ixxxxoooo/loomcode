@@ -166,6 +166,11 @@ pub fn render_content(content: &ToolContent, cx: &App) -> AnyElement {
                 .child(diff::render(&lines, 120, cx))
                 .into_any_element()
         }
+        ToolContent::Image { label, path: Some(path) } if std::path::Path::new(path).is_file() => v_flex()
+            .gap_1()
+            .child(img(std::path::PathBuf::from(path)).max_w_full().max_h(px(360.)).rounded(px(8.)).border_1().border_color(t.border))
+            .child(div().text_size(px(12.)).text_color(t.muted_foreground).child(label.clone()))
+            .into_any_element(),
         ToolContent::Image { label, .. } => h_flex()
             .gap_2()
             .items_center()

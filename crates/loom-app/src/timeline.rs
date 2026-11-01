@@ -102,9 +102,16 @@ fn render_user(session: &Entity<SessionModel>, id: &str, text: &str, images: &[S
             d.child(
                 h_flex().flex_wrap().gap_1p5()
                     .children(images.iter().map(|name| {
-                        h_flex().gap_1().items_center().px_2().h(px(22.)).rounded(px(6.)).bg(t.background).border_1().border_color(t.border)
-                            .child(icon(IconName::Image, 12., t.muted_foreground))
-                            .child(div().text_size(px(12.)).child(name.clone()))
+                        // 本地文件存在就画缩略图,否则(演示数据)退回文件名 chip
+                        if std::path::Path::new(name).is_file() {
+                            img(std::path::PathBuf::from(name)).max_w(px(240.)).max_h(px(160.)).rounded(px(6.)).border_1().border_color(t.border)
+                                .into_any_element()
+                        } else {
+                            h_flex().gap_1().items_center().px_2().h(px(22.)).rounded(px(6.)).bg(t.background).border_1().border_color(t.border)
+                                .child(icon(IconName::Image, 12., t.muted_foreground))
+                                .child(div().text_size(px(12.)).child(name.clone()))
+                                .into_any_element()
+                        }
                     }))
                     .children(files.iter().map(|name| {
                         h_flex().gap_1().items_center().px_2().h(px(22.)).rounded(px(6.)).bg(t.background).border_1().border_color(t.border)

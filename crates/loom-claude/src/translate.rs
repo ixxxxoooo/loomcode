@@ -357,8 +357,11 @@ impl Translator {
 
         if let Some(blocks) = content.as_array() {
             let mut texts = Vec::new();
+            let mut images = Vec::new();
             for block in blocks {
                 match str_of(block, "type") {
+                    // 回放时用户消息里的图片:落盘后按路径展示
+                    "image" if self.replay => images.extend(crate::image_cache::store(block)),
                     // 实时输出是 tool_use_result,历史 jsonl 里是驼峰的 toolUseResult
                     "tool_result" => out.extend(self.tool_result(
                         block,
@@ -369,33 +372,33 @@ impl Translator {
                     _ => {}
                 }
             }
-            if self.replay && !texts.is_empty() {
-                out.extend(self.replay_user(&texts.join("\n"), v));
+            if self.replay && (!texts.is_empty() || !images.is_empty()) {
+                out.extend(self.replay_user(&texts.join("\n"), images, v));
             }
         } else if let Some(text) = content.as_str()
             && self.replay
         {
-            out.extend(self.replay_user(text, v));
+            out.extend(self.replay_user(text, Vec::new(), v));
         }
         out
     }
 
     /// 回放时把真实用户输入还原成条目;过滤掉元信息与斜杠命令产生的内部文本。
-    fn replay_user(&mut self, text: &str, v: &Value) -> Vec<AgentEvent> {
+    fn replay_user(&mut self, text: &str, images: Vec<String>, v: &Value) -> Vec<AgentEvent> {
         let internal = v.get("isMeta").and_then(Value::as_bool).unwrap_or(false)
             || v.get("isSidechain").and_then(Value::as_bool).unwrap_or(false)
             || text.starts_with("<command-")
             || text.starts_with("<local-command")
             || text.starts_with("Caveat:")
             || text.starts_with("<system-reminder>")
-            || text.trim().is_empty();
+            || (text.trim().is_empty() && images.is_empty());
         if internal {
             return Vec::new();
         }
         let id = self.next_id("u");
         vec![AgentEvent::Append {
             parent: None,
-            item: TimelineItem::User { id, text: text.into(), images: Vec::new(), files: Vec::new() },
+            item: TimelineItem::User { id, text: text.into(), images, files: Vec::new() },
         }]
     }
 
@@ -451,8 +454,13 @@ impl Translator {
         if is_error && !matches!(kind, ToolKind::Execute) && !text.trim().is_empty() && patch.append_content.is_empty() {
             patch.append_content.push(ToolContent::Text(truncate(&text, 4_000)));
         }
-        for _ in 0..images {
-            patch.append_content.push(ToolContent::Image { label: "图片".into(), path: None });
+        for (n, path) in images.into_iter().enumerate() {
+            // 读图片文件时标签用文件名,其余用「图片 N」
+            let label = match (&kind, &path) {
+                (ToolKind::Read, Some(_)) => str_of(&info.input, "file_path").rsplit('/').next().unwrap_or("图片").to_string(),
+                _ => format!("图片 {}", n + 1),
+            };
+            patch.append_content.push(ToolContent::Image { label, path });
         }
         vec![AgentEvent::ToolUpdate { parent: parent.or(info.parent), id, patch }]
     }
@@ -688,23 +696,23 @@ fn parse_questions(input: &Value) -> Vec<Question> {
         .unwrap_or_default()
 }
 
-/// 工具结果内容 → (文本, 图片数)。
-fn result_text(content: &Value) -> (String, usize) {
+/// 工具结果内容 → (文本, 图片本地路径列表;落盘失败的为 `None`)。
+fn result_text(content: &Value) -> (String, Vec<Option<String>>) {
     match content {
-        Value::String(s) => (s.clone(), 0),
+        Value::String(s) => (s.clone(), Vec::new()),
         Value::Array(blocks) => {
             let mut texts = Vec::new();
-            let mut images = 0;
+            let mut images = Vec::new();
             for b in blocks {
                 match str_of(b, "type") {
                     "text" => texts.push(str_of(b, "text").to_string()),
-                    "image" => images += 1,
+                    "image" => images.push(crate::image_cache::store(b)),
                     _ => {}
                 }
             }
             (texts.join("\n"), images)
         }
-        _ => (String::new(), 0),
+        _ => (String::new(), Vec::new()),
     }
 }
 
