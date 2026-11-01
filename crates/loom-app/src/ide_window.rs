@@ -321,3 +321,19 @@ fn bind_ide_keys(cx: &mut App) {
         ]);
     });
 }
+
+#[cfg(test)]
+mod tests {
+    /// 回归:`IdeWindow::new` 在工作台更新期间被调用(切换 IDE 时),里面不能回读 / 更新工作台,
+    /// 否则会「重复借用」panic,在 `extern "C"` 回调里直接 abort(见提交 4803294)。
+    #[::core::prelude::v1::test]
+    fn 创建窗口时不回读工作台() {
+        let src = include_str!("ide_window.rs");
+        let start = src.find("pub fn new(wb: Entity<Workbench>").expect("找不到 IdeWindow::new");
+        let end = src[start..].find("/// 让面板与根目录跟随工作台当前会话。").expect("找不到 new 的结尾") + start;
+        let body = &src[start..end];
+        for bad in ["wb.read(", "wb.update(", "self.wb.read(", "self.wb.update("] {
+            assert!(!body.contains(bad), "IdeWindow::new 里不能出现 `{bad}`:创建发生在工作台更新期间");
+        }
+    }
+}
