@@ -2,6 +2,7 @@
 
 use crate::modes::{Effort, ModelInfo, PermissionMode};
 use crate::timeline::{NoticeLevel, PermissionRequest, TimelineItem, TodoItem};
+use crate::task::{BackgroundTask, TaskStatus};
 use crate::tool::ToolPatch;
 
 /// 回合结束原因。
@@ -61,6 +62,8 @@ pub enum AgentEvent {
     ItemDone { parent: Option<String>, id: String },
     /// 子 Agent 状态变更
     SubagentStatus { id: String, status: crate::timeline::SubagentStatus },
+    /// 子 Agent 结束:状态、结果摘要与统计(来自 `tool_result` 与 `toolUseResult`)
+    SubagentFinished { id: String, status: crate::timeline::SubagentStatus, summary: String, tokens: u64, tool_count: u32, duration_ms: Option<u64> },
     /// 待办全量替换
     Todos { id: String, items: Vec<TodoItem> },
     /// 把已有的同 id 工具卡升级成权限请求(真实后端:工具调用先出现,权限请求随后到达);
@@ -77,6 +80,18 @@ pub enum AgentEvent {
     ModelChanged(String),
     TitleChanged(String),
     Notice { level: NoticeLevel, text: String },
+    /// 后台任务启动(`task_started`);同一 `task_id` 再次启动视为恢复运行
+    TaskStarted(BackgroundTask),
+    /// 后台任务进度(`task_progress`),字段为 `None` 表示不变
+    TaskProgress { task_id: String, tokens: Option<u64>, tool_uses: Option<u32>, last_tool: Option<String>, summary: Option<String> },
+    /// 后台任务状态补丁(`task_updated`)
+    TaskUpdated { task_id: String, status: Option<TaskStatus>, description: Option<String>, output_file: Option<String> },
+    /// 后台任务终态通知(`task_notification`),这是结束的权威信号
+    TaskNotification { task_id: String, status: TaskStatus, summary: String, output_file: Option<String> },
+    /// 后台任务全量快照(`background_tasks_changed`):用它替换缓存,漏掉的事件会被纠正
+    TasksChanged(Vec<BackgroundTask>),
+    /// 后台任务产生了新输出(追加到任务的输出缓冲)
+    TaskOutput { task_id: String, text: String },
     TurnEnded(StopReason),
 }
 
@@ -93,6 +108,10 @@ pub enum AgentCommand {
     AnswerQuestion { id: String, answers: Vec<Vec<String>> },
     /// 计划批准;批准时 `mode` 是之后要切到的权限模式(`None` 沿用 claude 的建议)
     ResolvePlan { id: String, approve: bool, mode: Option<PermissionMode> },
+    /// 停止一个后台任务(对应 claude 的 `stop_task` 控制请求)
+    StopTask { task_id: String },
+    /// 把前台运行中的 Bash / 子 Agent 转入后台(Ctrl+B);`tool_use_id` 为空表示全部
+    BackgroundCurrent { tool_use_id: Option<String> },
     /// 触发演示场景(仅演示后端识别)
     RunScenario(String),
     /// 关闭后端(结束子进程)
@@ -110,6 +129,7 @@ impl AgentEvent {
             | AgentEvent::ItemDone { parent, id } => Some(parent.as_deref().unwrap_or(id)),
             AgentEvent::PromoteToPermission { parent, request } => Some(parent.as_deref().unwrap_or(&request.id)),
             AgentEvent::SubagentStatus { id, .. }
+            | AgentEvent::SubagentFinished { id, .. }
             | AgentEvent::Todos { id, .. }
             | AgentEvent::PermissionResolved { id, .. }
             | AgentEvent::QuestionAnswered { id, .. }

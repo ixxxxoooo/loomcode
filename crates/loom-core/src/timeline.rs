@@ -1,5 +1,6 @@
 //! 会话时间线条目。
 
+use crate::task::{TaskKind, TaskStatus};
 use crate::tool::ToolCall;
 use serde::{Deserialize, Serialize};
 
@@ -86,6 +87,8 @@ pub enum SubagentStatus {
     Background,
     Completed,
     Failed,
+    /// 被用户停止(取消回合或停止任务)
+    Stopped,
 }
 
 /// 子 Agent 卡片,内部嵌套它自己的时间线。
@@ -97,6 +100,87 @@ pub struct SubagentCard {
     pub description: String,
     pub status: SubagentStatus,
     pub children: Vec<TimelineItem>,
+    /// 对应的后台任务 id(`task_started` 之后才有)
+    #[serde(default)]
+    pub task_id: Option<String>,
+    /// 是否在后台运行(启动时 `run_in_background`,或之后被转入后台)
+    #[serde(default)]
+    pub background: bool,
+    /// 开始时间(unix 毫秒);回放的历史没有就是 `None`
+    #[serde(default)]
+    pub started_ms: Option<u64>,
+    /// 结束时间(unix 毫秒)
+    #[serde(default)]
+    pub ended_ms: Option<u64>,
+    /// 累计 token 数(来自 `task_progress`)
+    #[serde(default)]
+    pub tokens: u64,
+    /// 工具调用次数(来自 `task_progress`;没有时用嵌套时间线里的工具数)
+    #[serde(default)]
+    pub tool_count: u32,
+    /// 最近一个工具名
+    #[serde(default)]
+    pub last_tool: String,
+    /// 进度摘要(运行中)或结果摘要(结束后)
+    #[serde(default)]
+    pub summary: String,
+    /// 最近一次有进展的时间(unix 毫秒),用于判断疑似停滞
+    #[serde(default)]
+    pub last_activity_ms: Option<u64>,
+}
+
+impl SubagentCard {
+    /// 新建子 Agent 卡片。开始时间在卡片进入时间线(`Append`)时由归约器记录,这样脚本提前构建也不会算错用时。
+    pub fn new(id: &str, agent_type: &str, description: &str, status: SubagentStatus) -> Self {
+        Self {
+            id: id.into(),
+            agent_type: agent_type.into(),
+            description: description.into(),
+            status,
+            children: Vec::new(),
+            task_id: None,
+            background: status == SubagentStatus::Background,
+            started_ms: None,
+            ended_ms: None,
+            tokens: 0,
+            tool_count: 0,
+            last_tool: String::new(),
+            summary: String::new(),
+            last_activity_ms: None,
+        }
+    }
+
+    /// 运行中的卡片第一次进入时间线时记录开始时间与最近活动。
+    pub fn stamp_start(&mut self, now: u64) {
+        if self.is_active() && self.started_ms.is_none() {
+            self.started_ms = Some(now);
+            self.last_activity_ms = Some(now);
+        }
+    }
+
+    /// 是否仍在运行(含后台)。
+    pub fn is_active(&self) -> bool {
+        matches!(self.status, SubagentStatus::Starting | SubagentStatus::Running | SubagentStatus::Background)
+    }
+
+    /// 工具调用次数:优先用协议上报的,否则数嵌套时间线里的工具。
+    pub fn tools(&self) -> u32 {
+        if self.tool_count > 0 {
+            return self.tool_count;
+        }
+        self.children.iter().filter(|c| matches!(c, TimelineItem::Tool(_))).count() as u32
+    }
+
+    /// 已运行时长(毫秒);没有开始时间返回 `None`。
+    pub fn elapsed_ms(&self, now: u64) -> Option<u64> {
+        let start = self.started_ms?;
+        Some(self.ended_ms.unwrap_or(now).saturating_sub(start))
+    }
+
+    /// 是否疑似停滞:仍在运行,且超过 `STALL_MS` 没有任何进展。
+    pub fn stalled(&self, now: u64) -> bool {
+        self.is_active() && self.last_activity_ms.is_some_and(|t| now.saturating_sub(t) >= crate::task::STALL_MS)
+    }
 }
 
 /// 计划批准卡(ExitPlanMode)。
@@ -125,6 +209,8 @@ pub enum TimelineItem {
     Canvas { id: String, title: String },
     /// 本轮改动汇总
     Changes { id: String, files: Vec<ChangedFile> },
+    /// 后台任务结束通知(`task_notification`):完成 / 失败 / 被停止
+    TaskNote { id: String, task_id: String, kind: TaskKind, status: TaskStatus, text: String },
 }
 
 /// 改动汇总中的一个文件。
@@ -145,7 +231,8 @@ impl TimelineItem {
             | Self::Todos { id, .. }
             | Self::Notice { id, .. }
             | Self::Canvas { id, .. }
-            | Self::Changes { id, .. } => id,
+            | Self::Changes { id, .. }
+            | Self::TaskNote { id, .. } => id,
             Self::Tool(t) => &t.id,
             Self::Subagent(s) => &s.id,
             Self::Permission(p) => &p.id,

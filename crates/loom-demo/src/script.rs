@@ -18,6 +18,79 @@ pub enum Step {
     WaitPlan(String),
     /// 永久停住,直到用户取消(冻结场景)
     Hold,
+    /// 登记一个后台任务时间线:它独立于回合继续运行(回合结束后仍会推进,直到完成或被停止)
+    Spawn(BgJob),
+}
+
+/// 后台任务的时间线:相对登记时刻的偏移毫秒 → 事件。
+#[derive(Debug, Clone, Default)]
+pub struct BgJob {
+    pub task_id: String,
+    /// 按偏移升序的事件;`followup` 为真的事件(任务完成后助手续写的一轮)只在会话空闲时发出
+    pub events: Vec<BgEvent>,
+    /// 被用户停止时发出的事件(通常是 `TaskNotification` 的已停止通知)
+    pub on_stop: Vec<AgentEvent>,
+}
+
+/// 后台时间线里的一个事件。
+#[derive(Debug, Clone)]
+pub struct BgEvent {
+    pub at_ms: u64,
+    pub event: AgentEvent,
+    pub followup: bool,
+}
+
+impl BgJob {
+    pub fn new(task_id: &str) -> Self {
+        Self { task_id: task_id.into(), ..Default::default() }
+    }
+
+    /// 在 `at_ms` 发出任意事件。
+    pub fn at(mut self, at_ms: u64, event: AgentEvent) -> Self {
+        self.events.push(BgEvent { at_ms, event, followup: false });
+        self
+    }
+
+    /// 后台输出一段文本。
+    pub fn output(self, at_ms: u64, text: &str) -> Self {
+        let task_id = self.task_id.clone();
+        self.at(at_ms, AgentEvent::TaskOutput { task_id, text: text.into() })
+    }
+
+    /// 进度:token 数、工具数、最近工具与摘要。
+    pub fn progress(self, at_ms: u64, tokens: u64, tools: u32, last_tool: &str, summary: &str) -> Self {
+        let task_id = self.task_id.clone();
+        let opt = |s: &str| (!s.is_empty()).then(|| s.to_string());
+        self.at(at_ms, AgentEvent::TaskProgress { task_id, tokens: Some(tokens), tool_uses: Some(tools), last_tool: opt(last_tool), summary: opt(summary) })
+    }
+
+    /// 在后台子 Agent 卡片内部追加条目(嵌套时间线)。
+    pub fn child(self, at_ms: u64, card_id: &str, item: TimelineItem) -> Self {
+        self.at(at_ms, AgentEvent::Append { parent: Some(card_id.into()), item })
+    }
+
+    /// 终态通知(任务结束的权威信号)。
+    pub fn finish(self, at_ms: u64, status: TaskStatus, summary: &str) -> Self {
+        let task_id = self.task_id.clone();
+        self.at(at_ms, AgentEvent::TaskNotification { task_id, status, summary: summary.into(), output_file: None })
+    }
+
+    /// 任务结束后助手续写一轮(只在会话空闲时发出)。
+    pub fn followup(mut self, at_ms: u64, text: &str) -> Self {
+        let id = format!("bgfu-{}-{at_ms}", self.task_id);
+        let mk = |event| BgEvent { at_ms, event, followup: true };
+        self.events.push(mk(AgentEvent::TurnStarted));
+        self.events.push(mk(AgentEvent::TextDelta { parent: None, id: id.clone(), delta: text.into() }));
+        self.events.push(mk(AgentEvent::ItemDone { parent: None, id }));
+        self.events.push(mk(AgentEvent::TurnEnded(StopReason::EndTurn)));
+        self
+    }
+
+    /// 被停止时发出已停止通知。
+    pub fn stoppable(mut self, summary: &str) -> Self {
+        self.on_stop.push(AgentEvent::TaskNotification { task_id: self.task_id.clone(), status: TaskStatus::Stopped, summary: summary.into(), output_file: None });
+        self
+    }
 }
 
 /// 场景脚本。
@@ -33,6 +106,8 @@ pub struct Script {
 pub struct ScriptBuilder {
     steps: Vec<Step>,
     counter: u32,
+    /// id 前缀:多个场景拼成一个长会话时避免 id 冲突
+    ns: String,
     parent: Option<String>,
     stop: Option<StopReason>,
 }
@@ -42,10 +117,15 @@ impl ScriptBuilder {
         Self::default()
     }
 
+    /// 带 id 前缀的构建器。
+    pub fn with_ns(ns: &str) -> Self {
+        Self { ns: ns.into(), ..Self::default() }
+    }
+
     /// 生成唯一 id。
     pub fn next_id(&mut self, prefix: &str) -> String {
         self.counter += 1;
-        format!("{prefix}-{}", self.counter)
+        format!("{}{prefix}-{}", self.ns, self.counter)
     }
 
     fn emit(&mut self, e: AgentEvent) {
@@ -265,14 +345,44 @@ impl ScriptBuilder {
     /// 子 Agent 卡片(追加,状态由调用者随后推进)。
     pub fn subagent(&mut self, agent_type: &str, description: &str, status: SubagentStatus) -> String {
         let id = self.next_id("sub");
-        self.append(TimelineItem::Subagent(SubagentCard {
-            id: id.clone(),
-            agent_type: agent_type.into(),
-            description: description.into(),
-            status,
-            children: vec![],
-        }));
+        self.append(TimelineItem::Subagent(SubagentCard::new(&id, agent_type, description, status)));
         id
+    }
+
+    /// 指定 id 的子 Agent 卡片(后台任务的时间线要引用同一个 id)。
+    pub fn subagent_with_id(&mut self, id: &str, agent_type: &str, description: &str, status: SubagentStatus) -> &mut Self {
+        self.append(TimelineItem::Subagent(SubagentCard::new(id, agent_type, description, status)));
+        self
+    }
+
+    /// 后台任务启动(`task_started`)。
+    pub fn task_started(&mut self, task: BackgroundTask) -> &mut Self {
+        self.emit(AgentEvent::TaskStarted(task));
+        self
+    }
+
+    /// 后台任务全量快照(`background_tasks_changed`)。
+    pub fn tasks_changed(&mut self, tasks: Vec<BackgroundTask>) -> &mut Self {
+        self.emit(AgentEvent::TasksChanged(tasks));
+        self
+    }
+
+    /// 登记后台任务时间线。
+    pub fn spawn(&mut self, job: BgJob) -> &mut Self {
+        self.steps.push(Step::Spawn(job));
+        self
+    }
+
+    /// 发出任意事件。
+    pub fn event(&mut self, e: AgentEvent) -> &mut Self {
+        self.emit(e);
+        self
+    }
+
+    /// 带终态与统计的子 Agent 结束。
+    pub fn subagent_done(&mut self, id: &str, status: SubagentStatus, summary: &str, tokens: u64, tools: u32, secs: u64) -> &mut Self {
+        self.emit(AgentEvent::SubagentFinished { id: id.into(), status, summary: summary.into(), tokens, tool_count: tools, duration_ms: Some(secs * 1000) });
+        self
     }
 
     pub fn subagent_status(&mut self, id: &str, status: SubagentStatus) -> &mut Self {

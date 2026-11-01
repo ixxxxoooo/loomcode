@@ -39,7 +39,7 @@ impl ToolKind {
             "Edit" | "MultiEdit" | "NotebookEdit" => Self::Edit,
             "Write" => Self::Write,
             "Glob" | "Grep" | "LS" | "ToolSearch" | "LSP" => Self::Search,
-            "Bash" | "BashOutput" | "KillShell" | "KillBash" | "Await" => Self::Execute,
+            "Bash" | "BashOutput" | "KillShell" | "KillBash" | "Await" | "Monitor" | "TaskOutput" | "TaskStop" => Self::Execute,
             "WebFetch" | "WebSearch" => Self::Fetch,
             "Task" | "Agent" => Self::Subagent,
             "TodoWrite" => Self::Todo,
@@ -57,12 +57,21 @@ pub enum ToolStatus {
     Running,
     Completed,
     Failed,
+    /// 用户拒绝了权限请求
+    Denied,
+    /// 回合被中断时仍在运行的工具
+    Interrupted,
 }
 
 impl ToolStatus {
-    /// 是否已结束(成功或失败)。
+    /// 是否已结束(成功、失败、被拒绝或被中断)。
     pub fn is_finished(self) -> bool {
-        matches!(self, Self::Completed | Self::Failed)
+        !matches!(self, Self::Pending | Self::Running)
+    }
+
+    /// 是否属于需要提示用户注意的未成功结果(失败 / 被拒绝 / 被中断)。
+    pub fn is_unsuccessful(self) -> bool {
+        matches!(self, Self::Failed | Self::Denied | Self::Interrupted)
     }
 }
 
@@ -96,6 +105,9 @@ pub struct ToolCall {
     pub locations: Vec<String>,
     /// 耗时毫秒(结束后填充)
     pub duration_ms: Option<u64>,
+    /// 后台任务 id:后台 Bash 或 Monitor 启动后,用它关联 `SessionState.tasks`
+    #[serde(default)]
+    pub task_id: Option<String>,
 }
 
 impl ToolCall {
@@ -111,6 +123,7 @@ impl ToolCall {
             content: Vec::new(),
             locations: Vec::new(),
             duration_ms: None,
+            task_id: None,
         }
     }
 
@@ -140,6 +153,7 @@ pub struct ToolPatch {
     pub status: Option<ToolStatus>,
     pub append_content: Vec<ToolContent>,
     pub duration_ms: Option<u64>,
+    pub task_id: Option<String>,
 }
 
 impl ToolCall {
@@ -154,6 +168,9 @@ impl ToolCall {
         self.content.extend(patch.append_content);
         if patch.duration_ms.is_some() {
             self.duration_ms = patch.duration_ms;
+        }
+        if patch.task_id.is_some() {
+            self.task_id = patch.task_id;
         }
     }
 }

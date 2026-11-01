@@ -43,6 +43,10 @@ fn docs_files() -> Vec<(&'static str, String)> {
     ]
 }
 
+fn lab_files() -> Vec<(&'static str, String)> {
+    vec![("README.md", "# 场景实验室\n\n每个演示场景一个会话,用来逐个检查会话流里的展示。\n".into())]
+}
+
 fn write_files(root: &Path, files: &[(&str, String)]) -> io::Result<()> {
     for (rel, content) in files {
         let path = root.join(rel);
@@ -98,6 +102,7 @@ pub fn seed(root: &Path) -> io::Result<Vec<PathBuf>> {
         make_project(root, "router-demo", router_files(), Some(("src/utils.rs", "\npub fn is_root(p: &str) -> bool {\n    p == \"/\"\n}\n")))?,
         make_project(root, "web-dashboard", dashboard_files(), None)?,
         make_project(root, "docs-site", docs_files(), Some(("docs/guide.md", "3. 部署\n")))?,
+        make_project(root, "scenario-lab", lab_files(), None)?,
     ])
     .and_then(|paths| seed_claude_home(root).map(|_| paths))
 }
@@ -109,13 +114,14 @@ fn s(id: &str, title: &str, updated: &str, pinned: bool, badge: SessionBadge) ->
 /// 侧栏的演示数据:路径指向 `seed` 生成的目录。
 pub fn demo_projects(root: &Path) -> Vec<Project> {
     let p = |n: &str| root.join(n).to_string_lossy().to_string();
-    vec![
+    let mut projects = vec![
         Project {
             name: "router-demo".into(),
             path: p("router-demo"),
             branch: Some("main".into()),
             expanded: true,
             sessions: vec![
+                s("showcase-all", "全场景:会话流展示总览", "刚刚", true, SessionBadge::Idle),
                 s("showcase-tour", "完整修复一个 Bug:路由大小写匹配", "刚刚", true, SessionBadge::Running),
                 s("permissions", "权限请求:修改配置与执行命令", "5 分钟前", false, SessionBadge::Waiting),
                 s("tools-files", "文件读写:梳理并整理路由层", "1 小时前", false, SessionBadge::Unread),
@@ -139,7 +145,16 @@ pub fn demo_projects(root: &Path) -> Vec<Project> {
             expanded: false,
             sessions: vec![s("plan-approval", "计划批准:迁移遗留接口", "3 天前", false, SessionBadge::Idle)],
         },
-    ]
+    ];
+    // 场景实验室:其余每个场景一个会话,标题带分组前缀,按分组顺序排列
+    let used: Vec<String> = projects.iter().flat_map(|p| p.sessions.iter().map(|x| x.id.clone())).collect();
+    let lab: Vec<SessionMeta> = crate::scenarios::all()
+        .into_iter()
+        .filter(|sc| !used.iter().any(|u| u == sc.id))
+        .map(|sc| s(sc.id, &format!("{} · {}", sc.group, sc.title), "场景", false, SessionBadge::Idle))
+        .collect();
+    projects.push(Project { name: "scenario-lab".into(), path: p("scenario-lab"), branch: Some("main".into()), expanded: false, sessions: lab });
+    projects
 }
 
 #[cfg(test)]
@@ -150,7 +165,12 @@ mod tests {
     fn 演示项目指向沙盒目录() {
         let root = Path::new("/tmp/x");
         let list = demo_projects(root);
-        assert_eq!(list.len(), 3);
+        assert_eq!(list.len(), 4);
+        // 场景实验室 + 其他项目合起来覆盖全部场景
+        let covered: std::collections::HashSet<_> = list.iter().flat_map(|p| p.sessions.iter().map(|x| x.id.clone())).collect();
+        for sc in crate::scenarios::all() {
+            assert!(covered.contains(sc.id), "场景 {} 没有侧栏会话", sc.id);
+        }
         assert!(list[0].path.starts_with("/tmp/x"));
         // 每个侧栏会话 id 都必须对应真实场景
         for p in &list {

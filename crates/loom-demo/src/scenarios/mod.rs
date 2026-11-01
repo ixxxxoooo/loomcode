@@ -1,5 +1,6 @@
 //! 演示场景注册表。
 
+mod background;
 mod errors;
 mod interact;
 mod perf;
@@ -52,6 +53,7 @@ pub fn all() -> Vec<Scenario> {
     v.extend(interact::scenarios());
     v.extend(styles::scenarios());
     v.extend(subagents::scenarios());
+    v.extend(background::scenarios());
     v.extend(errors::scenarios());
     v.extend(perf::scenarios());
     v

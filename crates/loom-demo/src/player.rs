@@ -1,9 +1,9 @@
 //! 脚本播放器:在独立线程里按时间轴发出事件,并响应用户命令。
 
 use crate::scenarios::{self, Scenario};
-use crate::script::{Script, Step};
+use crate::script::{BgEvent, BgJob, Script, Step};
 use async_channel::{Receiver, Sender};
-use std::collections::HashSet;
+use std::collections::{HashSet, VecDeque};
 use std::time::{Duration, Instant};
 use loom_core::*;
 
@@ -26,13 +26,27 @@ pub struct Player {
     model: String,
     /// 生成用户条目 id 的序号
     seq: u32,
+    /// 运行中的后台任务时间线
+    jobs: Vec<LiveJob>,
+    /// 当前是否有回合在进行(后台任务的续写只在空闲时发出)
+    in_turn: bool,
+}
+
+/// 一个正在推进的后台任务。
+struct LiveJob {
+    task_id: String,
+    start: Instant,
+    events: VecDeque<BgEvent>,
+    on_stop: Vec<AgentEvent>,
+    /// 已发出终态通知(之后不再可停止)
+    done: bool,
 }
 
 impl Player {
     pub fn new(cmd_rx: Receiver<AgentCommand>, ev_tx: Sender<AgentEvent>, speed: f32, config: BackendConfig) -> Self {
         let mode = config.mode.unwrap_or_default();
         let model = config.model.clone().unwrap_or_else(|| "sonnet".into());
-        Self { cmd_rx, ev_tx, speed, config, resolved: HashSet::new(), mode, model, seq: 0 }
+        Self { cmd_rx, ev_tx, speed, config, resolved: HashSet::new(), mode, model, seq: 0, jobs: Vec::new(), in_turn: false }
     }
 
     fn send(&self, e: AgentEvent) {
@@ -52,7 +66,24 @@ impl Player {
             model: self.model.clone(),
             mode: self.mode,
         });
-        while let Ok(cmd) = self.cmd_rx.recv_blocking() {
+        loop {
+            self.tick_jobs();
+            // 有后台任务在跑时要轮询推进它们,否则阻塞等命令
+            let cmd = if self.jobs.is_empty() {
+                match self.cmd_rx.recv_blocking() {
+                    Ok(c) => c,
+                    Err(_) => return,
+                }
+            } else {
+                match self.cmd_rx.try_recv() {
+                    Ok(c) => c,
+                    Err(async_channel::TryRecvError::Empty) => {
+                        std::thread::sleep(Duration::from_millis(10));
+                        continue;
+                    }
+                    Err(_) => return,
+                }
+            };
             match cmd {
                 AgentCommand::Prompt { text, .. } => self.on_prompt(&text),
                 AgentCommand::RunScenario(id) => {
@@ -62,6 +93,44 @@ impl Player {
                 }
                 AgentCommand::Shutdown => return,
                 other => self.handle_idle(other),
+            }
+        }
+    }
+
+    /// 推进后台任务:发出已到时的事件。续写(`followup`)只在空闲时发出,否则顺延。
+    fn tick_jobs(&mut self) {
+        let speed = self.speed;
+        let mut out = Vec::new();
+        for job in &mut self.jobs {
+            let elapsed = job.start.elapsed();
+            while let Some(front) = job.events.front() {
+                if Duration::from_millis((front.at_ms as f32 * speed) as u64) > elapsed {
+                    break;
+                }
+                if front.followup && self.in_turn {
+                    break;
+                }
+                if let Some(ev) = job.events.pop_front() {
+                    if matches!(ev.event, AgentEvent::TaskNotification { .. }) {
+                        job.done = true;
+                    }
+                    out.push(ev.event);
+                }
+            }
+        }
+        // 还有待发事件,或尚未结束且可被停止的任务继续保留(例如一直运行的开发服务器)
+        self.jobs.retain(|j| !j.events.is_empty() || (!j.done && !j.on_stop.is_empty()));
+        for e in out {
+            self.send(e);
+        }
+    }
+
+    /// 停止后台任务:丢掉它剩余的时间线,发出已停止通知。
+    fn stop_job(&mut self, task_id: &str) {
+        if let Some(i) = self.jobs.iter().position(|j| j.task_id == task_id) {
+            let job = self.jobs.remove(i);
+            for e in job.on_stop {
+                self.send(e);
             }
         }
     }
@@ -84,6 +153,7 @@ impl Player {
                 self.model = m.clone();
                 self.send(AgentEvent::ModelChanged(m));
             }
+            AgentCommand::StopTask { task_id } => self.stop_job(&task_id),
             _ => {}
         }
     }
@@ -118,12 +188,21 @@ impl Player {
             },
         });
         self.send(AgentEvent::TurnStarted);
+        self.in_turn = true;
         let outcome = self.run_steps(&script.steps);
+        self.in_turn = false;
         match outcome {
             Outcome::Shutdown => {}
             Outcome::Cancelled => self.send(AgentEvent::TurnEnded(StopReason::Cancelled)),
             Outcome::Finished => self.send(AgentEvent::TurnEnded(script.stop.unwrap_or(StopReason::EndTurn))),
         }
+    }
+
+    fn spawn(&mut self, job: &BgJob) {
+        self.jobs.retain(|j| j.task_id != job.task_id);
+        let mut events = job.events.clone();
+        events.sort_by_key(|e| e.at_ms);
+        self.jobs.push(LiveJob { task_id: job.task_id.clone(), start: Instant::now(), events: events.into(), on_stop: job.on_stop.clone(), done: false });
     }
 
     fn run_steps(&mut self, steps: &[Step]) -> Outcome {
@@ -139,6 +218,10 @@ impl Player {
                     self.wait(None, move |p| p.resolved.contains(&id))
                 }
                 Step::Hold => self.wait(None, |_| false),
+                Step::Spawn(job) => {
+                    self.spawn(job);
+                    None
+                }
             };
             if let Some(o) = outcome {
                 return o;
@@ -152,6 +235,7 @@ impl Player {
     fn wait(&mut self, timeout: Option<Duration>, done: impl Fn(&Self) -> bool) -> Option<Outcome> {
         let deadline = timeout.map(|d| Instant::now() + d);
         loop {
+            self.tick_jobs();
             if done(self) {
                 return None;
             }

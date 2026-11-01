@@ -51,8 +51,35 @@ pub fn control_request(request_id: &str, request: Value) -> Value {
     json!({"type": "control_request", "request_id": request_id, "request": request})
 }
 
+/// 初始化握手。
+///
+/// - `perTaskStopAffordance`:声明界面有逐任务的停止按钮。声明后,中断(Esc)只中止当前回合,
+///   不会连带杀掉后台子 Agent 和工作流;不声明则会 fail-closed 全部杀掉;
+/// - `agentProgressSummaries`:让 `task_progress` 带上子 Agent 的一句话进度;
+/// - `forwardSubagentText`:转发前台子 Agent 的文本与思考(带 `parent_tool_use_id`),用于嵌套对话。
 pub fn initialize(request_id: &str) -> Value {
-    control_request(request_id, json!({"subtype": "initialize"}))
+    control_request(
+        request_id,
+        json!({
+            "subtype": "initialize",
+            "perTaskStopAffordance": true,
+            "agentProgressSummaries": true,
+            "forwardSubagentText": true,
+        }),
+    )
+}
+
+/// 停止一个后台任务。
+pub fn stop_task(request_id: &str, task_id: &str) -> Value {
+    control_request(request_id, json!({"subtype": "stop_task", "task_id": task_id}))
+}
+
+/// 把前台运行中的任务转入后台;不带 `tool_use_id` 表示全部。
+pub fn background_tasks(request_id: &str, tool_use_id: Option<&str>) -> Value {
+    match tool_use_id {
+        Some(id) => control_request(request_id, json!({"subtype": "background_tasks", "tool_use_id": id})),
+        None => control_request(request_id, json!({"subtype": "background_tasks"})),
+    }
 }
 
 pub fn interrupt(request_id: &str) -> Value {

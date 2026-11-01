@@ -279,6 +279,12 @@ impl Actor {
                 }
                 return ok;
             }
+            AgentCommand::StopTask { task_id } => {
+                self.request(ReqKind::Other("停止任务"), |id| protocol::stop_task(id, &task_id));
+            }
+            AgentCommand::BackgroundCurrent { tool_use_id } => {
+                self.request(ReqKind::Other("转入后台"), |id| protocol::background_tasks(id, tool_use_id.as_deref()));
+            }
             AgentCommand::RunScenario(_) => {}
             AgentCommand::Shutdown => {
                 self.shutting_down = true;

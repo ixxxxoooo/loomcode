@@ -180,6 +180,75 @@ impl Translator {
             "status" if str_of(v, "status") == "compacting" => {
                 vec![notice(NoticeLevel::Info, "正在压缩上下文…")]
             }
+            // 权限模式每次变化都会带上当前模式(批准计划、set_permission_mode 之后)
+            "status" => match v.get("permissionMode").and_then(Value::as_str).and_then(PermissionMode::from_cli) {
+                Some(m) => vec![AgentEvent::ModeChanged(m)],
+                None => Vec::new(),
+            },
+            "task_started" => vec![AgentEvent::TaskStarted(self.task_from(v))],
+            "task_progress" => {
+                let usage = &v["usage"];
+                vec![AgentEvent::TaskProgress {
+                    task_id: str_of(v, "task_id").into(),
+                    tokens: usage.get("total_tokens").and_then(Value::as_u64),
+                    tool_uses: usage.get("tool_uses").and_then(Value::as_u64).map(|n| n as u32),
+                    last_tool: v.get("last_tool_name").and_then(Value::as_str).map(String::from),
+                    summary: v.get("summary").and_then(Value::as_str).map(String::from),
+                }]
+            }
+            "task_updated" => {
+                let patch = &v["patch"];
+                vec![AgentEvent::TaskUpdated {
+                    task_id: str_of(v, "task_id").into(),
+                    status: patch.get("status").and_then(Value::as_str).map(TaskStatus::from_cli),
+                    description: patch.get("description").and_then(Value::as_str).map(String::from),
+                    output_file: None,
+                }]
+            }
+            "task_notification" => vec![AgentEvent::TaskNotification {
+                task_id: str_of(v, "task_id").into(),
+                status: TaskStatus::from_cli(str_of(v, "status")),
+                summary: str_of(v, "summary").into(),
+                output_file: v.get("output_file").and_then(Value::as_str).map(String::from),
+            }],
+            "background_tasks_changed" => {
+                let list = v.get("tasks").and_then(Value::as_array).map(|a| a.iter().map(|t| self.task_from(t)).collect()).unwrap_or_default();
+                vec![AgentEvent::TasksChanged(list)]
+            }
+            // 钩子:只有失败值得打扰用户(开始与进度太碎)
+            "hook_response" if str_of(v, "outcome") != "success" && !str_of(v, "outcome").is_empty() => {
+                let name = str_of(v, "hook_name");
+                let detail = ["stderr", "output", "stdout"].iter().map(|k| str_of(v, k).trim()).find(|t| !t.is_empty()).unwrap_or_default();
+                let mut text = format!("钩子 {name} 执行失败");
+                if let Some(code) = v.get("exit_code").and_then(Value::as_i64) {
+                    text.push_str(&format!("(退出码 {code})"));
+                }
+                if !detail.is_empty() {
+                    text.push_str(&format!(":{}", truncate(detail, 300)));
+                }
+                vec![notice(NoticeLevel::Warning, &text)]
+            }
+            "informational" => {
+                let level = match str_of(v, "level") {
+                    "error" => NoticeLevel::Error,
+                    "warning" => NoticeLevel::Warning,
+                    _ => NoticeLevel::Info,
+                };
+                let text = str_of(v, "content").trim();
+                if text.is_empty() { Vec::new() } else { vec![notice(level, text)] }
+            }
+            "model_fallback" | "model_refusal_fallback" | "model_refusal_no_fallback" => {
+                let text = str_of(v, "content").trim();
+                let (from, to) = (str_of(v, "original_model"), str_of(v, "fallback_model"));
+                let text = if !text.is_empty() {
+                    text.to_string()
+                } else if !to.is_empty() {
+                    format!("模型 {from} 暂不可用,已回退到 {to}")
+                } else {
+                    format!("模型 {from} 拒绝了这次请求")
+                };
+                vec![notice(NoticeLevel::Warning, &text)]
+            }
             "api_retry" => {
                 let attempt = v.get("attempt").and_then(Value::as_u64).unwrap_or(1);
                 let max = v.get("max_retries").and_then(Value::as_u64).unwrap_or(0);
@@ -192,6 +261,30 @@ impl Translator {
             }
             _ => Vec::new(),
         }
+    }
+
+    /// 把 `task_started` 或快照里的一项解析成后台任务。
+    fn task_from(&self, v: &Value) -> BackgroundTask {
+        let tool_use = v.get("tool_use_id").and_then(Value::as_str).filter(|t| !t.is_empty());
+        let mut kind = TaskKind::from_task_type(str_of(v, "task_type"));
+        // Monitor 在协议里也是 local_bash,靠发起它的工具名区分
+        if tool_use.and_then(|id| self.tools.get(id)).is_some_and(|t| t.name == "Monitor") {
+            kind = TaskKind::Monitor;
+        }
+        let first = |s: &str| s.lines().next().unwrap_or_default().trim().chars().take(120).collect::<String>();
+        let description = [str_of(v, "description"), str_of(v, "prompt"), str_of(v, "subagent_type")]
+            .into_iter()
+            .find(|t| !t.trim().is_empty())
+            .map(first)
+            .unwrap_or_default();
+        let mut task = BackgroundTask::new(str_of(v, "task_id"), kind, &description);
+        task.tool_use_id = tool_use.map(String::from);
+        task.run_id = v.get("run_id").and_then(Value::as_str).map(String::from);
+        task.ambient = v.get("ambient").and_then(Value::as_bool).unwrap_or(false);
+        task.owned_by_subagent = v.get("owned_by_subagent").and_then(Value::as_bool).unwrap_or(false);
+        task.backgrounded = v.get("is_backgrounded").and_then(Value::as_bool).unwrap_or(true);
+        task.output_file = v.get("output_file").and_then(Value::as_str).filter(|f| !f.is_empty()).map(String::from);
+        task
     }
 
     // ---------- 流式 ----------
@@ -332,13 +425,16 @@ impl Translator {
             "Task" | "Agent" => {
                 self.subagents.insert(id.clone());
                 let agent_type = input.get("subagent_type").and_then(Value::as_str).unwrap_or("general-purpose");
-                let card = SubagentCard {
-                    id,
-                    agent_type: agent_type.into(),
-                    description: str_of(&input, "description").into(),
-                    status: SubagentStatus::Running,
-                    children: Vec::new(),
-                };
+                // 回放历史没有时间戳可用,不计时(started_ms 置空,界面不显示用时)
+                let mut card = SubagentCard::new(&id, agent_type, str_of(&input, "description"), SubagentStatus::Running);
+                if self.replay {
+                    card.started_ms = None;
+                    card.last_activity_ms = None;
+                }
+                card.background = input.get("run_in_background").and_then(Value::as_bool).unwrap_or(false);
+                if card.background {
+                    card.status = SubagentStatus::Background;
+                }
                 vec![AgentEvent::Append { parent, item: TimelineItem::Subagent(card) }]
             }
             _ => {
@@ -385,6 +481,10 @@ impl Translator {
 
     /// 回放时把真实用户输入还原成条目;过滤掉元信息与斜杠命令产生的内部文本。
     fn replay_user(&mut self, text: &str, images: Vec<String>, v: &Value) -> Vec<AgentEvent> {
+        // 后台任务完成时 claude 把通知当作「用户消息」注入;它不是用户输入,转成任务通知
+        if text.trim_start().starts_with("<task-notification>") {
+            return self.replay_task_notification(text);
+        }
         let internal = v.get("isMeta").and_then(Value::as_bool).unwrap_or(false)
             || v.get("isSidechain").and_then(Value::as_bool).unwrap_or(false)
             || text.starts_with("<command-")
@@ -402,14 +502,63 @@ impl Translator {
         }]
     }
 
+    /// 回放时解析 `<task-notification>` 注入消息。
+    fn replay_task_notification(&mut self, text: &str) -> Vec<AgentEvent> {
+        let task_id = tag_text(text, "task-id");
+        if task_id.is_empty() {
+            return Vec::new();
+        }
+        vec![AgentEvent::TaskNotification {
+            task_id,
+            status: TaskStatus::from_cli(&tag_text(text, "status")),
+            summary: tag_text(text, "summary"),
+            output_file: Some(tag_text(text, "output-file")).filter(|f| !f.is_empty()),
+        }]
+    }
+
+    /// 子 Agent 的 `tool_result`:后台启动不能当作完成;前台结束带上统计与结果摘要。
+    fn subagent_result(&mut self, id: &str, block: &Value, tur: Option<&Value>, is_error: bool, info: Option<ToolInfo>) -> Vec<AgentEvent> {
+        let (text, _) = result_text(&block["content"]);
+        let launched = tur.is_some_and(|t| t.get("isAsync").and_then(Value::as_bool).unwrap_or(false) || str_of(t, "status") == "async_launched")
+            || text.starts_with("Async agent launched");
+        if launched && !is_error {
+            let mut out = vec![AgentEvent::SubagentStatus { id: id.into(), status: SubagentStatus::Background }];
+            let agent_id = tur.map(|t| str_of(t, "agentId")).filter(|a| !a.is_empty()).map(String::from).or_else(|| {
+                text.split("agentId:").nth(1).and_then(|r| r.split_whitespace().next()).map(String::from)
+            });
+            let output_file = tur.map(|t| str_of(t, "outputFile")).filter(|f| !f.is_empty()).map(String::from);
+            if let Some(task_id) = agent_id {
+                if self.replay {
+                    let input = info.as_ref().map(|i| i.input.clone()).unwrap_or(Value::Null);
+                    let desc = [str_of(&input, "description"), str_of(&input, "prompt")].into_iter().find(|d| !d.is_empty()).unwrap_or("后台子代理");
+                    let mut task = BackgroundTask::new(&task_id, TaskKind::Agent, desc.lines().next().unwrap_or_default()).with_tool_use(id);
+                    task.output_file = output_file;
+                    out.push(AgentEvent::TaskStarted(task));
+                } else {
+                    out.push(AgentEvent::TaskUpdated { task_id, status: None, description: None, output_file });
+                }
+            }
+            return out;
+        }
+        let summary = match tur.and_then(|t| t.get("content")) {
+            Some(c) => result_text(c).0,
+            None => text,
+        };
+        let summary: String = summary.trim().chars().take(400).collect();
+        let tokens = tur.and_then(|t| t.get("totalTokens")).and_then(Value::as_u64).unwrap_or(0);
+        let tool_count = tur.and_then(|t| t.get("totalToolUseCount")).and_then(Value::as_u64).unwrap_or(0) as u32;
+        let duration_ms = tur.and_then(|t| t.get("totalDurationMs")).and_then(Value::as_u64);
+        let status = if is_error { SubagentStatus::Failed } else { SubagentStatus::Completed };
+        vec![AgentEvent::SubagentFinished { id: id.into(), status, summary, tokens, tool_count, duration_ms }]
+    }
+
     fn tool_result(&mut self, block: &Value, tur: Option<&Value>, parent: Option<String>) -> Vec<AgentEvent> {
         let id = str_of(block, "tool_use_id").to_string();
         let is_error = block.get("is_error").and_then(Value::as_bool).unwrap_or(false);
         let info = self.tools.remove(&id);
 
         if self.subagents.contains(&id) {
-            let status = if is_error { SubagentStatus::Failed } else { SubagentStatus::Completed };
-            return vec![AgentEvent::SubagentStatus { id, status }];
+            return self.subagent_result(&id, block, tur, is_error, info);
         }
         let Some(info) = info else {
             return Vec::new();
@@ -427,6 +576,23 @@ impl Translator {
         let kind = ToolKind::from_tool_name(&info.name);
 
         match kind {
+            // 后台 Bash:启动结果只是「已在后台运行」,输出在任务面板里看,不当作终端输出
+            ToolKind::Execute if info.name == "Bash" && !is_error && background_task_id(&info.input, tur, &text).is_some() => {
+                let task_id = background_task_id(&info.input, tur, &text).unwrap_or_default();
+                patch.task_id = Some(task_id.clone());
+                let output_file = background_output_file(&text);
+                let mut out = Vec::new();
+                if self.replay {
+                    // 回放的历史没有 system/task_started,这里补一个任务;实时模式由 system 消息创建
+                    let mut task = BackgroundTask::new(&task_id, TaskKind::Shell, &build_tool(&id, &info.name, &info.input, &self.cwd).title).with_tool_use(&id);
+                    task.output_file = output_file;
+                    out.push(AgentEvent::TaskStarted(task));
+                } else {
+                    out.push(AgentEvent::TaskUpdated { task_id, status: None, description: None, output_file });
+                }
+                out.push(AgentEvent::ToolUpdate { parent: parent.or(info.parent), id, patch });
+                return out;
+            }
             ToolKind::Execute if info.name == "Bash" => {
                 let command = str_of(&info.input, "command").to_string();
                 let output = match tur.filter(|t| t.get("stdout").is_some()) {
@@ -630,6 +796,33 @@ fn str_of<'a>(v: &'a Value, key: &str) -> &'a str {
     v.get(key).and_then(Value::as_str).unwrap_or_default()
 }
 
+/// 取 `<tag>…</tag>` 之间的文本。
+fn tag_text(text: &str, tag: &str) -> String {
+    let (open, close) = (format!("<{tag}>"), format!("</{tag}>"));
+    let Some(start) = text.find(&open).map(|i| i + open.len()) else { return String::new() };
+    let end = text[start..].find(&close).map(|i| start + i).unwrap_or(text.len());
+    text[start..end].trim().to_string()
+}
+
+/// 后台 Bash 的任务 id:优先 `toolUseResult.backgroundTaskId`,其次解析「running in background with ID: xxx」。
+fn background_task_id(input: &Value, tur: Option<&Value>, text: &str) -> Option<String> {
+    if let Some(id) = tur.and_then(|t| t.get("backgroundTaskId")).and_then(Value::as_str).filter(|s| !s.is_empty()) {
+        return Some(id.into());
+    }
+    if input.get("run_in_background").and_then(Value::as_bool).unwrap_or(false) || text.contains("running in background with ID:") {
+        let id = text.split("with ID:").nth(1)?.trim().split(|c: char| c.is_whitespace() || c == '.').next()?;
+        return Some(id.trim_end_matches('.').to_string()).filter(|s| !s.is_empty());
+    }
+    None
+}
+
+/// 解析「Output is being written to: <path>.」里的输出文件路径。
+fn background_output_file(text: &str) -> Option<String> {
+    let rest = text.split("written to:").nth(1)?.trim();
+    let end = rest.find(".output").map(|i| i + ".output".len())?;
+    Some(rest[..end].trim().to_string())
+}
+
 fn notice(level: NoticeLevel, text: &str) -> AgentEvent {
     AgentEvent::Notice { level, text: text.into() }
 }
@@ -760,8 +953,12 @@ pub fn build_tool(id: &str, name: &str, input: &Value, cwd: &str) -> ToolCall {
             let desc = str_of(input, "description");
             if desc.is_empty() { first_line(str_of(input, "command")) } else { desc.into() }
         }
-        "BashOutput" => "读取后台输出".into(),
-        "KillShell" | "KillBash" => "结束后台任务".into(),
+        "BashOutput" | "TaskOutput" => "读取后台输出".into(),
+        "KillShell" | "KillBash" | "TaskStop" => "结束后台任务".into(),
+        "Monitor" => {
+            let desc = str_of(input, "description");
+            format!("监听 {}", if desc.is_empty() { first_line(str_of(input, "command")) } else { desc.into() })
+        }
         "Glob" => format!("查找 {}", str_of(input, "pattern")),
         "Grep" => format!("搜索 {}", str_of(input, "pattern")),
         "LS" => format!("列出 {shown}"),
@@ -779,6 +976,10 @@ pub fn build_tool(id: &str, name: &str, input: &Value, cwd: &str) -> ToolCall {
     };
 
     let mut tool = ToolCall::new(id, name, title.trim()).with_input(input.clone());
+    // 读取输出 / 结束任务的工具关联到被操作的任务
+    if matches!(name, "BashOutput" | "KillShell" | "KillBash" | "TaskOutput" | "TaskStop") {
+        tool.task_id = ["task_id", "bash_id", "shell_id"].iter().find_map(|k| input.get(*k).and_then(Value::as_str)).map(String::from);
+    }
     if let Some(p) = path {
         tool.locations.push(p.into());
     }
@@ -982,5 +1183,183 @@ mod tests {
         let t = build_tool("1", "mcp__github__get_pr", &json!({}), "/w");
         assert_eq!(t.title, "github · get_pr");
         assert_eq!(t.kind, ToolKind::Mcp);
+    }
+
+    fn run(t: &mut Translator, lines: &[Value]) -> SessionState {
+        let mut events = Vec::new();
+        for l in lines {
+            events.extend(t.handle(l));
+        }
+        reduce(events)
+    }
+
+    #[test]
+    fn 后台子代理启动后不会被误标为已完成() {
+        let mut t = Translator::new("/w");
+        let s = run(
+            &mut t,
+            &[
+                json!({"type":"assistant","message":{"id":"m1","content":[{"type":"tool_use","id":"ag1","name":"Agent","input":{"subagent_type":"Explore","description":"盘点设置页","run_in_background":true}}]}}),
+                json!({"type":"system","subtype":"background_tasks_changed","tasks":[{"task_id":"a9d5","task_type":"local_agent","description":"盘点设置页","tool_use_id":"ag1","is_backgrounded":true}]}),
+                json!({"type":"system","subtype":"task_started","task_id":"a9d5","tool_use_id":"ag1","subagent_type":"Explore","is_backgrounded":true,"spawn_depth":1,"task_type":"local_agent","prompt":"盘点设置页"}),
+                json!({"type":"user","message":{"content":[{"type":"tool_result","tool_use_id":"ag1","content":"Async agent launched successfully.\nagentId: a9d5 (internal ID)"}]},"tool_use_result":{"isAsync":true,"status":"async_launched","agentId":"a9d5","outputFile":"/tmp/x/a9d5.output"}}),
+                json!({"type":"system","subtype":"task_progress","task_id":"a9d5","usage":{"total_tokens":52470,"tool_uses":4,"duration_ms":4314},"last_tool_name":"Grep","summary":"正在搜索设置项"}),
+            ],
+        );
+        let TimelineItem::Subagent(card) = &s.items[0] else { panic!("应是子 Agent 卡") };
+        assert_eq!(card.status, SubagentStatus::Background, "启动结果不是完成");
+        assert!(card.background);
+        assert_eq!((card.tokens, card.tool_count, card.last_tool.as_str()), (52470, 4, "Grep"));
+        assert_eq!(card.summary, "正在搜索设置项");
+        assert_eq!(s.running_task_count(), 1);
+        assert_eq!(s.task("a9d5").and_then(|t| t.output_file.clone()).as_deref(), Some("/tmp/x/a9d5.output"));
+    }
+
+    #[test]
+    fn 后台任务通知收尾并追加通知行() {
+        let mut t = Translator::new("/w");
+        let s = run(
+            &mut t,
+            &[
+                json!({"type":"assistant","message":{"id":"m1","content":[{"type":"tool_use","id":"ag1","name":"Agent","input":{"subagent_type":"Explore","description":"盘点","run_in_background":true}}]}}),
+                json!({"type":"system","subtype":"task_started","task_id":"a1","tool_use_id":"ag1","is_backgrounded":true,"task_type":"local_agent"}),
+                json!({"type":"user","message":{"content":[{"type":"tool_result","tool_use_id":"ag1","content":"Async agent launched"}]},"tool_use_result":{"isAsync":true,"agentId":"a1"}}),
+                json!({"type":"system","subtype":"task_updated","task_id":"a1","patch":{"status":"completed","end_time":1}}),
+                json!({"type":"system","subtype":"task_notification","task_id":"a1","tool_use_id":"ag1","status":"completed","output_file":"/tmp/a1.output","summary":"盘点完成,共 12 页"}),
+                json!({"type":"system","subtype":"background_tasks_changed","tasks":[]}),
+            ],
+        );
+        let TimelineItem::Subagent(card) = &s.items[0] else { panic!() };
+        assert_eq!(card.status, SubagentStatus::Completed);
+        assert_eq!(s.running_task_count(), 0);
+        assert!(matches!(&s.items[1], TimelineItem::TaskNote { status: TaskStatus::Completed, text, .. } if text == "盘点完成,共 12 页"));
+    }
+
+    #[test]
+    fn 后台_bash_关联任务且不显示终端输出() {
+        let mut t = Translator::new("/w");
+        let s = run(
+            &mut t,
+            &[
+                json!({"type":"assistant","message":{"id":"m1","content":[{"type":"tool_use","id":"b1","name":"Bash","input":{"command":"cargo build","description":"编译 release","run_in_background":true}}]}}),
+                json!({"type":"system","subtype":"task_started","task_id":"bhmx","tool_use_id":"b1","description":"编译 release","is_backgrounded":true,"task_type":"local_bash"}),
+                json!({"type":"user","message":{"content":[{"type":"tool_result","tool_use_id":"b1","content":"Command running in background with ID: bhmx. Output is being written to: /private/tmp/claude/tasks/bhmx.output. You will be notified"}]},"tool_use_result":{"stdout":"","stderr":"","backgroundTaskId":"bhmx"}}),
+            ],
+        );
+        let TimelineItem::Tool(tool) = &s.items[0] else { panic!() };
+        assert_eq!(tool.task_id.as_deref(), Some("bhmx"));
+        assert_eq!(tool.status, ToolStatus::Completed);
+        assert!(tool.content.is_empty(), "启动结果不当作终端输出");
+        let task = s.task("bhmx").unwrap();
+        assert_eq!(task.kind, TaskKind::Shell);
+        assert_eq!(task.output_file.as_deref(), Some("/private/tmp/claude/tasks/bhmx.output"));
+        assert!(task.counts_as_running());
+    }
+
+    #[test]
+    fn 子代理私有任务与环境任务不计入后台() {
+        let mut t = Translator::new("/w");
+        let s = run(
+            &mut t,
+            &[
+                json!({"type":"system","subtype":"task_started","task_id":"f1","owned_by_subagent":true,"is_backgrounded":false,"task_type":"local_bash"}),
+                json!({"type":"system","subtype":"task_started","task_id":"amb","ambient":true,"is_backgrounded":true,"task_type":"local_bash"}),
+                json!({"type":"system","subtype":"task_started","task_id":"real","is_backgrounded":true,"task_type":"local_bash","description":"dev server"}),
+            ],
+        );
+        assert_eq!(s.running_task_count(), 1);
+        assert_eq!(s.running_tasks().next().unwrap().task_id, "real");
+    }
+
+    #[test]
+    fn 前台子代理结束带上统计与摘要() {
+        let mut t = Translator::new("/w");
+        let s = run(
+            &mut t,
+            &[
+                json!({"type":"assistant","message":{"id":"m1","content":[{"type":"tool_use","id":"ag","name":"Agent","input":{"subagent_type":"Plan","description":"设计方案"}}]}}),
+                json!({"type":"user","message":{"content":[{"type":"tool_result","tool_use_id":"ag","content":[{"type":"text","text":"方案如下"}]}]},"tool_use_result":{"status":"completed","totalDurationMs":6039,"totalTokens":18149,"totalToolUseCount":7,"content":[{"type":"text","text":"方案如下:先拆模块"}]}}),
+            ],
+        );
+        let TimelineItem::Subagent(card) = &s.items[0] else { panic!() };
+        assert_eq!(card.status, SubagentStatus::Completed);
+        assert_eq!((card.tokens, card.tool_count), (18149, 7));
+        assert_eq!(card.summary, "方案如下:先拆模块");
+        assert!(card.elapsed_ms(0).is_some_and(|e| e >= 6039));
+    }
+
+    #[test]
+    fn 回放里的任务通知不再显示成用户消息() {
+        let notice = "<task-notification>\n<task-id>bhmx</task-id>\n<tool-use-id>b1</tool-use-id>\n<output-file>/tmp/bhmx.output</output-file>\n<status>completed</status>\n<summary>Background command \"编译\" completed (exit code 0)</summary>\n</task-notification>";
+        let mut t = Translator::replaying("/w");
+        let s = run(
+            &mut t,
+            &[
+                json!({"type":"user","message":{"role":"user","content":"帮我编译"}}),
+                json!({"type":"assistant","message":{"id":"m1","content":[{"type":"tool_use","id":"b1","name":"Bash","input":{"command":"cargo build","description":"编译","run_in_background":true}}]}}),
+                json!({"type":"user","message":{"content":[{"type":"tool_result","tool_use_id":"b1","content":"Command running in background with ID: bhmx. Output is being written to: /tmp/bhmx.output. x"}]},"toolUseResult":{"stdout":"","stderr":"","backgroundTaskId":"bhmx"}}),
+                json!({"type":"user","message":{"role":"user","content":notice},"origin":{"kind":"task-notification"}}),
+            ],
+        );
+        let users = s.items.iter().filter(|i| matches!(i, TimelineItem::User { .. })).count();
+        assert_eq!(users, 1, "通知不是用户输入");
+        assert!(s.items.iter().any(|i| matches!(i, TimelineItem::TaskNote { status: TaskStatus::Completed, .. })));
+        assert_eq!(s.running_task_count(), 0);
+    }
+
+    #[test]
+    fn 取消回合只中断前台不影响后台任务() {
+        let mut t = Translator::new("/w");
+        t.interrupted = true;
+        let mut events = Vec::new();
+        for l in [
+            json!({"type":"assistant","message":{"id":"m1","content":[{"type":"tool_use","id":"fg","name":"Agent","input":{"description":"前台"}}]}}),
+            json!({"type":"assistant","message":{"id":"m2","content":[{"type":"tool_use","id":"bg","name":"Agent","input":{"description":"后台","run_in_background":true}}]}}),
+            json!({"type":"system","subtype":"task_started","task_id":"t-bg","tool_use_id":"bg","is_backgrounded":true,"task_type":"local_agent"}),
+            json!({"type":"result","subtype":"error_during_execution","is_error":true,"result":""}),
+        ] {
+            events.extend(t.handle(&l));
+        }
+        let s = reduce(events);
+        let status = |id: &str| match s.items.iter().find(|i| i.id() == id) {
+            Some(TimelineItem::Subagent(c)) => c.status,
+            _ => panic!(),
+        };
+        assert_eq!(status("fg"), SubagentStatus::Stopped);
+        assert_eq!(status("bg"), SubagentStatus::Background);
+    }
+
+    #[test]
+    fn 钩子失败与模型回退变成提示() {
+        let mut t = Translator::new("/w");
+        let ev = t.handle(&json!({"type":"system","subtype":"hook_response","hook_name":"Stop","outcome":"error","exit_code":2,"stderr":"lint 未通过"}));
+        assert!(matches!(&ev[0], AgentEvent::Notice { level: NoticeLevel::Warning, text } if text.contains("Stop") && text.contains("lint 未通过") && text.contains("退出码 2")));
+        assert!(t.handle(&json!({"type":"system","subtype":"hook_response","hook_name":"Stop","outcome":"success"})).is_empty());
+        let ev = t.handle(&json!({"type":"system","subtype":"model_fallback","original_model":"opus","fallback_model":"sonnet","content":""}));
+        assert!(matches!(&ev[0], AgentEvent::Notice { text, .. } if text.contains("sonnet")));
+        let ev = t.handle(&json!({"type":"system","subtype":"status","status":null,"permissionMode":"plan"}));
+        assert!(matches!(ev[0], AgentEvent::ModeChanged(PermissionMode::Plan)));
+    }
+
+    #[test]
+    fn 监听工具按发起工具名识别() {
+        let mut t = Translator::new("/w");
+        let s = run(
+            &mut t,
+            &[
+                json!({"type":"assistant","message":{"id":"m","content":[{"type":"tool_use","id":"mon","name":"Monitor","input":{"command":"tail -f log","description":"监听日志"}}]}}),
+                json!({"type":"system","subtype":"task_started","task_id":"m1","tool_use_id":"mon","is_backgrounded":true,"task_type":"local_bash","description":"监听日志"}),
+            ],
+        );
+        assert_eq!(s.task("m1").unwrap().kind, TaskKind::Monitor);
+        assert!(matches!(&s.items[0], TimelineItem::Tool(t) if t.title == "监听 监听日志" && t.task_id.as_deref() == Some("m1")));
+    }
+
+    #[test]
+    fn 初始化声明逐任务停止() {
+        let v = crate::protocol::initialize("req_init");
+        assert_eq!(v["request"]["perTaskStopAffordance"], true);
+        let v = crate::protocol::stop_task("r", "t1");
+        assert_eq!((v["request"]["subtype"].as_str(), v["request"]["task_id"].as_str()), (Some("stop_task"), Some("t1")));
     }
 }
