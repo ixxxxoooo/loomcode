@@ -12,7 +12,9 @@ use gpui_kit::component::button::{Button, ButtonVariants as _};
 use gpui_kit::assets::IconName;
 use gpui_kit::prelude::FluentBuilder as _;
 use gpui_kit::*;
+use std::cell::{Cell, RefCell};
 use std::ops::Range;
+use std::rc::Rc;
 
 /// 视口外额外渲染的高度,滚动更顺滑。
 const OVERDRAW: Pixels = px(400.);
@@ -22,6 +24,10 @@ const BOTTOM_SLOP: f32 = 24.;
 /// 滚动状态:包一层 `ListState`,提供与原 `MessageScrollerState` 同名的操作。
 pub struct ChatScroll {
     list: ListState,
+    /// 会话流容器(不含回弹位移)的顶边 Y,窗口坐标;绘制时由容器内的占位画布写入。
+    outer_top: Rc<Cell<f32>>,
+    /// 回弹期间冻结用的上一次稳定的吸附结果。
+    pub(crate) sticky_hold: RefCell<Option<(crate::sticky_user::Target, f32)>>,
 }
 
 impl ChatScroll {
@@ -29,7 +35,7 @@ impl ChatScroll {
     pub fn new(item_count: usize, _cx: &mut Context<Self>) -> Self {
         let list = ListState::new(item_count, ListAlignment::Top, OVERDRAW);
         list.set_follow_mode(FollowMode::Tail);
-        Self { list }
+        Self { list, outer_top: Rc::new(Cell::new(f32::NAN)), sticky_hold: RefCell::new(None) }
     }
 
     /// 是否离开了底部(用滚动位置判断,不依赖行高是否全部测量)。
@@ -40,6 +46,13 @@ impl ChatScroll {
         }
         let top = -f32::from(self.list.scroll_px_offset_for_scrollbar().y);
         max - top > BOTTOM_SLOP
+    }
+
+    /// 列表此刻是否被滚动回弹位移着(列表顶边与容器顶边不一致)。位移期间行位置会跟着晃,
+    /// 吸附层据此冻结在上一次稳定的结果上,避免回弹时闪没、回弹结束又出现。
+    pub fn displaced(&self) -> bool {
+        let outer = self.outer_top.get();
+        !outer.is_nan() && (f32::from(self.list.viewport_bounds().top()) - outer).abs() > 0.5
     }
 
     /// 视口顶部的行下标与该行已滚出的像素数。
@@ -145,7 +158,10 @@ pub fn chat_scroller(
         div().w_full().min_w_0().px_3().child(render_row(ix, w, c)).into_any_element()
     });
     let weak = state.downgrade();
+    let outer_top = state.read(cx).outer_top.clone();
     div().id(id).relative().size_full().min_h_0().overflow_hidden()
+        // 占位画布:记录容器自己的顶边(不随回弹位移)
+        .child(canvas(move |b, _, _| outer_top.set(f32::from(b.top())), |_, _, _, _| {}).absolute().size_full())
         .child(
             div().size_full().min_h_0().min_w_0()
                 .child(gpui_kit::base::ScrollBounce::new(SharedString::from("timeline-bounce"), &list, list_el).on_scroll(move |_, cx| {

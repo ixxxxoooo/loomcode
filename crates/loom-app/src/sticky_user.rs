@@ -20,7 +20,7 @@ const INSET: f32 = 8.;
 const FADE_H: f32 = 28.;
 
 /// 吸附目标:行下标、消息 id、正文、其后下一条用户消息的行下标。
-#[derive(Debug, PartialEq)]
+#[derive(Debug, PartialEq, Clone)]
 pub struct Target {
     pub row: usize,
     pub id: String,
@@ -99,12 +99,26 @@ pub fn render(session: &Entity<SessionModel>, scroller: &Entity<ChatScroll>, cx:
                 .into_any_element(),
         );
     }
-    let top = sc.top().0;
-    let target = {
-        let m = session.read(cx);
-        resolve(&m.rows, &m.state.items, top, |r| sc.row_scrolled_past(r))
-    }?;
-    let push = push_offset(target.next.and_then(|n| sc.row_top(n)), card_height(&target.text));
+    // 回弹位移期间冻结在上一次稳定的结果上;没有历史结果就不显示
+    let held = if sc.displaced() { sc.sticky_hold.borrow().clone() } else { None };
+    let (target, push) = match held {
+        Some(h) => h,
+        None if sc.displaced() => return None,
+        None => {
+            let top = sc.top().0;
+            let found = {
+                let m = session.read(cx);
+                resolve(&m.rows, &m.state.items, top, |r| sc.row_scrolled_past(r))
+            };
+            let Some(target) = found else {
+                *sc.sticky_hold.borrow_mut() = None;
+                return None;
+            };
+            let push = push_offset(target.next.and_then(|n| sc.row_top(n)), card_height(&target.text));
+            *sc.sticky_hold.borrow_mut() = Some((target.clone(), push));
+            (target, push)
+        }
+    };
     let Target { id, text, .. } = target;
     let edit = {
         let (s, id, text) = (session.clone(), id.clone(), text.clone());
