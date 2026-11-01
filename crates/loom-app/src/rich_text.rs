@@ -148,7 +148,7 @@ fn render_source(kind: &str, code: &str, cx: &App) -> AnyElement {
     let t = cx.theme();
     card(cx).p_3().gap_1p5()
         .child(h_flex().gap_2().items_center().child(icon(IconName::Code, 14., t.muted_foreground)).child(div().text_size(px(12.)).text_color(t.muted_foreground).child(format!("{kind} 源码"))))
-        .child(div().w_full().p_2().rounded(px(6.)).bg(t.muted).font_family(MONO).text_size(px(12.)).child(code.trim_end().to_string()))
+        .child(div().w_full().p_2().rounded(px(6.)).bg(t.muted).font_family(MONO).text_size(px(12.)).child({ let code = code.trim_end().to_string(); let lang = if kind == "chart" { "json" } else { kind }; StyledText::new(code.clone()).with_highlights(crate::code_hl::styles(&code, lang, cx)) }))
         .into_any_element()
 }
 

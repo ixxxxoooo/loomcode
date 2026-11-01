@@ -74,7 +74,7 @@ pub fn render(session: &Entity<SessionModel>, cx: &App) -> Option<AnyElement> {
 fn permission(session: &Entity<SessionModel>, req: &PermissionRequest, cx: &App) -> AnyElement {
     let t = cx.theme();
     let cmd = req.tool.input.get("command").and_then(|v| v.as_str()).map(str::to_string).filter(|c| *c != req.tool.title);
-    let preview: Vec<AnyElement> = req.tool.content.iter().map(|c| render_content(c, None, cx)).collect();
+    let preview: Vec<AnyElement> = req.tool.content.iter().map(|c| render_content(c, None, "text", cx)).collect();
     v_flex().w_full().p_3().gap_2().rounded(px(12.)).border_1().border_color(t.border).bg(t.background).shadow_sm()
         .child(
             h_flex().gap_2().items_center()

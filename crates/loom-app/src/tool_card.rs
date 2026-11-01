@@ -174,9 +174,21 @@ pub fn render_tool(session: &Entity<SessionModel>, tool: &ToolCall, cx: &App) ->
         .w_full()
         .child(header)
         .when(expanded && has_body, |d| {
-            d.child(v_flex().w_full().pl(px(30.)).pr_2().py_1().gap_1p5().children(tool.content.iter().map(|c| render_content(c, Some(&tool.id), cx))))
+            d.child(v_flex().w_full().pl(px(30.)).pr_2().py_1().gap_1p5().children(tool.content.iter().map(|c| render_content(c, Some(&tool.id), &content_lang(tool), cx))))
         })
         .into_any_element()
+}
+
+/// 工具结果文本的语言:读 / 写单个文件时按扩展名,其他工具(搜索、列表等)不着色。
+///
+/// 参数:`tool` 工具调用。返回:语言名,`text` 表示不着色。
+fn content_lang(tool: &ToolCall) -> String {
+    if !matches!(tool.kind, ToolKind::Read | ToolKind::Write) {
+        return "text".into();
+    }
+    let p = crate::tool_present::present(tool);
+    let path = tool.locations.first().cloned().or_else(|| p.is_path.then(|| p.subject.clone()));
+    path.map_or("text".into(), |p| crate::file_tree::language_for(std::path::Path::new(&p)).to_string())
 }
 
 /// 限制输出行数,避免一次渲染过长文本。
@@ -189,14 +201,14 @@ fn clip_lines(text: &str, max: usize) -> (String, usize) {
 }
 
 /// 渲染一个内容块。
-/// 参数:`run_id` 所属工具调用的 id;终端块用它显示「在终端面板查看」。
-pub fn render_content(content: &ToolContent, run_id: Option<&str>, cx: &App) -> AnyElement {
+/// 参数:`run_id` 所属工具调用的 id;终端块用它显示「在终端面板查看」;`lang` 文本内容的语言(`text` 不着色)。
+pub fn render_content(content: &ToolContent, run_id: Option<&str>, lang: &str, cx: &App) -> AnyElement {
     let t = cx.theme();
     match content {
         ToolContent::Text(text) => {
             let (shown, more) = clip_lines(text, 60);
             mono_box(cx)
-                .child(StyledText::new(shown))
+                .child(StyledText::new(shown.clone()).with_highlights(crate::code_hl::styles(&shown, lang, cx)))
                 .when(more > 0, |d| d.child(div().mt_1().text_color(t.muted_foreground).child(format!("… 还有 {more} 行"))))
                 .into_any_element()
         }
