@@ -1,19 +1,21 @@
 //! 模型服务商与模型映射:让 Claude Code 通过 Anthropic 协议兼容的服务(DeepSeek、智谱、Kimi…)工作。
 //!
 //! 配置存 `~/.loomcode/providers.json`;API Key 单独存 `~/.loomcode/provider-keys.json`(权限 0600),
-//! 界面不回显。启用映射后,新会话启动 claude 时注入 `ANTHROPIC_BASE_URL`、令牌与各模型槽位的环境变量,
-//! 不改动 `~/.claude` 里的任何文件;关闭映射即回到 Claude 官方登录。
+//! 界面不回显。当前服务商不是 Claude 官方时,新会话启动 claude 时注入 `ANTHROPIC_BASE_URL`、令牌与各模型槽位的环境变量,
+//! 不改动 `~/.claude` 里的任何文件;切回 Claude 官方即不注入。
 //!
 //! @author ixxxxoooo
 
 mod net;
 mod store;
+mod switch;
 
 #[cfg(test)]
 mod tests;
 
 pub use net::{fetch_models, test_connection};
 pub use store::{load_keys, save_keys};
+pub use switch::PickerGroup;
 
 use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
@@ -121,7 +123,7 @@ impl ProviderStore {
     pub fn mapping_status(&self, keys: &HashMap<String, String>) -> Result<(), String> {
         let m = &self.mapping;
         if !m.enabled {
-            return Err("未启用,使用 Claude 官方登录".into());
+            return Err("使用 Claude 官方登录".into());
         }
         let p = self.get(&m.provider).ok_or("没有选择服务商")?;
         if p.base_url.trim().is_empty() {

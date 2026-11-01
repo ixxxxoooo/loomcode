@@ -330,6 +330,13 @@ impl Composer {
         cx.notify();
     }
 
+    /// 选择另一个服务商的模型:关闭弹层,交给工作台切换服务商。
+    pub(crate) fn choose_provider_model(&mut self, provider: Option<String>, model: String, cx: &mut Context<Self>) {
+        self.open = None;
+        cx.notify();
+        cx.defer(move |cx| crate::composer_models::switch(provider, model, cx));
+    }
+
     /// 点击弹层外部:关闭弹层并记下时间。
     fn dismiss_outside(&mut self, cx: &mut Context<Self>) {
         self.open = None;
@@ -381,11 +388,8 @@ impl Render for Composer {
         let t = cx.theme().clone();
         let (phase, mode, model_id, model_name, effort, queued, usage) = {
             let m = self.session.read(cx);
-            // 启用了模型映射:显示映射后的真实模型名(而不是 claude 报的别名 / 自定义说明)
-            let name = match crate::composer_models::mapped(cx) {
-                Some(map) => map.resolve_model(&m.state.model),
-                None => m.state.models.iter().find(|x| x.id == m.state.model).map(|x| x.name.clone()).unwrap_or_else(|| m.state.model.clone()),
-            };
+            // 用第三方服务时显示「服务商 · 真实模型名」(而不是 claude 报的别名 / 自定义说明)
+            let name = crate::composer_models::chip_label(&m.state, cx);
             (m.state.phase, m.state.mode, m.state.model.clone(), name, m.state.effort, m.queued.len(), m.state.usage.clone())
         };
         let running = phase == Phase::Running;
@@ -403,13 +407,9 @@ impl Render for Composer {
 
         let popup = self.open.map(|kind| match kind {
             Pick::Model => {
-                let (mut models, mut current) = { let st = &self.session.read(cx).state; (st.models.clone(), st.model.clone()) };
-                // 启用了模型映射:选择器只列映射到的模型(去重),不再列 claude 报的别名与「Custom Opus model」之类的说明
-                if let Some(map) = crate::composer_models::mapped(cx) {
-                    models = map.mapped_models().unwrap_or_default().into_iter().map(|(n, d)| loom_core::ModelInfo::new(&n, &n, &d)).collect();
-                    current = map.resolve_model(&current);
-                }
-                crate::composer_pop::model_popup(&models, &current, effort, this.clone(), cx)
+                // 按服务商分组(Claude 官方在前),选别家的模型即切换服务商
+                let picker = crate::composer_models::picker(&self.session.read(cx).state, cx);
+                crate::composer_pop::model_popup(&picker, running, effort, this.clone(), cx)
             }
             Pick::Context => crate::context_panel::context_popup(&usage, this.clone(), cx),
             Pick::Mode => {

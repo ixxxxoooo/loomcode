@@ -240,6 +240,12 @@ impl SessionModel {
         cx.notify();
     }
 
+    /// 在时间线追加一条本地提示(不经过后端)。
+    pub fn local_notice(&mut self, level: NoticeLevel, text: String, cx: &mut Context<Self>) {
+        self.on_events(vec![AgentEvent::Notice { level, text }], cx);
+        cx.notify();
+    }
+
     pub fn set_effort(&mut self, effort: Effort, cx: &mut Context<Self>) {
         self.state.effort = effort;
         self.handle.send(AgentCommand::SetEffort(effort));

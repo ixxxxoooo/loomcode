@@ -49,6 +49,7 @@ fn remember(config: &mut BackendConfig, cmd: &AgentCommand) {
         AgentCommand::SetModel(m) => config.model = Some(m.clone()),
         AgentCommand::SetMode(m) => config.mode = Some(*m),
         AgentCommand::SetEffort(e) => config.effort = Some(*e),
+        AgentCommand::SetEnv(env) => config.extra_env = env.clone(),
         _ => {}
     }
 }
@@ -82,6 +83,14 @@ fn run(inner: ClaudeBackend, mut config: BackendConfig, cmd_rx: async_channel::R
     let Ok(mut first) = cmd_rx.recv_blocking() else { return };
     let mut started_once = false;
     loop {
+        // 换环境变量只记下,不为它启动进程
+        while matches!(first, AgentCommand::SetEnv(_)) {
+            remember(&mut config, &first);
+            match cmd_rx.recv_blocking() {
+                Ok(cmd) => first = cmd,
+                Err(_) => return,
+            }
+        }
         if matches!(first, AgentCommand::Shutdown) {
             return;
         }
@@ -136,6 +145,8 @@ fn run(inner: ClaudeBackend, mut config: BackendConfig, cmd_rx: async_channel::R
             };
             remember(&mut config, &cmd);
             if alive.load(Ordering::SeqCst) {
+                // 环境变量只能在启动时注入:结束当前进程,下一条提示用新环境恢复会话
+                let cmd = if matches!(cmd, AgentCommand::SetEnv(_)) { AgentCommand::Shutdown } else { cmd };
                 real.send(cmd);
                 continue;
             }
@@ -186,6 +197,8 @@ mod tests {
         assert_eq!(cfg.model.as_deref(), Some("opus"));
         assert_eq!(cfg.mode, Some(PermissionMode::Plan));
         assert_eq!(cfg.effort, Some(Effort::High));
+        remember(&mut cfg, &AgentCommand::SetEnv(vec![("ANTHROPIC_MODEL".into(), "deepseek-chat".into())]));
+        assert_eq!(cfg.extra_env, vec![("ANTHROPIC_MODEL".to_string(), "deepseek-chat".to_string())]);
     }
 
     #[test]

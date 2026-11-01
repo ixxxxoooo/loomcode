@@ -32,7 +32,7 @@ fn 映射未生效的原因() {
     s.mapping.default.clear();
     assert!(s.mapping_status(&keys).unwrap_err().contains("默认"));
     s.mapping.enabled = false;
-    assert!(s.mapping_status(&keys).unwrap_err().contains("未启用"));
+    assert!(s.mapping_status(&keys).unwrap_err().contains("官方"));
 }
 
 #[test]

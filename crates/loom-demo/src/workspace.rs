@@ -355,11 +355,15 @@ pub fn seed_claude_home(root: &Path) -> io::Result<PathBuf> {
     let sessions = home.join(".claude/projects/-demo-router");
     fs::create_dir_all(&sessions)?;
     fs::write(sessions.join("demo-usage.jsonl"), demo_usage_jsonl())?;
-    // 演示用的模型服务商(无真实密钥,映射处于「缺密钥」状态)
+    // 演示用的模型服务商:DeepSeek 缺密钥(选择器里显示「去设置」),智谱 GLM 带占位密钥(可直接切换);当前用 Claude 官方
     let providers = serde_json::json!({
-        "providers": [{ "id": "deepseek", "name": "DeepSeek", "base_url": "https://api.deepseek.com/anthropic", "auth": "bearer", "models": ["deepseek-chat", "deepseek-reasoner"] }],
+        "providers": [
+            { "id": "deepseek", "name": "DeepSeek", "base_url": "https://api.deepseek.com/anthropic", "auth": "bearer", "models": ["deepseek-chat", "deepseek-reasoner"] },
+            { "id": "glm", "name": "智谱 GLM", "base_url": "https://open.bigmodel.cn/api/anthropic", "auth": "bearer", "models": ["glm-4.6", "glm-4.5-air"] }
+        ],
         "mapping": { "enabled": false, "provider": "deepseek", "default": "deepseek-chat", "haiku": "deepseek-chat" }
     });
     fs::write(root.join("providers.json"), serde_json::to_string_pretty(&providers).map_err(io::Error::other)?)?;
+    fs::write(root.join("provider-keys.json"), r#"{ "glm": "demo-placeholder" }"#)?;
     Ok(home)
 }

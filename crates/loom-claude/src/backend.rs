@@ -339,7 +339,7 @@ impl Actor {
                 self.request(ReqKind::Usage, protocol::get_usage);
                 return self.emit(ev);
             }
-            AgentCommand::RunScenario(_) => {}
+            AgentCommand::RunScenario(_) | AgentCommand::SetEnv(_) => {}
             AgentCommand::Shutdown => {
                 self.shutting_down = true;
                 loom_diag::info!("claude pid={} 由界面关闭,存活 {} 秒", self.pid, self.started.elapsed().as_secs());

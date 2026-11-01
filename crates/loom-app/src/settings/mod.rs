@@ -46,6 +46,7 @@ mod permissions_page;
 mod privacy_page;
 mod prompts_page;
 mod provider_actions;
+mod provider_switch;
 mod providers_page;
 mod scm_page;
 mod terminal_page;

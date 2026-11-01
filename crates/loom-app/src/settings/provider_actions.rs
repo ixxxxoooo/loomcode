@@ -11,12 +11,12 @@ use std::path::PathBuf;
 
 impl Workbench {
     /// `providers.json` 路径(与 settings.json 同目录;演示模式在沙盒里)。
-    fn providers_path(&self) -> PathBuf {
+    pub(super) fn providers_path(&self) -> PathBuf {
         self.settings_path.with_file_name("providers.json")
     }
 
     /// 密钥文件路径。
-    fn provider_keys_path(&self) -> PathBuf {
+    pub(super) fn provider_keys_path(&self) -> PathBuf {
         self.settings_path.with_file_name("provider-keys.json")
     }
 
@@ -69,7 +69,7 @@ impl Workbench {
     }
 
     /// 写回两个文件并刷新;`keys_changed` 时才写密钥文件。
-    fn persist_providers(&mut self, keys_changed: bool, cx: &mut Context<Self>) {
+    pub(super) fn persist_providers(&mut self, keys_changed: bool, cx: &mut Context<Self>) {
         let (cfg, keys_path) = (self.providers_path(), self.provider_keys_path());
         let ui = &self.forms().providers;
         let mut result = ui.store.save(&cfg);

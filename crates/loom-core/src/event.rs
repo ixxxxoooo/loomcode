@@ -183,6 +183,9 @@ pub enum AgentCommand {
     BackgroundCurrent { tool_use_id: Option<String> },
     /// 查询账户用量与限额(官方 `get_usage` 控制请求);只在用户点开上下文弹层时发送
     RefreshUsage,
+    /// 替换注入 claude 的额外环境变量(切换模型服务商时用):惰性后端结束当前进程,
+    /// 下一条提示用新环境 `--resume` 继续当前会话;其余后端忽略
+    SetEnv(Vec<(String, String)>),
     /// 触发演示场景(仅演示后端识别)
     RunScenario(String),
     /// 关闭后端(结束子进程)
