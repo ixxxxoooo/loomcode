@@ -450,6 +450,10 @@ impl Render for Composer {
                 if this.suggestions.is_empty() { cx.propagate(); } else { this.accept_suggestion(this.sel, window, cx); }
             }))
             .capture_action(cx.listener(|this, _: &crate::workbench::Escape, _, cx| {
+                // 任务坞列表展开时,Esc 先收起它
+                if this.session.update(cx, |m, cx| m.close_tasks(cx)) {
+                    return;
+                }
                 if this.suggestions.is_empty() && this.open.is_none() {
                     // 回合运行中按 Esc 中断(与等待行的「按 Esc 中断」提示一致)
                     let running = this.session.read(cx).state.phase == loom_core::Phase::Running;

@@ -13,6 +13,7 @@ mod dock_cards;
 mod agent_group;
 mod mode_switch;
 mod subagent_card;
+mod task_dock;
 mod task_ui;
 mod tasks_tab;
 mod subagent_tab;

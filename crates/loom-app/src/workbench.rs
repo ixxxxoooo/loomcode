@@ -1247,7 +1247,7 @@ pub fn chat_panel_with_footer(parts: Option<(Entity<SessionModel>, Entity<Compos
             ),
         )
         .children(crate::dock_cards::render(&model_for_dock, cx))
-        .children(crate::task_ui::dock(&model_for_dock, cx))
+        .children(crate::task_dock::dock(&model_for_dock, cx))
         .child(composer)
         .child(footer)
         .into_any_element()

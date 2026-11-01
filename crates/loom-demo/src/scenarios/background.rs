@@ -10,6 +10,7 @@ use loom_core::*;
 pub fn scenarios() -> Vec<Scenario> {
     vec![
         Scenario { id: "showcase-all", title: "全场景:会话流里的所有展示一次看完", group: "全景", kind: Kind::Auto, prompt: "把会话流里的所有展示都演示一遍", build: showcase_all },
+        Scenario { id: "bg-dock", title: "任务坞:按类别分组的悬浮列表(全部类型、终态、停滞与滚动)", group: "后台任务", kind: Kind::Auto, prompt: "同时开一堆后台任务,检验任务坞的分组与悬浮列表", build: dock },
         Scenario { id: "bg-shell", title: "后台命令:开发服务器、构建与失败的 lint", group: "后台任务", kind: Kind::Auto, prompt: "把开发服务器、release 构建和 clippy 都放到后台跑", build: shell },
         Scenario { id: "bg-monitor", title: "Monitor:持续监听日志与结束", group: "后台任务", kind: Kind::Auto, prompt: "监听服务日志,出现错误就告诉我", build: monitor },
         Scenario { id: "bg-agent", title: "后台子代理:盘点、审查、失败与停滞", group: "后台任务", kind: Kind::Auto, prompt: "让几个子代理在后台并行盘点设置页和审查模块", build: agent },
@@ -22,6 +23,16 @@ pub fn scenarios() -> Vec<Scenario> {
     ]
 }
 
+fn dock() -> Script {
+    let mut b = ScriptBuilder::new();
+    b.title("任务坞:分组与悬浮列表");
+    b.say("同时开启**所有类型**的后台任务:子代理、后台命令、监听、工作流和其他任务,用来检验输入框上方任务坞的分组、悬浮展开与收起。");
+    shell_b(&mut b);
+    monitor_b(&mut b);
+    agent_b(&mut b);
+    dock_extra_b(&mut b);
+    b.build()
+}
 fn shell() -> Script {
     let mut b = ScriptBuilder::new();
     shell_b(&mut b);
@@ -134,6 +145,28 @@ fn job_tool(job: BgJob, at: u64, dur: u64, card: &str, tid: &str, name: &str, ti
 
 fn say_child(job: BgJob, at: u64, card: &str, id: &str, text: &str) -> BgJob {
     job.child(at, card, TimelineItem::Assistant { id: id.into(), text: text.into(), streaming: false })
+}
+
+/// 任务坞专用的补充任务:工作流、其他类型,以及足够多的长期运行命令(让悬浮列表超过最大高度、出现滚动)。
+fn dock_extra_b(b: &mut ScriptBuilder) {
+    b.say("再补充工作流、其他任务和几个长期运行的命令。");
+    bg_bash(
+        b, "wf-release", "发布流程(三阶段)", "workflow run release", TaskKind::Workflow,
+        BgJob::new("wf-release").output(1000, "阶段 1/3:构建\n").output(6000, "阶段 2/3:测试\n").stoppable("发布流程已停止"),
+    );
+    bg_bash(
+        b, "ot-clean", "清理临时目录", "cleanup --tmp", TaskKind::Other,
+        BgJob::new("ot-clean").output(1500, "removed 128 files\n").stoppable("清理已停止"),
+    );
+    for (id, title, cmd) in [
+        ("sh-story", "启动 Storybook", "pnpm storybook"),
+        ("sh-docker", "docker compose up", "docker compose up"),
+        ("sh-watch", "监视测试", "cargo watch -x test"),
+        ("sh-tail", "跟踪构建日志", "tail -f build.log"),
+    ] {
+        bg_bash(b, id, title, cmd, TaskKind::Shell, BgJob::new(id).output(900, "ready\n").stoppable(&format!("{title}已停止")));
+    }
+    b.say("现在每一类都有任务:点输入框上方的胶囊,列表会在胶囊上方展开;再点胶囊、点列表外、按 Esc 都会收起。");
 }
 
 // ---------- 后台命令 ----------

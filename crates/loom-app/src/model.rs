@@ -40,6 +40,10 @@ pub struct SessionModel {
     wheel_last: f32,
     /// 输入框上方的后台任务列表是否展开
     pub tasks_open: bool,
+    /// 任务坞里「已结束」分组是否展开(默认折叠)
+    pub tasks_finished_open: bool,
+    /// 刚被「点外部」收起任务坞的时刻,用来避免同一次点击在胶囊上又把它重新打开
+    pub tasks_outside_closed: Option<std::time::Instant>,
     /// 是否已启动「有任务在跑就每秒刷新一次」的计时(用来刷新用时与停滞提示)
     task_ticking: bool,
 }
@@ -87,6 +91,8 @@ impl SessionModel {
             wheel_last: 0.,
             // 调试用:LOOM_TASKS=1 启动即展开任务坞,方便截图
             tasks_open: std::env::var("LOOM_TASKS").is_ok(),
+            tasks_finished_open: std::env::var("LOOM_TASKS").is_ok_and(|v| v == "all"),
+            tasks_outside_closed: None,
             task_ticking: false,
         }
     }
@@ -353,9 +359,35 @@ impl SessionModel {
         cx.notify();
     }
 
-    /// 展开 / 收起输入框上方的后台任务列表。
+    /// 展开 / 收起输入框上方的后台任务列表(点胶囊)。刚被点外部收起的同一次点击不再重开。
     pub fn toggle_tasks(&mut self, cx: &mut Context<Self>) {
-        self.tasks_open = !self.tasks_open;
+        let just_closed = self.tasks_outside_closed.take().is_some_and(|t| t.elapsed() < std::time::Duration::from_millis(250));
+        self.tasks_open = toggled_tasks_open(self.tasks_open, just_closed);
+        cx.notify();
+    }
+
+    /// 点任务列表以外的地方:收起列表。
+    pub fn dismiss_tasks_outside(&mut self, cx: &mut Context<Self>) {
+        if self.tasks_open {
+            self.tasks_open = false;
+            self.tasks_outside_closed = Some(std::time::Instant::now());
+            cx.notify();
+        }
+    }
+
+    /// 收起任务列表(Esc)。返回之前是否是展开的。
+    pub fn close_tasks(&mut self, cx: &mut Context<Self>) -> bool {
+        let was = self.tasks_open;
+        if was {
+            self.tasks_open = false;
+            cx.notify();
+        }
+        was
+    }
+
+    /// 展开 / 折叠任务坞里的「已结束」分组。
+    pub fn toggle_finished_tasks(&mut self, cx: &mut Context<Self>) {
+        self.tasks_finished_open = !self.tasks_finished_open;
         cx.notify();
     }
 
@@ -424,6 +456,13 @@ impl SessionModel {
     }
 }
 
+/// 点任务坞胶囊后列表是否展开:已展开则收起;未展开则展开,但刚被「点外部」收起的同一次点击不重开。
+///
+/// 参数:`open` 当前是否展开;`just_closed` 是否刚被点外部收起。
+pub fn toggled_tasks_open(open: bool, just_closed: bool) -> bool {
+    !open && !just_closed
+}
+
 /// 会话向工作台发出的界面请求(打开面板、文件等)。
 #[derive(Debug, Clone)]
 pub enum UiRequest {
@@ -469,5 +508,21 @@ impl SessionModel {
     pub fn wizard_go(&mut self, id: &str, step: usize, cx: &mut Context<Self>) {
         self.wizard_step.insert(id.to_string(), step);
         self.remeasure_id(id, cx);
+    }
+}
+
+#[cfg(test)]
+mod tasks_dock_tests {
+    use super::*;
+
+    #[::core::prelude::v1::test]
+    fn 点胶囊切换展开() {
+        assert!(toggled_tasks_open(false, false));
+        assert!(!toggled_tasks_open(true, false));
+    }
+
+    #[::core::prelude::v1::test]
+    fn 点外部刚收起时点胶囊不重开() {
+        assert!(!toggled_tasks_open(false, true));
     }
 }

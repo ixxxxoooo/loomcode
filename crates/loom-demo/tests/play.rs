@@ -150,6 +150,34 @@ fn find_task<'a>(s: &'a SessionState, id: &str) -> &'a BackgroundTask {
 }
 
 #[test]
+fn 任务坞场景覆盖所有类别与终态() {
+    let (h, mut s) = run_keep("/demo-bg-dock", true);
+    run_drain(&h, &mut s);
+    let running_kinds: Vec<TaskKind> = s.tasks.iter().filter(|t| t.counts_as_running()).map(|t| t.kind).collect();
+    for k in [TaskKind::Agent, TaskKind::Shell, TaskKind::Monitor, TaskKind::Workflow, TaskKind::Other] {
+        assert!(running_kinds.contains(&k), "缺少运行中的 {k:?} 任务");
+    }
+    // 终态:完成、失败、已停止都有,会进入「已结束」分组
+    for st in [TaskStatus::Completed, TaskStatus::Failed, TaskStatus::Stopped] {
+        assert!(s.tasks.iter().any(|t| t.status == st), "缺少 {st:?} 终态任务");
+    }
+    // 分组结果:五个运行中分组 + 已结束,已结束在最后;运行中的行数足以让悬浮列表滚动
+    let sections = group_tasks(&s.tasks);
+    assert_eq!(sections.last().map(|x| x.group), Some(TaskGroup::Finished));
+    assert_eq!(sections.len(), 6);
+    assert!(s.running_task_count() >= 9);
+    // 停滞的子代理与长期运行的调研同时存在
+    assert!(s.tasks.iter().any(|t| t.task_id == "t-ag-d" && t.idle_ms(now_ms()) >= STALL_MS));
+    // 停止一个命令:它从「后台命令」组移到「已结束」组
+    h.send(AgentCommand::StopTask { task_id: "sh-story".into() });
+    run_drain(&h, &mut s);
+    let after = group_tasks(&s.tasks);
+    assert!(after.iter().find(|x| x.group == TaskGroup::Shell).unwrap().tasks.iter().all(|t| t.task_id != "sh-story"));
+    assert!(after.last().unwrap().tasks.iter().any(|t| t.task_id == "sh-story"));
+    h.send(AgentCommand::Shutdown);
+}
+
+#[test]
 fn 后台命令场景的任务状态() {
     let (h, mut s) = run_keep("/demo-bg-shell", true);
     run_drain(&h, &mut s);

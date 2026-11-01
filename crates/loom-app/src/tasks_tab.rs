@@ -50,22 +50,36 @@ impl RightPanel {
         tasks.sort_by_key(|x| (!x.counts_as_running(), std::cmp::Reverse(x.started_ms)));
         let now = now_ms();
         let running = tasks.iter().filter(|x| x.counts_as_running()).count();
-        let sel_id = self.task_sel.clone().filter(|id| tasks.iter().any(|x| &x.task_id == id)).unwrap_or_else(|| tasks[0].task_id.clone());
+        let first_id = group_tasks(&tasks).first().and_then(|s| s.tasks.first()).map_or_else(|| tasks[0].task_id.clone(), |x| x.task_id.clone());
+        let sel_id = self.task_sel.clone().filter(|id| tasks.iter().any(|x| &x.task_id == id)).unwrap_or(first_id);
         let sel = tasks.iter().find(|x| x.task_id == sel_id).cloned().unwrap_or_else(|| tasks[0].clone());
 
-        let list = tasks.iter().map(|x| {
-            let on = x.task_id == sel_id;
-            let run = x.counts_as_running();
-            let id = x.task_id.clone();
-            h_flex().id(SharedString::from(format!("tk-{}", x.task_id))).w_full().h(px(32.)).px_3().gap_2().items_center().cursor_pointer()
-                .when(on, |d| d.bg(t.muted))
-                .hover(|d| d.bg(t.list_hover))
-                .on_click(cx.listener(move |this, _, _, cx| { this.task_sel = Some(id.clone()); cx.notify(); }))
-                .child(if run { Spinner::new().xsmall().into_any_element() } else { icon(status_icon(x.status), 13., task_color(x.status, cx)).into_any_element() })
-                .child(icon(kind_icon(x.kind), 12., t.muted_foreground))
-                .child(div().flex_1().min_w_0().truncate().text_size(px(13.)).text_color(if run { t.foreground } else { t.muted_foreground }).child(x.description.clone()))
-                .child(div().flex_none().text_size(px(11.)).text_color(t.muted_foreground.opacity(0.8)).child(format_elapsed(x.elapsed_ms(now))))
-        });
+        let sections = group_tasks(&tasks);
+        let mut list: Vec<AnyElement> = Vec::new();
+        for sec in &sections {
+            let run_n = sec.tasks.iter().filter(|x| x.counts_as_running()).count();
+            list.push(
+                h_flex().w_full().h(px(24.)).px_3().gap_1p5().items_center().text_size(px(11.)).text_color(t.muted_foreground)
+                    .when_some(sec.group.kind(), |d, k| d.child(icon(kind_icon(k), 12., t.muted_foreground)))
+                    .child(format!("{} · {}{}", sec.group.label(), sec.tasks.len(), if run_n > 0 && run_n < sec.tasks.len() { format!("({run_n} 运行中)") } else { String::new() }))
+                    .into_any_element(),
+            );
+            for x in &sec.tasks {
+                let on = x.task_id == sel_id;
+                let run = x.counts_as_running();
+                let id = x.task_id.clone();
+                list.push(
+                    h_flex().id(SharedString::from(format!("tk-{}", x.task_id))).w_full().h(px(32.)).px_3().gap_2().items_center().cursor_pointer()
+                        .when(on, |d| d.bg(t.muted))
+                        .hover(|d| d.bg(t.list_hover))
+                        .on_click(cx.listener(move |this, _, _, cx| { this.task_sel = Some(id.clone()); cx.notify(); }))
+                        .child(if run { Spinner::new().xsmall().into_any_element() } else { icon(status_icon(x.status), 13., task_color(x.status, cx)).into_any_element() })
+                        .child(div().flex_1().min_w_0().truncate().text_size(px(13.)).text_color(if run { t.foreground } else { t.muted_foreground }).child(x.description.clone()))
+                        .child(div().flex_none().text_size(px(11.)).text_color(t.muted_foreground.opacity(0.8)).child(format_elapsed(x.elapsed_ms(now))))
+                        .into_any_element(),
+                );
+            }
+        }
 
         // 详情
         let run = sel.counts_as_running();
