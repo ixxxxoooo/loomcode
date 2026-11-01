@@ -1,4 +1,4 @@
-//! 助手回复下面的操作条(悬停显示):复制。
+//! 助手回复下面的操作条(一直显示):复制、分支、模型 · 用时 · 结束时间。
 //!
 //! @author ixxxxoooo
 
@@ -12,16 +12,37 @@ use gpui_kit::*;
 /// 操作条高度(固定占位,悬停才可见,避免悬停时行高跳动)。
 pub const FOOTER_H: f32 = 26.;
 
-/// 渲染操作条。
+/// 回合元信息:模型 · 用时 · 结束时间(没有的项跳过)。
 ///
-/// 参数:`session` 会话;`id` 助手条目 id;`text` 要复制的原文;`group` 外层悬停分组名。
-pub fn render(session: &Entity<SessionModel>, id: &str, text: &str, group: SharedString, cx: &App) -> AnyElement {
+/// 参数:`session` 会话;`ix` 本回合最后一条助手回复的条目下标。返回:用「 · 」连接的文本,可能为空。
+pub fn meta_text(session: &Entity<SessionModel>, ix: usize, cx: &App) -> String {
+    let m = session.read(cx);
+    let user = m.state.items[..ix].iter().rev().find_map(|i| if let loom_core::TimelineItem::User { id, .. } = i { Some(id.clone()) } else { None });
+    let mut parts: Vec<String> = Vec::new();
+    let name = m.state.models.iter().find(|x| x.id == m.state.model).map_or(m.state.model.clone(), |x| x.name.clone());
+    if !name.is_empty() {
+        parts.push(name);
+    }
+    if let Some(u) = &user {
+        if let Some(secs) = m.state.durations.get(u) {
+            parts.push(format!("用时 {}", crate::appearance::elapsed_text(*secs)));
+        }
+        if let Some(t) = m.turn_finished.get(u) {
+            parts.push(crate::real::time_ago(*t));
+        }
+    }
+    parts.join(" · ")
+}
+
+/// 渲染操作条(一直显示):复制、分支,后面跟回合元信息。
+///
+/// 参数:`session` 会话;`id` 助手条目 id;`text` 要复制的原文;`meta` 元信息文本。
+pub fn render(session: &Entity<SessionModel>, id: &str, text: &str, meta: String, cx: &App) -> AnyElement {
     let t = cx.theme();
     let copied = session.read(cx).copied.as_deref() == Some(id);
     let s = session.clone();
     let (cid, ctext) = (id.to_string(), text.to_string());
     h_flex().h(px(FOOTER_H)).items_center().gap_1().mt_0p5()
-        .when(!copied, |d| d.invisible().group_hover(group, |d| d.visible()))
         .child(
             h_flex().id(SharedString::from(format!("copy-{id}"))).h(px(22.)).px_1p5().gap_1().items_center().rounded(px(5.)).cursor_pointer()
                 .on_mouse_down(MouseButton::Left, |_, _, cx| cx.stop_propagation())
@@ -42,5 +63,6 @@ pub fn render(session: &Entity<SessionModel>, id: &str, text: &str, group: Share
                 .tooltip(move |window, cx| gpui_kit::component::tooltip::Tooltip::new("从这里创建分支会话").build(window, cx))
                 .child(icon(IconName::GitFork, 12., t.muted_foreground)),
         )
+        .when(!meta.is_empty(), |d| d.child(div().ml_1().text_size(px(12.)).text_color(t.muted_foreground).truncate().child(meta.clone())))
         .into_any_element()
 }

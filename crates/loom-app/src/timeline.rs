@@ -36,8 +36,8 @@ pub fn render_row(session: &Entity<SessionModel>, ix: usize, window: &mut Window
             let body = render_item(session, &item, 0, window, cx);
             match footer {
                 Some((id, text)) => {
-                    let group = SharedString::from(format!("turn-{id}"));
-                    v_flex().w_full().group(group.clone()).child(body).child(crate::turn_footer::render(session, &id, &text, group, cx)).into_any_element()
+                    let meta = crate::turn_footer::meta_text(session, i, cx);
+                    v_flex().w_full().child(body).child(crate::turn_footer::render(session, &id, &text, meta, cx)).into_any_element()
                 }
                 None => body,
             }

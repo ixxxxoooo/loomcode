@@ -31,6 +31,8 @@ pub struct SessionModel {
     pub turn_started: Option<std::time::Instant>,
     pub thinking_times: std::collections::HashMap<String, (std::time::Instant, Option<std::time::Instant>)>,
     pub item_row: Vec<usize>,
+    /// 回合结束时间:用户消息 id → 结束时刻(只有实时看到的回合才有;回复下方的操作条显示「N 分钟前」)
+    pub turn_finished: std::collections::HashMap<String, std::time::SystemTime>,
     /// 正在就地编辑的用户消息(见 `user_message.rs`)
     pub editing: Option<crate::user_message::UserEdit>,
     pub wheel_acc: f32,
@@ -78,6 +80,7 @@ impl SessionModel {
             turn_started: None,
             thinking_times: Default::default(),
             item_row: Vec::new(),
+            turn_finished: Default::default(),
             editing: None,
             wheel_acc: 0.,
             wheel_pending: false,
@@ -307,6 +310,9 @@ impl SessionModel {
                 let secs = start.elapsed().as_secs();
                 if secs >= 1 && let Some(TimelineItem::User { id, .. }) = self.state.items.iter().rev().find(|i| matches!(i, TimelineItem::User { .. })) {
                     self.state.durations.insert(id.clone(), secs);
+                }
+                if let Some(TimelineItem::User { id, .. }) = self.state.items.iter().rev().find(|i| matches!(i, TimelineItem::User { .. })) {
+                    self.turn_finished.insert(id.clone(), std::time::SystemTime::now());
                 }
             }
         }
