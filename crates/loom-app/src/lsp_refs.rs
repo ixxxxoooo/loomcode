@@ -96,7 +96,7 @@ impl IdeView {
                     let st = PeekState::new(items, offset, cx.theme().is_dark(), cx);
                     this.set_overlay(Overlay::Refs(st), cx);
                 }
-                Ok(_) => Self::notify_ui(window, cx, Notification::info("没有找到引用")),
+                Ok(_) => this.set_overlay(Overlay::Refs(PeekState::new(vec![], offset, false, cx)), cx),
                 Err(e) => Self::notify_ui(window, cx, Notification::error(format!("查找引用失败:{e}"))),
             });
         })
@@ -111,7 +111,7 @@ impl IdeView {
         let (text, offset) = (ed.value().to_string(), ed.selected_range().start);
         let word = ed.text().word_range(offset).map(|r| text.get(r).unwrap_or("").to_string()).filter(|w| !w.is_empty());
         let Some(old) = word else {
-            window.push_notification(Notification::info("光标不在符号上"), cx);
+            self.show_cursor_message("光标不在符号上,无法重命名", cx);
             return;
         };
         let input = cx.new(|cx| InputState::new(window, cx));
@@ -235,7 +235,7 @@ impl IdeView {
                 .await;
             let _ = this.update_in(cx, |this, window, cx| match res {
                 Ok(items) if !items.is_empty() => this.set_overlay(Overlay::Actions { title, items }, cx),
-                Ok(_) => Self::notify_ui(window, cx, Notification::info(format!("这里没有可用的{title}"))),
+                Ok(_) => this.show_cursor_message(format!("没有可用的{title}"), cx),
                 Err(e) => Self::notify_ui(window, cx, Notification::error(format!("获取{title}失败:{e}"))),
             });
         })

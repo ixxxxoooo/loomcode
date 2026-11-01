@@ -103,6 +103,8 @@ pub struct IdeView {
     pub(crate) lsp_listening: bool,
     /// 右键菜单结果浮层(引用 / 重命名 / 代码操作 / 差异)
     pub(crate) overlay: Option<crate::ide_overlay::Overlay>,
+    /// 光标处的小消息(找不到定义等)
+    pub(crate) cursor_msg: Option<crate::ide_message::CursorMsg>,
     pub(crate) overlay_sub: Option<Subscription>,
     /// 悬停卡片的收起计时与鼠标靠近判断
     pub(crate) hover_ui: crate::ide_hover::HoverUi,
@@ -111,7 +113,7 @@ pub struct IdeView {
 impl IdeView {
     /// 创建空的编辑器视图。
     pub fn new() -> Self {
-        Self { root: String::new(), docs: HashMap::new(), tabs: TabModel::default(), note: None, images: Default::default(), sheets: HashMap::new(), sheet_subs: HashMap::new(), as_text: Default::default(), minimap_ui: Default::default(), applied: None, edit_gen: 0, nav: Default::default(), nav_quiet: false, fresh_open: false, recent: Vec::new(), pending_restore: None, md: HashMap::new(), blame_gutter: false, blame_ui: Default::default(), lsp_listening: false, hover_ui: Default::default(), overlay: None, overlay_sub: None }
+        Self { root: String::new(), docs: HashMap::new(), tabs: TabModel::default(), note: None, images: Default::default(), sheets: HashMap::new(), sheet_subs: HashMap::new(), as_text: Default::default(), minimap_ui: Default::default(), applied: None, edit_gen: 0, nav: Default::default(), nav_quiet: false, fresh_open: false, recent: Vec::new(), pending_restore: None, md: HashMap::new(), blame_gutter: false, blame_ui: Default::default(), lsp_listening: false, hover_ui: Default::default(), overlay: None, cursor_msg: None, overlay_sub: None }
     }
 
     /// 设置项目根目录(会话切换时由宿主调用)。
@@ -420,6 +422,7 @@ pub(crate) fn load(path: &Path, window: &mut Window, cx: &mut Context<IdeView>) 
     let sub2 = cx.observe(&editor, move |this: &mut IdeView, ed, cx| {
         // 光标移动 / 滚动:收起悬停卡片
         this.hover_check_moved(&key2, cx);
+        this.cursor_msg_check_moved(cx);
         if let Some(doc) = this.docs.get_mut(&key2).filter(|_| crate::prefs(cx).editor.bracket_match) {
             crate::ide_brackets::refresh(&ed, &mut doc.bracket_marks, &mut doc.bracket_pair, cx);
         }
@@ -490,6 +493,7 @@ impl Render for IdeView {
                 let gutter = self.blame_gutter.then(|| crate::ide_blame::gutter(doc, &self.blame_ui, cx)).flatten();
                 let inline = crate::ide_blame::inline_blame(doc, cx);
                 let hover = crate::ide_hover::hover_card(doc, &path, cx.weak_entity(), window, cx);
+                let cursor_msg = self.cursor_msg.as_ref().and_then(|m| crate::ide_message::message_element(doc, m, cx.weak_entity(), cx));
                 let ctx_menu = crate::ide_menu::editor_menu(&editor, cx.weak_entity());
                 let ui = self.minimap_ui.clone();
                 // 编辑区太窄时自动隐藏迷你地图(宽度取自上一帧的测量)
@@ -507,7 +511,8 @@ impl Render for IdeView {
                     })
                     .children(mm)
                     .children(inline)
-                    .children(hover);
+                    .children(hover)
+                    .children(cursor_msg);
                 match md_mode {
                     crate::ide_markdown::MdMode::Source => h_flex().flex_1().min_h_0().w_full().child(source).into_any_element(),
                     crate::ide_markdown::MdMode::Preview => h_flex().flex_1().min_h_0().w_full().child(md_view.clone().unwrap()).into_any_element(),

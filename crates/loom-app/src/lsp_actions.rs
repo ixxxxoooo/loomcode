@@ -94,7 +94,7 @@ impl IdeView {
                 .await;
             let _ = this.update_in(cx, |this, window, cx| match res {
                 Ok(Some((path, line, col))) => this.open_at(path, line, col, window, cx),
-                Ok(None) => window.push_notification(Notification::info(format!("没有找到{what}")), cx),
+                Ok(None) => this.show_cursor_message(format!("未找到{what}"), cx),
                 Err(e) => window.push_notification(Notification::error(format!("转到{what}失败:{e}")), cx),
             });
         })

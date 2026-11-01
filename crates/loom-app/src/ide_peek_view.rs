@@ -69,6 +69,14 @@ fn peek_zone(st: &PeekState, width: f32, lh: f32, cx: &mut Context<IdeView>) -> 
     let c = colors(cx.theme().is_dark());
     let body_h = HEIGHT_LINES * lh;
     let target = st.items.get(st.selected);
+    // 没有结果:标题为空,正文是居中的「无结果」(VS Code 的 `No results`)
+    if st.items.is_empty() {
+        let head = h_flex().h(px(HEAD_H)).w_full().flex_none().items_center().justify_end().bg(c.title_bg)
+            .child(div().id("peek-close").size(px(22.)).mr_1().flex().items_center().justify_center().rounded(px(4.)).cursor_pointer().hover(|d| d.bg(c.selection))
+                .on_click(cx.listener(|this, _, window, cx| this.close_overlay(window, cx))).child(crate::ui::icon(gpui_kit::assets::IconName::X, 13., c.title_label)));
+        let body = div().w_full().h(px(body_h)).flex().items_center().justify_center().bg(c.result_bg).border_t_1().border_color(c.border.opacity(0.4)).text_size(px(13.)).text_color(c.result_line).child("无结果");
+        return v_flex().w(px(width)).border_t_1().border_b_1().border_color(c.border).shadow_lg().occlude().on_mouse_down(MouseButton::Left, |_, _, cx| cx.stop_propagation()).child(head).child(body).into_any_element();
+    }
     let (name, dir) = target.map(|t| (t.path.file_name().map(|n| n.to_string_lossy().to_string()).unwrap_or_default(), t.path.parent().map(|p| p.to_string_lossy().to_string()).unwrap_or_default())).unwrap_or_default();
     let home = std::env::var("HOME").unwrap_or_default();
     let dir = if !home.is_empty() && dir.starts_with(&home) { dir.replacen(&home, "~", 1) } else { dir };

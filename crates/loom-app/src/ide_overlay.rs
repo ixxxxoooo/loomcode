@@ -47,6 +47,9 @@ impl IdeView {
         if matches!(self.overlay, Some(Overlay::Refs(_))) {
             return self.peek_overlay(cx);
         }
+        if matches!(self.overlay, Some(Overlay::Rename { .. })) {
+            return self.rename_overlay(cx);
+        }
         let o = self.overlay.as_ref()?;
         let t = cx.theme().clone();
         let (title, body): (String, AnyElement) = match o {
@@ -73,7 +76,7 @@ impl IdeView {
         let esc = key_canvas(cx.weak_entity());
         Some(
             deferred(
-                div().id("ide-overlay").absolute().inset_0().flex().justify_center().pt(px(70.))
+                div().id("ide-overlay").absolute().inset_0().flex().items_start().justify_center().pt(px(70.))
                     .on_mouse_down(MouseButton::Left, cx.listener(|this, _, window, cx| this.close_overlay(window, cx)))
                     .child(
                         v_flex().w(px(width)).max_w_full().max_h(px(560.)).p_2().gap_1().rounded(px(10.)).border_1().border_color(t.border).bg(t.popover).shadow_lg().occlude()
@@ -112,4 +115,30 @@ pub(crate) fn key_canvas(weak: WeakEntity<IdeView>) -> Canvas<Bounds<Pixels>> {
             });
         });
     }).absolute().size_full()
+}
+
+impl IdeView {
+    /// 重命名输入框(对标 VS Code 的 Rename Input Widget):一个小输入框直接盖在光标所在的符号上,回车确认、Esc 取消。
+    fn rename_overlay(&mut self, cx: &mut Context<Self>) -> Option<AnyElement> {
+        let Some(Overlay::Rename { input, local, .. }) = &self.overlay else { return None };
+        let doc = self.tabs.active().and_then(|p| self.docs.get(p))?;
+        let ed = doc.editor.read(cx);
+        let off = ed.selected_range().start;
+        let at = ed.range_to_bounds(&(off..off))?;
+        let t = cx.theme().clone();
+        let keys = key_canvas(cx.weak_entity());
+        let input = input.clone();
+        let hint = if *local { "更改当前文件里所有同名的整词" } else { "回车重命名,Esc 取消" };
+        Some(
+            deferred(
+                anchored().position(point(at.origin.x - px(10.), at.origin.y - px(6.))).anchor(Anchor::TopLeft).snap_to_window_with_margin(px(8.)).child(
+                    v_flex().relative().w(px(280.)).p_1().gap_0p5().rounded(px(4.)).border_1().border_color(t.border).bg(t.popover).shadow_md().occlude()
+                        .on_mouse_down(MouseButton::Left, |_, _, cx| cx.stop_propagation())
+                        .child(keys)
+                        .child(Input::new(&input))
+                        .child(div().px_1().text_size(px(11.)).text_color(t.muted_foreground).child(hint)),
+                ),
+            ).into_any_element(),
+        )
+    }
 }

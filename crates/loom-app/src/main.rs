@@ -73,6 +73,7 @@ mod diff_split;
 mod ide_md_sync;
 mod ide_compare;
 mod ide_menu;
+mod ide_message;
 mod ide_overlay;
 mod ide_peek;
 mod ide_peek_view;
