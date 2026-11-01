@@ -10,7 +10,6 @@ use crate::ui::empty_state;
 use gpui_kit::assets::IconName;
 use gpui_kit::component::input::{Editor, EditorState, InputEvent};
 use gpui_kit::component::{ActiveTheme, h_flex, v_flex};
-use gpui_kit::prelude::FluentBuilder as _;
 use gpui_kit::*;
 use std::collections::HashMap;
 use std::path::{Path, PathBuf};
@@ -73,7 +72,7 @@ pub struct IdeView {
     /// 切换项目后待恢复的标签记忆(渲染时有窗口再恢复)
     pub(crate) pending_restore: Option<loom_config::IdeMemory>,
     /// Markdown 文件的预览 / 源码模式与就地编辑状态
-    pub(crate) md: HashMap<PathBuf, crate::ide_markdown::MdUi>,
+    pub(crate) md: HashMap<PathBuf, Entity<crate::ide_markdown::MdDocView>>,
 }
 
 impl IdeView {
@@ -400,12 +399,14 @@ impl Render for IdeView {
             self.rebuild_minimap(&path, None, cx);
         }
         let is_md = crate::ide_markdown::is_markdown(&path);
-        let md_mode = if is_md { self.md_mode(&path) } else { crate::ide_markdown::MdMode::Source };
+        let ed0 = self.docs[&path].editor.clone();
+        let md_view = is_md.then(|| self.md.entry(path.clone()).or_insert_with(|| cx.new(|_| crate::ide_markdown::MdDocView::new(ed0, None))).clone());
+        let md_mode = md_view.as_ref().map_or(crate::ide_markdown::MdMode::Source, |v| v.read(cx).mode);
         let doc = &self.docs[&path];
         let editor = doc.editor.clone();
         root.child(tab_bar(self.tab_items(&path), cx))
             .child(breadcrumbs(&path, &self.root, doc.saved, self.note.clone().or_else(|| doc.stale.then(|| "磁盘上的文件已被修改,点右侧刷新按钮载入(会丢弃你的修改)".to_string())), cx))
-            .when(is_md, |d| d.child(self.md_mode_bar(&path, cx)))
+            .children(md_view.as_ref().map(|v| crate::ide_markdown::mode_bar(v, md_mode, cx)))
             .child({
                 let prefs = crate::prefs(cx).editor;
                 let ui = self.minimap_ui.clone();
@@ -424,8 +425,8 @@ impl Render for IdeView {
                     .children(mm);
                 match md_mode {
                     crate::ide_markdown::MdMode::Source => h_flex().flex_1().min_h_0().w_full().child(source).into_any_element(),
-                    crate::ide_markdown::MdMode::Preview => h_flex().flex_1().min_h_0().w_full().child(self.md_preview(&path, cx)).into_any_element(),
-                    crate::ide_markdown::MdMode::Split => h_flex().flex_1().min_h_0().w_full().child(div().flex_1().min_w_0().h_full().child(source)).child(div().w(px(1.)).h_full().bg(t.border)).child(self.md_preview(&path, cx)).into_any_element(),
+                    crate::ide_markdown::MdMode::Preview => h_flex().flex_1().min_h_0().w_full().child(md_view.clone().unwrap()).into_any_element(),
+                    crate::ide_markdown::MdMode::Split => h_flex().flex_1().min_h_0().w_full().child(div().flex_1().min_w_0().h_full().child(source)).child(div().w(px(1.)).h_full().bg(t.border)).child(div().flex_1().min_w_0().h_full().child(md_view.clone().unwrap())).into_any_element(),
                 }
             })
             .into_any_element()

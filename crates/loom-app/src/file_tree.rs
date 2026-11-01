@@ -24,6 +24,8 @@ pub struct FileTree {
     children: HashMap<PathBuf, Vec<Node>>,
     selected: Option<PathBuf>,
     preview: Option<Entity<EditorState>>,
+    /// Markdown 文件用与 IDE 共用的预览视图(点块就地编辑,写回磁盘)
+    md_view: Option<Entity<crate::ide_markdown::MdDocView>>,
     /// 预览不可用时的说明(二进制、过大、读取失败)
     note: Option<String>,
     /// 文件与目录的 Git 改动标记
@@ -94,6 +96,7 @@ impl FileTree {
             children: HashMap::new(),
             selected: None,
             preview: None,
+            md_view: None,
             note: None,
             git: GitStatus::default(),
         };
@@ -111,6 +114,7 @@ impl FileTree {
         self.expanded.clear();
         self.selected = None;
         self.preview = None;
+        self.md_view = None;
         self.note = None;
         self.reload();
     }
@@ -163,12 +167,15 @@ impl FileTree {
         }
         self.selected = Some(path.to_path_buf());
         self.preview = None;
+        self.md_view = None;
         self.note = None;
     }
 
     pub fn load_preview(&mut self, path: PathBuf, window: &mut Window, cx: &mut Context<RightPanel>) {
         self.selected = Some(path.clone());
         self.preview = None;
+        self.md_view = None;
+        self.md_view = None;
         self.note = None;
         match std::fs::metadata(&path) {
             Err(e) => self.note = Some(format!("无法读取:{e}")),
@@ -179,7 +186,11 @@ impl FileTree {
                     Err(_) => self.note = Some("二进制文件,不预览".into()),
                     Ok(text) => {
                         let lang = language_for(&path);
-                        self.preview = Some(cx.new(|cx| EditorState::new(window, cx).language(lang).default_value(text)));
+                        let editor = cx.new(|cx| EditorState::new(window, cx).language(lang).default_value(text));
+                        if crate::ide_markdown::is_markdown(&path) {
+                            self.md_view = Some(cx.new(|_| crate::ide_markdown::MdDocView::new(editor.clone(), Some(path.clone()))));
+                        }
+                        self.preview = Some(editor);
                     }
                 },
             },
@@ -211,6 +222,7 @@ impl FileTree {
             return empty_state(IconName::Folder, "目录为空", &self.root.display().to_string(), cx).into_any_element();
         }
         let has_preview = self.preview.is_some() || self.note.is_some();
+        let md_view = self.md_view.clone();
         let root_name = self.root.file_name().map(|n| n.to_string_lossy().to_string()).unwrap_or_default();
         let tree = v_flex().id("file-tree-scroll").w_full().overflow_y_scroll().py_1()
             .when(has_preview, |d| d.h(relative(0.38)).flex_none().border_b_1().border_color(t.border))
@@ -293,6 +305,7 @@ impl FileTree {
                     v_flex().flex_1().min_h_0()
                         .child(h_flex().h(px(26.)).px_3().items_center().text_size(px(12.)).font_family(MONO).text_color(t.muted_foreground).child(name))
                         .child(match (&self.preview, &self.note) {
+                            (Some(_), _) if md_view.is_some() => div().flex_1().min_h_0().child(md_view.clone().unwrap()).into_any_element(),
                             (Some(state), _) => div().flex_1().min_h_0().child(Editor::new(state).readonly(true).bordered(false).appearance(false).size_full()).into_any_element(),
                             (None, Some(note)) => div().flex_1().flex().items_center().justify_center().text_size(px(12.)).text_color(t.muted_foreground).child(note.clone()).into_any_element(),
                             _ => div().into_any_element(),

@@ -3,8 +3,7 @@
 //!
 //! @author ixxxxoooo
 
-use crate::ide::IdeView;
-use gpui_kit::component::input::{EditorState, InputEvent};
+use gpui_kit::component::input::{Editor, EditorState, InputEvent};
 use gpui_kit::component::text::TextView;
 use gpui_kit::component::{ActiveTheme, h_flex, v_flex};
 use gpui_kit::prelude::FluentBuilder as _;
@@ -32,11 +31,16 @@ pub struct MdEdit {
     _sub: Subscription,
 }
 
-/// 单个 Markdown 文件的界面状态。
-#[derive(Default)]
-pub struct MdUi {
+/// 一个 Markdown 文档的预览视图(IDE 与 Agent 右侧面板共用)。
+///
+/// 文本的唯一来源是 `editor`;预览按块渲染,点块就地编辑,失焦或按 Esc 写回 `editor`。
+pub struct MdDocView {
+    pub editor: Entity<EditorState>,
     pub mode: MdMode,
-    pub edit: Option<MdEdit>,
+    edit: Option<MdEdit>,
+    /// 写回后同步保存到这个路径(右侧面板用;IDE 自己管保存时为 `None`)
+    save_to: Option<PathBuf>,
+    id: SharedString,
 }
 
 /// 是否 Markdown 文件。
@@ -76,46 +80,42 @@ pub fn split_blocks(text: &str) -> Vec<Range<usize>> {
     out
 }
 
-impl IdeView {
-    /// 当前文件的 Markdown 显示模式。
-    pub(crate) fn md_mode(&self, path: &Path) -> MdMode {
-        self.md.get(path).map_or(MdMode::Preview, |u| u.mode)
+impl MdDocView {
+    /// 创建视图。`editor` 文本来源;`save_to` 写回后自动落盘的路径(IDE 传 `None`)。
+    pub fn new(editor: Entity<EditorState>, save_to: Option<PathBuf>) -> Self {
+        let id = SharedString::from(format!("md-{}", save_to.as_ref().map_or(0, |p| p.as_os_str().len())));
+        Self { editor, mode: MdMode::Preview, edit: None, save_to, id }
     }
 
     /// 切换显示模式;离开预览时先把正在编辑的块写回。
-    pub(crate) fn set_md_mode(&mut self, path: &Path, mode: MdMode, window: &mut Window, cx: &mut Context<Self>) {
-        self.commit_md_edit(path, window, cx);
-        self.md.entry(path.to_path_buf()).or_default().mode = mode;
+    pub fn set_mode(&mut self, mode: MdMode, window: &mut Window, cx: &mut Context<Self>) {
+        self.commit(window, cx);
+        self.mode = mode;
         cx.notify();
     }
 
     /// 开始就地编辑 `range` 这一块;`expect` 是点击时看到的块内容,与现在不一致(文本已变)就忽略。
-    pub(crate) fn start_md_edit(&mut self, path: &Path, range: Range<usize>, expect: &str, window: &mut Window, cx: &mut Context<Self>) {
-        let Some(editor) = self.docs.get(path).map(|d| d.editor.clone()) else { return };
-        let text = editor.read(cx).value();
+    fn start_edit(&mut self, range: Range<usize>, expect: &str, window: &mut Window, cx: &mut Context<Self>) {
+        let text = self.editor.read(cx).value();
         if text.get(range.clone()).is_none_or(|s| s != expect) {
             return;
         }
-        let lines = expect.lines().count().max(1);
-        let _ = lines;
         let input = cx.new(|cx| EditorState::new(window, cx).language("markdown").default_value(expect.to_string()));
-        let key = path.to_path_buf();
-        let sub = cx.subscribe_in(&input, window, move |this: &mut IdeView, _, ev: &InputEvent, window, cx| {
+        let sub = cx.subscribe_in(&input, window, move |this: &mut MdDocView, _, ev: &InputEvent, window, cx| {
             if matches!(ev, InputEvent::Blur) {
-                this.commit_md_edit(&key, window, cx);
+                this.commit(window, cx);
             }
         });
         input.update(cx, |i, cx| i.focus(window, cx));
-        self.md.entry(path.to_path_buf()).or_default().edit = Some(MdEdit { range, input, _sub: sub });
+        self.edit = Some(MdEdit { range, input, _sub: sub });
         cx.notify();
     }
 
     /// 把正在编辑的块写回全文(进撤销栈);没有改动则只退出编辑。
-    pub(crate) fn commit_md_edit(&mut self, path: &Path, window: &mut Window, cx: &mut Context<Self>) {
-        let Some(edit) = self.md.get_mut(path).and_then(|u| u.edit.take()) else { return };
-        let Some(editor) = self.docs.get(path).map(|d| d.editor.clone()) else { return };
+    pub fn commit(&mut self, window: &mut Window, cx: &mut Context<Self>) {
+        let Some(edit) = self.edit.take() else { return };
         let new = edit.input.read(cx).value().to_string();
-        let text = editor.read(cx).value().to_string();
+        let text = self.editor.read(cx).value().to_string();
         let Some(old) = text.get(edit.range.clone()) else { return };
         if old != new {
             let joined = if edit.range.is_empty() && !text.is_empty() && !new.is_empty() {
@@ -123,63 +123,76 @@ impl IdeView {
             } else {
                 format!("{}{new}{}", &text[..edit.range.start], &text[edit.range.end..])
             };
-            editor.update(cx, |e, cx| e.replace_all(joined, window, cx));
+            if let Some(path) = &self.save_to {
+                let _ = std::fs::write(path, joined.as_bytes());
+            }
+            self.editor.update(cx, |e, cx| e.replace_all(joined, window, cx));
         }
         cx.notify();
     }
 
-    /// 渲染 Markdown 预览(按块,点击就地编辑)。
-    pub(crate) fn md_preview(&self, path: &Path, cx: &mut Context<Self>) -> AnyElement {
+    /// 就地编辑框:没有边框与底色,只在左侧留一条强调线,看起来像在文档里直接改字。
+    fn edit_box(&self, e: &MdEdit, lines: usize, cx: &mut Context<Self>) -> AnyElement {
         let t = cx.theme().clone();
-        let Some(doc) = self.docs.get(path) else { return div().into_any_element() };
-        let text = doc.editor.read(cx).value().to_string();
-        let edit = self.md.get(path).and_then(|u| u.edit.as_ref());
+        let h = (lines.max(1) as f32 * 22. + 12.).max(40.);
+        div().w_full().h(px(h)).pl_2().border_l_2().border_color(t.primary.opacity(0.7))
+            .on_key_down(cx.listener(|this, ev: &KeyDownEvent, window, cx| {
+                if ev.keystroke.key == "escape" {
+                    this.commit(window, cx);
+                }
+            }))
+            .child(Editor::new(&e.input).bordered(false).appearance(false).size_full()).into_any_element()
+    }
+
+    /// 预览(按块,点击就地编辑)。
+    fn preview(&mut self, cx: &mut Context<Self>) -> AnyElement {
+        let t = cx.theme().clone();
+        let text = self.editor.read(cx).value().to_string();
         let blocks = split_blocks(&text);
         let mut children: Vec<AnyElement> = Vec::new();
         for (i, r) in blocks.iter().enumerate() {
             let src = text[r.clone()].to_string();
-            if let Some(e) = edit.filter(|e| e.range == *r) {
-                let h = (src.lines().count().max(1) as f32 * 22. + 24.).max(52.);
-                children.push(div().w_full().h(px(h)).rounded(px(6.)).border_1().border_color(t.primary.opacity(0.5)).bg(t.muted.opacity(0.4))
-                    .child(gpui_kit::component::input::Editor::new(&e.input).bordered(false).appearance(false).size_full()).into_any_element());
+            if let Some(e) = self.edit.as_ref().filter(|e| e.range == *r) {
+                children.push(self.edit_box(e, src.lines().count(), cx));
                 continue;
             }
-            let (p, range, s2) = (path.to_path_buf(), r.clone(), src.clone());
-            children.push(div().id(SharedString::from(format!("mdb-{i}"))).w_full().px_2().py_1().rounded(px(6.)).cursor_text()
-                .hover(|d| d.bg(t.muted.opacity(0.35)))
-                .on_click(cx.listener(move |this, _, window, cx| this.start_md_edit(&p, range.clone(), &s2, window, cx)))
-                .child(TextView::markdown(SharedString::from(format!("mdv-{}-{i}", path.display())), src).selectable(true)).into_any_element());
+            let (range, s2) = (r.clone(), src.clone());
+            children.push(div().id(SharedString::from(format!("{}-b{i}", self.id))).w_full().px_2().py_1().rounded(px(6.)).cursor_text()
+                .hover(|d| d.bg(t.muted.opacity(0.3)))
+                .on_click(cx.listener(move |this, _, window, cx| this.start_edit(range.clone(), &s2, window, cx)))
+                .child(TextView::markdown(SharedString::from(format!("{}-v{i}", self.id)), src).selectable(true)).into_any_element());
         }
-        // 底部空白:点击在文末追加新块
-        let (p, end) = (path.to_path_buf(), text.len());
-        let tail_editing = edit.is_some_and(|e| e.range.start == end && e.range.is_empty());
-        if tail_editing {
-            if let Some(e) = edit {
-                children.push(div().w_full().h(px(52.)).rounded(px(6.)).border_1().border_color(t.primary.opacity(0.5))
-                    .child(gpui_kit::component::input::Editor::new(&e.input).bordered(false).appearance(false).size_full()).into_any_element());
-            }
+        // 文末空白:点击追加新块
+        let end = text.len();
+        if let Some(e) = self.edit.as_ref().filter(|e| e.range.is_empty() && e.range.start == end) {
+            children.push(self.edit_box(e, 1, cx));
         }
-        children.push(div().id("md-tail").w_full().min_h(px(120.)).flex_1().cursor_text()
-            .on_click(cx.listener(move |this, _, window, cx| this.start_md_edit(&p, end..end, "", window, cx))).into_any_element());
-        div().id("md-preview").flex_1().min_w_0().h_full().overflow_y_scroll()
-            .child(v_flex().w_full().max_w(px(860.)).mx_auto().px_8().py_5().gap_1().min_h_full().children(children)).into_any_element()
+        children.push(div().id(SharedString::from(format!("{}-tail", self.id))).w_full().min_h(px(120.)).flex_1().cursor_text()
+            .on_click(cx.listener(move |this, _, window, cx| this.start_edit(end..end, "", window, cx))).into_any_element());
+        div().id(SharedString::from(format!("{}-scroll", self.id))).flex_1().min_w_0().h_full().overflow_y_scroll()
+            .child(v_flex().w_full().max_w(px(860.)).mx_auto().px_6().py_4().gap_1().min_h_full().children(children)).into_any_element()
     }
+}
 
-    /// 预览 / 源码 / 分栏切换条。
-    pub(crate) fn md_mode_bar(&self, path: &Path, cx: &mut Context<Self>) -> AnyElement {
-        let t = cx.theme().clone();
-        let cur = self.md_mode(path);
-        h_flex().w_full().h(px(28.)).flex_none().px_3().gap_1().justify_end().items_center().border_b_1().border_color(t.border.opacity(0.6))
-            .children([(MdMode::Preview, "预览"), (MdMode::Source, "源码"), (MdMode::Split, "分栏")].into_iter().map(|(m, label)| {
-                let p: PathBuf = path.to_path_buf();
-                let active = m == cur;
-                div().id(SharedString::from(format!("md-mode-{label}"))).px_2().h(px(20.)).flex().items_center().rounded(px(4.)).cursor_pointer().text_size(px(12.))
-                    .when(active, |d| d.bg(t.muted).text_color(t.foreground))
-                    .when(!active, |d| d.text_color(t.muted_foreground).hover(|d| d.text_color(t.foreground)))
-                    .on_click(cx.listener(move |this, _, window, cx| this.set_md_mode(&p, m, window, cx)))
-                    .child(label)
-            })).into_any_element()
+impl Render for MdDocView {
+    fn render(&mut self, _window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
+        self.preview(cx)
     }
+}
+
+/// 预览 / 源码 / 分栏切换条(IDE 用)。
+pub fn mode_bar<T: 'static>(view: &Entity<MdDocView>, cur: MdMode, cx: &mut Context<T>) -> AnyElement {
+    let t = cx.theme().clone();
+    h_flex().w_full().h(px(28.)).flex_none().px_3().gap_1().justify_end().items_center().border_b_1().border_color(t.border.opacity(0.6))
+        .children([(MdMode::Preview, "预览"), (MdMode::Source, "源码"), (MdMode::Split, "分栏")].into_iter().map(|(m, label)| {
+            let v = view.clone();
+            let active = m == cur;
+            div().id(SharedString::from(format!("md-mode-{label}"))).px_2().h(px(20.)).flex().items_center().rounded(px(4.)).cursor_pointer().text_size(px(12.))
+                .when(active, |d| d.bg(t.muted).text_color(t.foreground))
+                .when(!active, |d| d.text_color(t.muted_foreground).hover(|d| d.text_color(t.foreground)))
+                .on_mouse_down(MouseButton::Left, move |_, window, cx| { v.update(cx, |v, cx| v.set_mode(m, window, cx)); })
+                .child(label)
+        })).into_any_element()
 }
 
 #[cfg(test)]
