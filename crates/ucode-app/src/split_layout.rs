@@ -2,7 +2,7 @@
 //!
 //! @author ixxxxoooo
 
-use crate::layout_rules::{clamp_left, clamp_right, is_narrow};
+use crate::layout_rules::{clamp_left, clamp_right, collapsed, is_narrow, RIGHT_HIDE_BELOW, RIGHT_SHOW_ABOVE};
 use crate::workbench::{Page, Workbench};
 use gpui_kit::*;
 use std::time::Duration;
@@ -71,6 +71,23 @@ impl Workbench {
             self.left_open = false;
         } else {
             self.left_open = self.left_before_narrow;
+        }
+    }
+
+    /// 窗口变窄时自动收起右侧面板(比侧栏先收),变宽后恢复。
+    ///
+    /// 参数:`width` 窗口宽度(像素)。
+    pub fn apply_responsive_right(&mut self, width: Pixels) {
+        let narrow = collapsed(self.right_narrow, f32::from(width), RIGHT_HIDE_BELOW, RIGHT_SHOW_ABOVE);
+        if narrow == self.right_narrow {
+            return;
+        }
+        self.right_narrow = narrow;
+        if narrow {
+            self.right_before_narrow = self.right_open;
+            self.right_open = false;
+        } else {
+            self.right_open = self.right_before_narrow;
         }
     }
 }

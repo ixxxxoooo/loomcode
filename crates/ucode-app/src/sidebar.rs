@@ -106,8 +106,6 @@ pub fn render(wb: &Workbench, cx: &mut Context<Workbench>) -> impl IntoElement {
     v_flex()
         .size_full()
         .bg(t.sidebar)
-        .border_r_1()
-        .border_color(t.sidebar_border)
         .text_color(t.sidebar_foreground)
         .child(
             v_flex().px_2().pt_2().pb_1().gap_0p5()

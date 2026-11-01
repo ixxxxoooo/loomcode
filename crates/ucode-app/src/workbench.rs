@@ -109,6 +109,9 @@ pub struct Workbench {
     pub layout_narrow: bool,
     /// 变窄之前侧栏是不是开着(变宽后恢复)
     pub left_before_narrow: bool,
+    /// 窗口当前是否窄到需要自动收起右侧面板,以及收起前它是否开着
+    pub right_narrow: bool,
+    pub right_before_narrow: bool,
     /// 栏宽保存任务已排队
     pub width_save_pending: bool,
     pub panel: Entity<RightPanel>,
@@ -213,6 +216,8 @@ impl Workbench {
             split: cx.new(|_| gpui_kit::component::resizable::ResizableState::default()),
             layout_narrow: false,
             left_before_narrow: true,
+            right_narrow: false,
+            right_before_narrow: true,
             width_save_pending: false,
             panel,
             page: Page::Chat,
@@ -934,7 +939,7 @@ impl Workbench {
         cx.defer(move |cx| {
             let mut options = TitleBar::window_options();
             options.window_bounds = Some(WindowBounds::Windowed(Bounds::centered(None, size(px(1280.), px(820.)), cx)));
-            options.window_min_size = Some(size(px(900.), px(560.)));
+            options.window_min_size = Some(size(px(640.), px(480.)));
             let owner = wb.clone();
             match open_window(options, cx, move |window, cx| cx.new(|cx| IdeWindow::new(wb, demo, root, window, cx))) {
                 Ok((handle, _)) => owner.update(cx, |this, _| this.ide_window = Some(handle)),
@@ -1065,6 +1070,7 @@ impl Render for Workbench {
         let t = cx.theme().clone();
         // 窗口太窄时自动收起侧栏(变宽后恢复)
         self.apply_responsive(window.viewport_size().width);
+        self.apply_responsive_right(window.viewport_size().width);
         // 设置是整窗页面:隐藏侧栏、右侧面板与状态栏
         let full_settings = self.page == Page::Settings;
         // 融合模式的 IDE:整窗替换 Agent 布局(标题栏、侧栏、状态栏都是 IDE 的)
@@ -1117,7 +1123,7 @@ impl Render for Workbench {
                                 .child(sidebar::render(self, cx)))
                             .child(resizable_panel().size_range(px(CENTER_MIN)..Pixels::MAX).child(div().size_full().child(center)))
                             .child(resizable_panel().size(px(self.right_w)).size_range(px(RIGHT_MIN)..px(RIGHT_MAX)).flex_none().visible(self.right_visible())
-                                .child(div().size_full().border_l_1().border_color(t.border).child(self.panel.clone()))),
+                                .child(div().size_full().child(self.panel.clone()))),
                     ),
                 ))
             .when_some(self.palette.clone(), |d, p| d.child(p))

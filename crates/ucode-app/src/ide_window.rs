@@ -34,6 +34,11 @@ pub struct IdeWindow {
     pub(crate) left_open: bool,
     /// 对话栏是否展开
     pub(crate) chat_open: bool,
+    /// 响应式:窗口窄时自动收起的状态(文件面板 / 对话栏)及收起前是否开着
+    pub(crate) left_narrow: bool,
+    pub(crate) left_before: bool,
+    pub(crate) chat_narrow: bool,
+    pub(crate) chat_before: bool,
     /// 面板已同步到的会话 id
     pub(crate) synced: Option<String>,
     pub(crate) _subs: Vec<Subscription>,
@@ -83,7 +88,7 @@ impl IdeWindow {
         // 调试用:UCODE_IDE_TERM=1 启动时就展开底部终端面板,方便截图
         let term_open = std::env::var("UCODE_IDE_TERM").is_ok_and(|v| v == "1");
         // 此时工作台可能正处于更新中,不在这里回读它;首次渲染时再同步
-        Self { wb, panel, ide, focus, left_open: true, chat_open: true, synced: None, _subs: subs, search, search_open: false, quick: None, _quick_sub: None, term_open, term }
+        Self { wb, panel, ide, focus, left_open: true, chat_open: true, left_narrow: false, left_before: true, chat_narrow: false, chat_before: true, synced: None, _subs: subs, search, search_open: false, quick: None, _quick_sub: None, term_open, term }
     }
 
     /// 让面板与根目录跟随工作台当前会话。
@@ -176,9 +181,29 @@ impl IdeWindow {
     }
 }
 
+impl IdeWindow {
+    /// 按窗口宽度自动收起:先收对话栏(<1100),再收文件面板(<780),最小尺寸只剩编辑器。
+    ///
+    /// 参数:`width` 窗口宽度(像素)。变宽后恢复到收起前的开关状态。
+    fn apply_responsive(&mut self, width: f32) {
+        use crate::layout_rules::{collapsed, NARROW_BELOW, RIGHT_HIDE_BELOW, RIGHT_SHOW_ABOVE, WIDE_ABOVE};
+        let chat = collapsed(self.chat_narrow, width, RIGHT_HIDE_BELOW, RIGHT_SHOW_ABOVE);
+        if chat != self.chat_narrow {
+            self.chat_narrow = chat;
+            if chat { self.chat_before = self.chat_open; self.chat_open = false; } else { self.chat_open = self.chat_before; }
+        }
+        let left = collapsed(self.left_narrow, width, NARROW_BELOW, WIDE_ABOVE);
+        if left != self.left_narrow {
+            self.left_narrow = left;
+            if left { self.left_before = self.left_open; self.left_open = false; } else { self.left_open = self.left_before; }
+        }
+    }
+}
+
 impl Render for IdeWindow {
-    fn render(&mut self, _window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
+    fn render(&mut self, window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
         self.sync_state(cx);
+        self.apply_responsive(f32::from(window.viewport_size().width));
         let t = cx.theme().clone();
         let (parts, project, project_name, mode, fused, branch, demo) = {
             let wb = self.wb.read(cx);
@@ -213,15 +238,15 @@ impl Render for IdeWindow {
                         div().flex_1().min_w_0().h_full().child(
                             h_resizable("ide-split")
                                 .child(resizable_panel().size(px(260.)).size_range(px(160.)..px(520.)).flex_none().visible(self.left_open)
-                                    .child(div().size_full().border_r_1().border_color(t.border).child(if self.search_open { self.search.clone().into_any_element() } else { self.panel.clone().into_any_element() })))
+                                    .child(div().size_full().child(if self.search_open { self.search.clone().into_any_element() } else { self.panel.clone().into_any_element() })))
                                 .child(resizable_panel().size_range(px(320.)..Pixels::MAX).child(
                                     v_resizable("ide-vsplit")
                                         .child(resizable_panel().size_range(px(120.)..Pixels::MAX).child(div().size_full().child(self.ide.clone())))
                                         .child(resizable_panel().size(px(260.)).size_range(px(120.)..px(600.)).flex_none().visible(self.term_open)
-                                            .child(div().size_full().border_t_1().border_color(t.border).child(self.term.clone()))),
+                                            .child(div().size_full().child(self.term.clone()))),
                                 ))
                                 .child(resizable_panel().size(px(420.)).size_range(px(320.)..px(900.)).flex_none().visible(self.chat_open)
-                                    .child(v_flex().size_full().border_l_1().border_color(t.border).children(ide_chat_header::chat_header(&self.wb, cx)).child(div().flex_1().min_h_0().child(chat_panel(parts, branch.clone(), demo, cx))))),
+                                    .child(v_flex().size_full().children(ide_chat_header::chat_header(&self.wb, cx)).child(div().flex_1().min_h_0().child(chat_panel(parts, branch.clone(), demo, cx))))),
                         ),
                     ),
             )
