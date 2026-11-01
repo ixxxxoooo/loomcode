@@ -18,7 +18,6 @@ pub enum TermSel {
 /// 一个终端标签。
 pub struct TermTab {
     pub id: u64,
-    pub name: String,
     pub view: Entity<TerminalView>,
     _sub: Subscription,
 }
@@ -89,7 +88,7 @@ impl ProjectTerminals {
         g.counter += 1;
         // 终端有输出 / 改标题时,面板的标签条也要跟着重绘
         let sub = cx.observe(&view, |_, _, cx| cx.notify());
-        g.tabs.push(TermTab { id, name: format!("终端 {}", g.counter), view, _sub: sub });
+        g.tabs.push(TermTab { id, view, _sub: sub });
         g.active = TermSel::Term(id);
         cx.notify();
         Ok(id)

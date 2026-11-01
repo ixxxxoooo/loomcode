@@ -13,7 +13,15 @@ use gpui_kit::prelude::FluentBuilder as _;
 use gpui_kit::*;
 
 /// 标签上最多显示的字符数,超出截断。
-const MAX_TAB_CHARS: usize = 14;
+const MAX_TAB_CHARS: usize = 22;
+
+/// 标签名超过上限时截断并加省略号。
+pub(crate) fn clip_label(title: &str) -> String {
+    if title.chars().count() <= MAX_TAB_CHARS {
+        return title.to_string();
+    }
+    format!("{}…", title.chars().take(MAX_TAB_CHARS - 1).collect::<String>())
+}
 
 impl RightPanel {
     /// 新建一个终端并聚焦。
@@ -65,13 +73,13 @@ impl RightPanel {
     pub(crate) fn terminal_tab(&self, items: &[loom_core::TimelineItem], cx: &mut Context<Self>) -> AnyElement {
         let hub = ProjectTerminals::hub(cx);
         let root = self.root.clone();
+        let folder = root.trim_end_matches('/').rsplit('/').next().unwrap_or("").to_string();
         let (active, tabs) = {
             let h = hub.read(cx);
             let tabs: Vec<(u64, String, Option<u32>, Entity<crate::terminal_view::TerminalView>)> = h.tabs(&root).iter().map(|t| {
                 let v = t.view.read(cx);
-                // 程序设置了标题就用标题,否则用「终端 N」
-                let title = Some(v.title()).filter(|s| !s.trim().is_empty()).unwrap_or_else(|| t.name.clone());
-                (t.id, title, v.exit_code(), t.view.clone())
+                // 「前台进程 · 目录」,如 zsh · router-demo
+                (t.id, v.label(&folder), v.exit_code(), t.view.clone())
             }).collect();
             (h.active(&root), tabs)
         };
@@ -108,7 +116,7 @@ impl RightPanel {
         h_flex().h(px(34.)).px_2().gap_1().items_center().border_b_1().border_color(t.border)
             .children(tabs.iter().map(|(id, title, exit, _)| {
                 let id = *id;
-                let label: String = title.chars().take(MAX_TAB_CHARS).collect();
+                let label = crate::term_panel::clip_label(title);
                 let (hub_a, root_a) = (hub.clone(), root.to_string());
                 let (hub_c, root_c) = (hub.clone(), root.to_string());
                 let selected = active == TermSel::Term(id) || (active == TermSel::Nothing && active_run.is_none() && tabs.last().map(|x| x.0) == Some(id));

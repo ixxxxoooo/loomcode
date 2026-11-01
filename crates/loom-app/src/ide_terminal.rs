@@ -14,9 +14,6 @@ use gpui_kit::component::{ActiveTheme, Sizable, h_flex, v_flex};
 use gpui_kit::prelude::FluentBuilder as _;
 use gpui_kit::*;
 
-/// 标签上最多显示的字符数,超出截断。
-const MAX_TAB_CHARS: usize = 14;
-
 /// 底部终端面板。
 pub struct BottomTerminal {
     /// 用它的根目录决定显示哪个项目的终端(与文件面板同步)
@@ -78,12 +75,12 @@ impl Render for BottomTerminal {
         let t = cx.theme().clone();
         let hub = ProjectTerminals::hub(cx);
         let root = self.root(cx);
+        let folder = root.trim_end_matches('/').rsplit('/').next().unwrap_or("").to_string();
         let (active, tabs): (TermSel, Vec<(u64, String, Option<u32>, Entity<TerminalView>)>) = {
             let h = hub.read(cx);
             let tabs = h.tabs(&root).iter().map(|tab| {
                 let v = tab.view.read(cx);
-                let title = Some(v.title()).filter(|s| !s.trim().is_empty()).unwrap_or_else(|| tab.name.clone());
-                (tab.id, title, v.exit_code(), tab.view.clone())
+                (tab.id, v.label(&folder), v.exit_code(), tab.view.clone())
             }).collect();
             (h.active(&root), tabs)
         };
@@ -96,7 +93,7 @@ impl Render for BottomTerminal {
             .child(div().pr_2().text_size(px(11.)).text_color(t.muted_foreground).child("终端"))
             .children(tabs.iter().map(|(id, title, exit, _)| {
                 let id = *id;
-                let label: String = title.chars().take(MAX_TAB_CHARS).collect();
+                let label = crate::term_panel::clip_label(title);
                 let (hub_a, root_a, hub_c, root_c) = (hub.clone(), root.clone(), hub.clone(), root.clone());
                 div().id(SharedString::from(format!("bt-tab-{id}"))).h(px(24.)).px_2().flex().items_center().gap_1().rounded(px(6.)).cursor_pointer().text_size(px(12.))
                     .when(shown == Some(id), |d| d.bg(t.list_active).font_weight(FontWeight::MEDIUM))

@@ -34,6 +34,8 @@ pub struct TerminalView {
     dragged: bool,
     /// 滚轮累计的未满一行的像素(平滑滚动 / 触控板每次只给几像素)
     wheel_acc: f32,
+    /// 前台进程名的缓存(查询时间, 进程名),见 `label`
+    fg_cache: std::cell::RefCell<(std::time::Instant, Option<String>)>,
     _pump: Task<()>,
 }
 
@@ -79,13 +81,24 @@ impl TerminalView {
                 })
                 .detach();
             }
-            Self { term, focus: cx.focus_handle(), metrics: metrics_of(tp.font_size), cell_w: None, grid: (80, 24), bounds: None, selecting: false, dragged: false, wheel_acc: 0., _pump: pump }
+            Self { term, focus: cx.focus_handle(), metrics: metrics_of(tp.font_size), cell_w: None, grid: (80, 24), bounds: None, selecting: false, dragged: false, wheel_acc: 0., fg_cache: std::cell::RefCell::new((std::time::Instant::now() - std::time::Duration::from_secs(10), None)), _pump: pump }
         }))
     }
 
     /// 程序设置的标题;没有则为空。
     pub fn title(&self) -> String {
         self.term.snapshot().title
+    }
+
+    /// 标签名:`前台进程 · 当前目录`(参考 VS Code);进程名每 0.7 秒最多查一次。
+    ///
+    /// 参数:`fallback_folder` 标题里取不到目录时用的目录名(项目目录名)。
+    pub fn label(&self, fallback_folder: &str) -> String {
+        let mut cache = self.fg_cache.borrow_mut();
+        if cache.0.elapsed() > std::time::Duration::from_millis(700) {
+            *cache = (std::time::Instant::now(), self.term.foreground_pid().and_then(loom_term::label::process_name));
+        }
+        loom_term::label::tab_label(cache.1.as_deref(), &self.title(), fallback_folder)
     }
 
     /// shell 的退出码;还在运行返回 `None`。

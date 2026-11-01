@@ -7,6 +7,7 @@
 
 pub mod keys;
 pub mod snapshot;
+pub mod label;
 mod terminal;
 
 pub use keys::{Mods, encode_key};

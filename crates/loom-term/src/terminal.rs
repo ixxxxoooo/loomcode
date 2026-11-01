@@ -268,6 +268,11 @@ impl Terminal {
         *self.exit_code.lock().unwrap()
     }
 
+    /// 前台进程组的组长进程号(shell 空闲时是 shell,命令运行时是那条命令);取不到返回 `None`。
+    pub fn foreground_pid(&self) -> Option<i32> {
+        self.master.lock().ok()?.process_group_leader()
+    }
+
     /// 结束子进程(重复调用无害)。
     pub fn kill(&self) {
         let _ = self.child.lock().unwrap().kill();
