@@ -23,6 +23,8 @@ pub struct ClaudeBackend {
     pub add_dirs: Vec<String>,
     pub allowed_tools: Vec<String>,
     pub mcp_config: Option<String>,
+    /// 握手超时(`None` 用默认的 60 秒;测试里调短)
+    pub init_timeout: Option<std::time::Duration>,
 }
 
 impl ClaudeBackend {
@@ -95,8 +97,9 @@ impl AgentBackend for ClaudeBackend {
 
         // 握手超时:claude 卡在启动阶段(既不应答也不退出)时,不能让界面一直停在「处理中」
         let t = tx.clone();
+        let init_timeout = self.init_timeout.unwrap_or(INIT_TIMEOUT);
         spawn_named("loom-claude-init-timer", move || {
-            std::thread::sleep(INIT_TIMEOUT);
+            std::thread::sleep(init_timeout);
             let _ = t.send(Msg::InitTimeout);
         })?;
 

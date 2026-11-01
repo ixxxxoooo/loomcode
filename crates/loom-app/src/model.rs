@@ -217,6 +217,12 @@ impl SessionModel {
         cx.notify();
     }
 
+    /// 取走全部排队消息(撤回用),返回按排队顺序的文本。
+    pub fn take_queued(&mut self, cx: &mut Context<Self>) -> Vec<String> {
+        cx.notify();
+        std::mem::take(&mut self.queued)
+    }
+
     pub fn cancel(&mut self, cx: &mut Context<Self>) {
         self.handle.send(AgentCommand::Cancel);
         cx.notify();

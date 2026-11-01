@@ -168,6 +168,20 @@ impl Composer {
         self.refresh_suggestions(cx);
     }
 
+    /// 撤回排队消息:全部退回输入框(接在已输入内容之后),可修改后重新发送。
+    ///
+    /// 参数 `window` / `cx`:当前窗口与上下文。排队为空时什么都不做。
+    pub fn withdraw_queued(&mut self, window: &mut Window, cx: &mut Context<Self>) {
+        let queued = self.session.update(cx, |m, cx| m.take_queued(cx));
+        if queued.is_empty() {
+            return;
+        }
+        let cur = self.input.read(cx).value().trim_end().to_string();
+        let text = std::iter::once(cur).filter(|c| !c.is_empty()).chain(queued).collect::<Vec<_>>().join("\n\n");
+        self.set_text(&text, window, cx);
+        self.focus(window, cx);
+    }
+
     /// 在光标处插入文字(从设置页「在对话中使用」调用),并刷新补全。
     pub fn insert_text(&mut self, text: &str, window: &mut Window, cx: &mut Context<Self>) {
         self.input.update(cx, |i, cx| i.insert(text.to_string(), window, cx));
@@ -508,7 +522,15 @@ impl Render for Composer {
                             h_flex().h(px(36.)).px_2().gap_1().items_center()
                                 .child(chip("chip-mode", mode.label().to_string(), mode_color, Pick::Mode, Some(icon(crate::mode_style::mode_icon(mode), 13., mode_color).into_any_element()), this.clone()))
                                 .child(chip("chip-model", format!("{model_name} · {}", effort.label()), t.foreground, Pick::Model, Some(crate::brand_icons::brand_icon(&model_id, &model_name, 13., t.foreground)), this.clone()))
-                                .when(queued > 0, |d| d.child(pill(format!("排队 {queued}"), t.warning, t.muted)))
+                                .when(queued > 0, |d| {
+                                    // 点击撤回:排队消息退回输入框
+                                    let this = this.clone();
+                                    d.child(pill(format!("排队 {queued} · 撤回"), t.warning, t.muted).cursor_pointer()
+                                        .on_mouse_down(MouseButton::Left, move |_, window, cx| {
+                                            cx.stop_propagation();
+                                            this.update(cx, |c, cx| c.withdraw_queued(window, cx));
+                                        }))
+                                })
                                 .child(div().flex_1())
                                 .child({
                                     // 始终显示:没发过消息时也能点开查账户限额

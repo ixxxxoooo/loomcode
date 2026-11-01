@@ -89,7 +89,7 @@ pub fn render(wb: &Workbench, cx: &mut Context<Workbench>) -> AnyElement {
         ], cx))
         .children(detail(wb, cx))
         .children(super::mapping_page::sections(wb, cx))
-        .child(note("配置存 ~/.loomcode/providers.json,API Key 单独存 provider-keys.json(权限 0600),只在启动 claude 时以环境变量注入,不改动 ~/.claude;对之后新建或重新连接的会话生效", cx))
+        .child(note("配置存 ~/.loomcode/providers.json,API Key 单独存 provider-keys.json(权限 0600);映射以环境变量(ANTHROPIC_MODEL 等)在启动 claude 时注入,不改动 ~/.claude,对之后新建或重新连接的会话生效。悬停槽位名可看对应的环境变量", cx))
         .into_any_element()
 }
 

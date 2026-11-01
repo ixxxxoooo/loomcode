@@ -68,8 +68,12 @@ pub fn restart_config(config: &BackendConfig, session_id: Option<&str>, persiste
 }
 
 /// 会话记录是否已写入 `~/.claude/projects/<编码后的 cwd>/<id>.jsonl`。
+///
+/// claude 可能按解开符号链接后的路径记录(`/var` → `/private/var`),两种写法都查。
 fn session_on_disk(projects: &Path, cwd: &str, id: &str) -> bool {
-    projects.join(crate::history::encode_project_dir(cwd)).join(format!("{id}.jsonl")).is_file()
+    let file = format!("{id}.jsonl");
+    let real = std::fs::canonicalize(cwd).ok().map(|p| p.to_string_lossy().to_string());
+    std::iter::once(cwd.to_string()).chain(real).any(|c| projects.join(crate::history::encode_project_dir(&c)).join(&file).is_file())
 }
 
 /// 惰性后端的主循环:等命令 → 启动 → 转发;进程退出后等下一条提示再启动。

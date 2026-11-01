@@ -6,6 +6,8 @@
 while IFS= read -r line; do
   case "$line" in
     *'"subtype":"initialize"'*)
+      # MOCK_NO_INIT:模拟卡在启动阶段,永不应答握手
+      [ -n "$MOCK_NO_INIT" ] && continue
       echo '{"type":"control_response","response":{"subtype":"success","request_id":"req_init","response":{"models":[{"value":"default","displayName":"默认","description":"d"},{"value":"opus","displayName":"Opus","description":"o"}],"current_permission_mode":"default"}}}'
       ;;
     *'"subtype":"interrupt"'*)
@@ -21,6 +23,14 @@ while IFS= read -r line; do
       case "$line" in
         *SLEEP*) continue ;;
         *EXIT*) echo "boom on stderr" >&2; exit 3 ;;
+        # NORESULT:处理完只报告空闲、不发 result(验证忙闲兜底)
+        *NORESULT*)
+          uuid=$(printf '%s' "$line" | sed 's/.*"uuid":"\([^"]*\)".*/\1/')
+          echo '{"type":"system","subtype":"session_state_changed","state":"running"}'
+          echo '{"type":"assistant","message":{"id":"m9","content":[{"type":"text","text":"做完了"}]}}'
+          echo "{\"type\":\"command_lifecycle\",\"command_uuid\":\"$uuid\",\"state\":\"completed\"}"
+          echo '{"type":"system","subtype":"session_state_changed","state":"idle"}'
+          continue ;;
       esac
       echo '{"type":"system","subtype":"init","session_id":"sess-1","cwd":"/tmp"}'
       echo '{"type":"stream_event","api_message_id":"m1","event":{"type":"message_start","message":{"id":"m1"}}}'
