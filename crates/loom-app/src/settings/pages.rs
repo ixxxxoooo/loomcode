@@ -76,13 +76,14 @@ pub fn general(wb: &Workbench, cx: &mut Context<Workbench>) -> AnyElement {
 /// 外观页:主题与强调色。
 pub fn appearance(wb: &Workbench, cx: &mut Context<Workbench>) -> AnyElement {
     v_flex().w_full()
-        .child(page_header("外观", "主题与强调色", div(), cx))
+        .child(page_header("外观", "主题、内容宽度、字号、滚动条与等待动画", div(), cx))
         .child(group("主题", rows![
             block_row("配色方案", "纸感为默认;One 是中性灰蓝风格;也可以跟随系统明暗", theme_picker(wb, cx), cx),
         ], cx))
         .child(group("强调色", rows![
             row("强调色", "按钮、选中态、链接等使用的主题色", accent_picker(wb, cx), cx),
         ], cx))
+        .children(super::appearance_page::sections(wb, cx))
         .into_any_element()
 }
 

@@ -12,7 +12,10 @@ use gpui_kit::*;
 use loom_core::*;
 
 /// 时间线内容的最大宽度(居中)。
-pub const CONTENT_MAX_W: f32 = 820.;
+/// 会话内容最大宽度(pt),取自外观偏好。
+pub fn content_max_w(cx: &App) -> f32 {
+    cx.try_global::<crate::UiPrefs>().map_or(820., |p| p.chat_width)
+}
 
 /// 虚拟列表的一行:加上居中容器与垂直间距。
 pub fn render_row(session: &Entity<SessionModel>, ix: usize, window: &mut Window, cx: &mut App) -> AnyElement {
@@ -51,7 +54,7 @@ pub fn render_row(session: &Entity<SessionModel>, ix: usize, window: &mut Window
         // 首行顶部、末行底部留白(不能用列表内边距,见 workbench 里的说明);要放在 py 之后才生效
         .when(ix == 0, |d| d.pt(px(13.)))
         .when(ix + 1 == count, |d| d.pb(px(25.)))
-        .child(div().w_full().max_w(px(CONTENT_MAX_W)).child(body))
+        .child(div().w_full().max_w(px(content_max_w(cx))).child(body))
         .into_any_element()
 }
 
@@ -60,7 +63,7 @@ fn render_working(cx: &App) -> AnyElement {
     let t = cx.theme();
     h_flex().h(px(26.)).px_2().gap_2().items_center()
         .child(gpui_kit::component::spinner::Spinner::new().xsmall())
-        .child(ShimmerText::new("处理中…").id("working-shimmer"))
+        .child(ShimmerText::new(crate::appearance::working_text(cx)).id("working-shimmer"))
         .text_size(px(13.)).text_color(t.muted_foreground)
         .into_any_element()
 }
@@ -157,7 +160,7 @@ fn render_thinking(session: &Entity<SessionModel>, id: &str, text: &str, streami
                 .on_click(move |_, _, cx| { s.update(cx, |m, cx| m.toggle(&sid, cx)); })
                 .child(icon(IconName::Brain, 14., t.muted_foreground))
                 .child(if streaming {
-                    ShimmerText::new("思考中…").id(SharedString::from(format!("think-shimmer-{id}"))).into_any_element()
+                    ShimmerText::new(crate::appearance::thinking_text(cx)).id(SharedString::from(format!("think-shimmer-{id}"))).into_any_element()
                 } else {
                     div().text_size(px(13.)).text_color(t.muted_foreground).child(thought_label(session.read(cx).thinking_secs(id))).into_any_element()
                 })

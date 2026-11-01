@@ -8,6 +8,7 @@
 #![recursion_limit = "512"]
 
 mod ansi;
+mod appearance;
 mod app_icon;
 mod automation_page;
 mod branch_bar;
@@ -89,11 +90,34 @@ use gpui_kit::*;
 use workbench::Workbench;
 
 /// 界面偏好的全局副本,供不持有工作台引用的渲染函数读取。
-#[derive(Clone, Copy, Default)]
+#[derive(Clone, Copy)]
 pub struct UiPrefs {
     pub expand_thinking: bool,
     /// ⌘Enter 发送、Enter 换行
     pub cmd_enter_send: bool,
+    /// 会话内容最大宽度(pt)
+    pub chat_width: f32,
+    /// 时间线正文字号倍率(1.0 = 100%)
+    pub font_scale: f32,
+    /// 等待动画文案风格
+    pub spinner: loom_config::SpinnerStyle,
+}
+impl UiPrefs {
+    /// 由偏好得到界面偏好副本。
+    pub fn from_settings(s: &loom_config::AppSettings) -> Self {
+        Self {
+            expand_thinking: s.expand_thinking,
+            cmd_enter_send: s.send_with_cmd_enter,
+            chat_width: f32::from(s.appearance.chat_width.clamp(560, 1600)),
+            font_scale: f32::from(s.appearance.timeline_font_pct.clamp(85, 150)) / 100.,
+            spinner: s.appearance.spinner,
+        }
+    }
+}
+impl Default for UiPrefs {
+    fn default() -> Self {
+        Self::from_settings(&loom_config::AppSettings::default())
+    }
 }
 impl Global for UiPrefs {}
 

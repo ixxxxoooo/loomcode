@@ -11,6 +11,7 @@
 
 mod actions;
 mod advanced_page;
+mod appearance_page;
 mod browser_page;
 mod claude_pages;
 mod cli;
@@ -318,7 +319,7 @@ pub fn render(wb: &mut Workbench, window: &mut Window, cx: &mut Context<Workbenc
                 .child(
                     div().id("settings-scroll").flex_1().min_h_0().w_full().overflow_y_scroll().flex().flex_col().items_center().px_6().pb_10()
                         // 切换分类时内容淡入(元素 id 随分类变化,动画会重新开始)
-                        .child(v_flex().id(SharedString::from(format!("page-{}", tab.key()))).w_full().max_w(px(760.)).flex_none().child(body)
+                        .child(v_flex().id(SharedString::from(format!("page-{}", tab.key()))).w_full().max_w(px(f32::from(wb.settings.appearance.settings_width.clamp(560, 1600)))).flex_none().child(body)
                             .with_animation(SharedString::from(format!("fade-{}", tab.key())), Animation::new(Duration::from_millis(150)), |d, k| d.opacity(0.4 + 0.6 * k))),
                 ),
         )

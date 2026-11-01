@@ -452,7 +452,7 @@ impl Render for Composer {
                 }
             }))
             .child(
-            v_flex().relative().w_full().max_w(px(crate::timeline::CONTENT_MAX_W))
+            v_flex().relative().w_full().max_w(px(crate::timeline::content_max_w(cx)))
                 .when_some(suggestions, |d, s| d.child(s))
                 .child(
                     v_flex().w_full().rounded(px(14.)).border_1().border_color(t.border).bg(t.popover).shadow_sm()

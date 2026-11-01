@@ -165,6 +165,52 @@ impl IntelPrefs {
     }
 }
 
+/// 滚动条显示方式。
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, Default)]
+#[serde(rename_all = "snake_case")]
+pub enum ScrollbarStyle {
+    /// 沿用 macOS「显示滚动条」设置
+    #[default]
+    System,
+    /// 仅在滚动时出现
+    Auto,
+    /// 常驻
+    Always,
+}
+
+/// 等待动画(运行中提示)的文案风格。
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, Default)]
+#[serde(rename_all = "snake_case")]
+pub enum SpinnerStyle {
+    #[default]
+    Classic,
+    Fun,
+    ClaudeCode,
+    Poetic,
+    Geek,
+    Minimal,
+}
+
+/// 外观偏好:内容宽度、字号、滚动条、等待动画。
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[serde(default)]
+pub struct AppearancePrefs {
+    /// 会话时间线与输入框的最大宽度(pt)
+    pub chat_width: u16,
+    /// 设置页右侧内容的最大宽度(pt)
+    pub settings_width: u16,
+    /// 时间线正文字号百分比(85–150)
+    pub timeline_font_pct: u16,
+    pub scrollbar: ScrollbarStyle,
+    pub spinner: SpinnerStyle,
+}
+
+impl Default for AppearancePrefs {
+    fn default() -> Self {
+        Self { chat_width: 820, settings_width: 760, timeline_font_pct: 100, scrollbar: ScrollbarStyle::System, spinner: SpinnerStyle::Classic }
+    }
+}
+
 /// 偏好设置。所有字段都有默认值,旧文件缺字段时不会报错。
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 #[serde(default)]
@@ -210,6 +256,7 @@ pub struct AppSettings {
     pub last_settings_tab: String,
     /// 上次停留的「自定义」标签(小写名)
     pub last_customize_tab: String,
+    pub appearance: AppearancePrefs,
     pub editor: EditorPrefs,
     pub terminal: TerminalPrefs,
     pub browser: BrowserPrefs,
@@ -243,6 +290,7 @@ impl Default for AppSettings {
             no_proxy: String::new(),
             last_settings_tab: String::new(),
             last_customize_tab: String::new(),
+            appearance: AppearancePrefs::default(),
             editor: EditorPrefs::default(),
             terminal: TerminalPrefs::default(),
             browser: BrowserPrefs::default(),

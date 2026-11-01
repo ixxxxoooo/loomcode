@@ -309,7 +309,8 @@ impl Workbench {
         cx.set_global(theme::Accent(wb.settings.accent.as_deref().and_then(theme::parse_hex)));
         theme::apply(kind, Some(window), cx);
         crate::app_icon::set_tray_visible(wb.settings.tray_icon);
-        cx.set_global(crate::UiPrefs { expand_thinking: wb.settings.expand_thinking, cmd_enter_send: wb.settings.send_with_cmd_enter });
+        cx.set_global(crate::UiPrefs::from_settings(&wb.settings));
+        crate::appearance::apply_scrollbar(wb.settings.appearance.scrollbar, cx);
         cx.set_global(crate::Prefs(wb.settings.clone()));
         if !demo {
             wb.detect_claude(cx);
@@ -658,11 +659,12 @@ impl Workbench {
     /// 修改偏好:立即生效并落盘。
     pub fn update_settings(&mut self, cx: &mut Context<Self>, f: impl FnOnce(&mut AppSettings)) {
         let (old_theme, old_accent, old_expand) = (self.settings.theme, self.settings.accent.clone(), self.settings.expand_thinking);
+        let old_layout = (self.settings.appearance.chat_width, self.settings.appearance.timeline_font_pct, self.settings.appearance.scrollbar);
         f(&mut self.settings);
         if let Err(e) = self.settings.save(&self.settings_path) {
             eprintln!("保存设置失败:{e}");
         }
-        cx.set_global(crate::UiPrefs { expand_thinking: self.settings.expand_thinking, cmd_enter_send: self.settings.send_with_cmd_enter });
+        cx.set_global(crate::UiPrefs::from_settings(&self.settings));
         cx.set_global(crate::Prefs(self.settings.clone()));
         if self.settings.accent != old_accent {
             cx.set_global(theme::Accent(self.settings.accent.as_deref().and_then(theme::parse_hex)));
@@ -672,7 +674,12 @@ impl Workbench {
             cx.defer(move |cx| theme::apply(kind, None, cx));
         }
         // 只有「默认展开思考」会改变对话流行高,其它偏好不必重新测量全部会话
-        if self.settings.expand_thinking != old_expand {
+        let layout = (self.settings.appearance.chat_width, self.settings.appearance.timeline_font_pct, self.settings.appearance.scrollbar);
+        if layout.2 != old_layout.2 {
+            crate::appearance::apply_scrollbar(layout.2, cx);
+        }
+        // 内容宽度与正文字号会改变折行,需要重新测量
+        if self.settings.expand_thinking != old_expand || layout.0 != old_layout.0 || layout.1 != old_layout.1 {
             for v in self.views.values() {
                 v.model.update(cx, |m, cx| m.remeasure_all(cx));
             }
