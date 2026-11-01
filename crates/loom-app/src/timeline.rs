@@ -116,7 +116,10 @@ fn render_thinking(session: &Entity<SessionModel>, id: &str, text: &str, streami
                 .on_click(move |_, _, cx| { s.update(cx, |m, cx| m.toggle(&sid, cx)); })
                 .child(if streaming { crate::appearance::glyph_spinner(&format!("think-{id}"), t.primary, cx) } else { icon(IconName::Brain, 14., t.muted_foreground).into_any_element() })
                 .child(if streaming {
-                    ShimmerText::new(crate::appearance::status_line(crate::appearance::verb_text(cx, id), session.read(cx).turn_started)).id(SharedString::from(format!("think-shimmer-{id}"))).into_any_element()
+                    // 字号要在外层设(ShimmerText 自己不带),否则会用默认的大字号,和「已思考」(13px)对不上
+                    div().text_size(px(13.)).text_color(t.muted_foreground)
+                        .child(ShimmerText::new(crate::appearance::status_line(crate::appearance::verb_text(cx, id), session.read(cx).turn_started)).id(SharedString::from(format!("think-shimmer-{id}"))))
+                        .into_any_element()
                 } else {
                     div().text_size(px(13.)).text_color(t.muted_foreground).child(thought_label(session.read(cx).thinking_secs(id))).into_any_element()
                 })
