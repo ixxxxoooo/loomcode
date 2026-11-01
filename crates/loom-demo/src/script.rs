@@ -305,6 +305,9 @@ impl ScriptBuilder {
             five_hour_pct: five,
             weekly_pct: weekly,
             limits_state: LimitsState::Idle,
+            context_categories: demo_categories(used, size),
+            cache_last: CacheTokens { read: used * 9 / 10, written: used / 20, uncached: used / 20 },
+            cache_total: CacheTokens { read: used * 4, written: used / 2, uncached: used / 2 },
             five_hour_resets: five.map(|_| now_secs() + 4 * 3600 + 1500),
             weekly_resets: weekly.map(|_| now_secs() + 3 * 86400 + 7200),
         }));
@@ -430,4 +433,20 @@ pub fn question(header: &str, text: &str, opts: &[(&str, &str)], multi: bool) ->
 /// 当前 Unix 秒(演示限额的重置时刻以它为基准)。
 fn now_secs() -> i64 {
     std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH).map(|d| d.as_secs() as i64).unwrap_or(0)
+}
+
+/// 演示用的上下文分类:固定开销按比例,其余是消息,再加压缩预留与剩余。
+fn demo_categories(used: u64, size: u64) -> Vec<ContextCategory> {
+    if size == 0 {
+        return Vec::new();
+    }
+    let cat = |name: &str, tokens: u64, kind| ContextCategory { name: name.to_string(), tokens, kind };
+    let fixed = [("系统提示词", 3_200u64), ("系统工具", 11_500), ("MCP 工具", 4_800), ("记忆文件", 2_100), ("技能", 900)];
+    let fixed_sum: u64 = fixed.iter().map(|f| f.1).sum::<u64>().min(used);
+    let mut out: Vec<ContextCategory> = fixed.iter().map(|(n, t)| cat(n, (*t).min(used), ContextKind::Used)).collect();
+    out.push(cat("消息", used.saturating_sub(fixed_sum), ContextKind::Used));
+    let buffer = size / 6;
+    out.push(cat("压缩预留", buffer, ContextKind::Buffer));
+    out.push(cat("剩余空间", size.saturating_sub(used + buffer), ContextKind::Free));
+    out
 }

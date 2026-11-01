@@ -130,6 +130,7 @@ enum ReqKind {
     SetMode(PermissionMode),
     Other(&'static str),
     Usage,
+    Context,
 }
 
 struct Actor {
@@ -290,7 +291,10 @@ impl Actor {
                 self.request(ReqKind::Other("转入后台"), |id| protocol::background_tasks(id, tool_use_id.as_deref()));
             }
             AgentCommand::RefreshUsage => {
-                // 同一时刻只查一次,且 30 秒内不重复查
+                // 上下文明细每次打开都刷新;账户限额同一时刻只查一次,且 30 秒内不重复查
+                if !self.reqs.values().any(|k| matches!(k, ReqKind::Context)) {
+                    self.request(ReqKind::Context, protocol::get_context_usage);
+                }
                 let fresh = self.usage_asked_at.is_some_and(|t| t.elapsed() < std::time::Duration::from_secs(30));
                 if fresh || self.reqs.values().any(|k| matches!(k, ReqKind::Usage)) {
                     return true;
@@ -405,6 +409,10 @@ impl Actor {
                     self.emit_all(vec![warn("切换权限模式"), AgentEvent::ModeChanged(back)])
                 }
             }
+            ReqKind::Context => match self.translator.context_breakdown(&resp["response"], ok) {
+                Some(ev) => self.emit(ev),
+                None => true,
+            },
             ReqKind::Usage => {
                 let ev = self.translator.account_usage(&resp["response"], ok);
                 self.emit(ev)

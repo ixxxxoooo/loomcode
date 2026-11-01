@@ -656,6 +656,16 @@ impl Translator {
         if used > 0 {
             self.usage.context_used = used;
         }
+        let cache = |u: &Value| {
+            let n = |k: &str| u.get(k).and_then(Value::as_u64).unwrap_or(0);
+            CacheTokens { read: n("cache_read_input_tokens"), written: n("cache_creation_input_tokens"), uncached: n("input_tokens") }
+        };
+        let (last_cache, turn_cache) = (cache(last), cache(usage));
+        if last_cache.total() > 0 {
+            self.usage.cache_last = last_cache;
+        }
+        let total = &mut self.usage.cache_total;
+        (total.read, total.written, total.uncached) = (total.read + turn_cache.read, total.written + turn_cache.written, total.uncached + turn_cache.uncached);
         out.push(AgentEvent::Usage(self.usage.clone()));
 
         let is_error = v.get("is_error").and_then(Value::as_bool).unwrap_or(false);
@@ -691,6 +701,34 @@ impl Translator {
     pub fn usage_checking(&mut self) -> AgentEvent {
         self.usage.limits_state = LimitsState::Checking;
         AgentEvent::Usage(self.usage.clone())
+    }
+
+    /// 处理 `get_context_usage` 的应答:按类别的明细与总量;失败或格式不符时返回 `None`(旧版 claude 可能不支持)。
+    pub fn context_breakdown(&mut self, body: &Value, ok: bool) -> Option<AgentEvent> {
+        let cats = body.get("categories")?.as_array().filter(|_| ok)?;
+        let list: Vec<ContextCategory> = cats
+            .iter()
+            .filter_map(|c| {
+                let kind = match str_of(c, "kind") {
+                    "free" => ContextKind::Free,
+                    "buffer" => ContextKind::Buffer,
+                    "deferred" => ContextKind::Deferred,
+                    _ => ContextKind::Used,
+                };
+                Some(ContextCategory { name: c.get("name")?.as_str()?.to_string(), tokens: c.get("tokens")?.as_u64()?, kind })
+            })
+            .collect();
+        if list.is_empty() {
+            return None;
+        }
+        if let Some(max) = body.get("maxTokens").and_then(Value::as_u64).filter(|m| *m > 0) {
+            self.usage.context_size = max;
+        }
+        if let Some(total) = body.get("totalTokens").and_then(Value::as_u64) {
+            self.usage.context_used = total;
+        }
+        self.usage.context_categories = list;
+        Some(AgentEvent::Usage(self.usage.clone()))
     }
 
     /// 处理 `get_usage` 的应答:`rate_limits.five_hour / seven_day` 的 `utilization` 已是百分比。
@@ -1049,6 +1087,23 @@ pub fn build_tool(id: &str, name: &str, input: &Value, cwd: &str) -> ToolCall {
 mod tests {
     use super::*;
     use serde_json::json;
+
+    #[test]
+    fn 上下文明细与缓存() {
+        let mut t = Translator::new("/private/tmp/loom-probe");
+        let body = json!({"categories": [
+            {"name": "System prompt", "tokens": 3000, "kind": "used"},
+            {"name": "Messages", "tokens": 9000, "kind": "used"},
+            {"name": "Autocompact buffer", "tokens": 33000, "kind": "buffer"},
+            {"name": "Free space", "tokens": 155000, "kind": "free"}], "totalTokens": 12000, "maxTokens": 200000});
+        let Some(AgentEvent::Usage(u)) = t.context_breakdown(&body, true) else { panic!() };
+        assert_eq!((u.context_used, u.context_size, u.context_categories.len()), (12000, 200000, 4));
+        assert_eq!(u.context_categories[2].kind, ContextKind::Buffer);
+        assert!(t.context_breakdown(&json!({}), true).is_none());
+        let cache = CacheTokens { read: 90, written: 5, uncached: 5 };
+        assert_eq!(cache.hit_percent(), 90);
+        assert_eq!(CacheTokens::default().hit_percent(), 0);
+    }
 
     #[test]
     fn get_usage应答写入限额与状态() {

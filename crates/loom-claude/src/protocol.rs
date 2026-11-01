@@ -69,6 +69,11 @@ pub fn initialize(request_id: &str) -> Value {
     )
 }
 
+/// 查询上下文按类别的明细(不调用模型)。
+pub fn get_context_usage(request_id: &str) -> Value {
+    control_request(request_id, json!({"subtype": "get_context_usage", "detail": "summary"}))
+}
+
 /// 查询账户用量与限额(`/usage` 同源)。
 pub fn get_usage(request_id: &str) -> Value {
     control_request(request_id, json!({"subtype": "get_usage", "skip_behaviors": true}))

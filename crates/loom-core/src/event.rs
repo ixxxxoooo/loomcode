@@ -33,8 +33,59 @@ pub struct Usage {
     pub five_hour_resets: Option<i64>,
     /// 每周限额的重置时刻(Unix 秒)
     pub weekly_resets: Option<i64>,
+    /// 上下文按类别的明细(`get_context_usage`);空表示还没查到
+    pub context_categories: Vec<ContextCategory>,
+    /// 最近一次请求的提示缓存情况
+    pub cache_last: CacheTokens,
+    /// 整段主对话累计的提示缓存情况
+    pub cache_total: CacheTokens,
     /// 限额查询状态(只在用户点开上下文弹层时才查询,不自动轮询)
     pub limits_state: LimitsState,
+}
+
+/// 上下文类别的性质。
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
+pub enum ContextKind {
+    /// 占用窗口
+    #[default]
+    Used,
+    /// 剩余空间
+    Free,
+    /// 为压缩预留
+    Buffer,
+    /// 按需加载、暂不占用窗口
+    Deferred,
+}
+
+/// 上下文的一个类别(系统提示、工具、消息…)。
+#[derive(Debug, Clone, PartialEq)]
+pub struct ContextCategory {
+    pub name: String,
+    pub tokens: u64,
+    pub kind: ContextKind,
+}
+
+/// 提示缓存的 token 分布:命中读取、写入、未缓存。
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
+pub struct CacheTokens {
+    pub read: u64,
+    pub written: u64,
+    pub uncached: u64,
+}
+
+impl CacheTokens {
+    /// 三项之和。
+    pub fn total(&self) -> u64 {
+        self.read + self.written + self.uncached
+    }
+
+    /// 命中率(0..=100,取整);没有数据为 0。
+    pub fn hit_percent(&self) -> u32 {
+        match self.total() {
+            0 => 0,
+            t => (self.read as f64 / t as f64 * 100.0).round() as u32,
+        }
+    }
 }
 
 /// 账户限额的查询状态。

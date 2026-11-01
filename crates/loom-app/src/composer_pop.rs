@@ -34,7 +34,7 @@ pub fn ratio_color(ratio: f32, cx: &App) -> Hsla {
     }
 }
 
-/// 输入框右下角的上下文圆环 + 百分比,点击打开上下文弹层。
+/// 输入框右下角的上下文圆环(不带百分比文字,数字在面板里),点击打开上下文弹层。
 pub fn context_ring(usage: &Usage, on_click: impl Fn(&mut App) + 'static, cx: &App) -> impl IntoElement {
     let ratio = usage.context_ratio();
     let color = ratio_color(ratio, cx);
@@ -42,7 +42,6 @@ pub fn context_ring(usage: &Usage, on_click: impl Fn(&mut App) + 'static, cx: &A
         .hover(|d| d.bg(cx.theme().list_hover))
         .on_click(move |_, _, cx| on_click(cx))
         .child(ProgressCircle::new("ctx-ring").value(ratio * 100.).color(color).size(px(14.)))
-        .child(format!("{:.0}%", ratio * 100.))
 }
 
 /// 模型弹层。

@@ -12,7 +12,7 @@ use gpui_kit::assets::IconName;
 use gpui_kit::component::{ActiveTheme, h_flex, v_flex};
 use gpui_kit::prelude::FluentBuilder as _;
 use gpui_kit::*;
-use loom_core::{LimitsState, Usage};
+use loom_core::{ContextCategory, ContextKind, LimitsState, Usage};
 
 /// 把剩余秒数写成「N 分钟后重置」「N 小时 M 分后重置」「N 天 H 小时后重置」;已过期返回空串。
 ///
@@ -35,12 +35,17 @@ fn now_secs() -> i64 {
     std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH).map(|d| d.as_secs() as i64).unwrap_or(0)
 }
 
-/// 一条圆角用量条:`fraction`(0..=1)为已用部分,其余是轨道色。
-fn strip(fraction: f32, color: Hsla, height: f32, cx: &App) -> Div {
+/// 一条圆角用量条:各段按占 `total` 的比例从左依次排列,其余是轨道色;过小的段至少 2px。
+fn strip(total: u64, parts: &[(u64, Hsla)], height: f32, cx: &App) -> Div {
     let t = cx.theme();
-    let f = fraction.clamp(0., 1.);
-    div().h(px(height)).w_full().rounded_full().bg(t.muted).overflow_hidden()
-        .child(div().h_full().w(relative(f)).min_w(px(if f > 0. { 2. } else { 0. })).bg(color))
+    let whole = total.max(1) as f32;
+    div().h(px(height)).w_full().rounded_full().bg(t.muted).overflow_hidden().flex().flex_row()
+        .children(parts.iter().filter(|(n, _)| *n > 0).map(|(n, c)| div().h_full().flex_none().w(relative((*n as f32 / whole).min(1.))).min_w(px(2.)).bg(*c)))
+}
+
+/// 单段用量条(限额行用)。
+fn meter(fraction: f32, color: Hsla, height: f32, cx: &App) -> Div {
+    strip(1000, &[((fraction.clamp(0., 1.) * 1000.) as u64, color)], height, cx)
 }
 
 /// 一行限额:左名称 / 中进度条 / 百分比 / 右重置提示;≥70% 警示色,≥90% 危险色。
@@ -51,7 +56,7 @@ fn limit_row(label: &'static str, pct: f32, resets: Option<i64>, cx: &App) -> Di
     let note = resets.map(|r| reset_text(r - now_secs())).unwrap_or_default();
     h_flex().w_full().gap_2().items_center().text_size(px(12.))
         .child(div().w(px(84.)).flex_none().text_color(t.muted_foreground).child(label))
-        .child(div().flex_1().min_w_0().child(strip(ratio, color, 4., cx)))
+        .child(div().flex_1().min_w_0().child(meter(ratio, color, 4., cx)))
         .child(div().w(px(40.)).flex_none().text_right().font_family(MONO).text_color(if ratio >= 0.9 { color } else { t.foreground }).child(format!("{:.0}%", pct)))
         .child(div().w(px(108.)).flex_none().text_right().text_size(px(11.)).text_color(t.muted_foreground).child(note))
 }
@@ -73,19 +78,38 @@ pub fn context_popup(usage: &Usage, this: Entity<Composer>, cx: &App) -> Div {
     };
     let (a, b) = (this.clone(), this);
     let free = usage.context_size.saturating_sub(usage.context_used);
-    let legend = |label: &'static str, tokens: u64, color: Option<Hsla>| {
+    // 分类配色:已使用的类别依次取图表色;压缩预留 / 按需加载用灰色,不占条
+    let palette = [t.chart_3, t.success, t.warning, t.primary, t.info, t.danger];
+    let used_cats: Vec<(&ContextCategory, Hsla)> = usage.context_categories.iter().filter(|c| c.kind == ContextKind::Used && c.tokens > 0).enumerate().map(|(i, c)| (c, palette[i % palette.len()])).collect();
+    let reserved: u64 = usage.context_categories.iter().filter(|c| c.kind == ContextKind::Buffer).map(|c| c.tokens).sum();
+    let parts: Vec<(u64, Hsla)> = if used_cats.is_empty() { vec![(usage.context_used, ratio_color(ratio, cx))] } else { used_cats.iter().map(|(c, col)| (c.tokens, *col)).collect() };
+    let legend = |label: String, tokens: u64, color: Option<Hsla>| {
         h_flex().gap_1p5().items_center().text_size(px(12.))
             .when_some(color, |d, c| d.child(div().size(px(9.)).rounded(px(2.)).bg(c)))
             .child(div().text_color(t.muted_foreground).child(label))
             .child(div().font_family(MONO).child(short_tokens(tokens)))
     };
+    let legends: Vec<Div> = if used_cats.is_empty() {
+        vec![legend("已使用".into(), usage.context_used, Some(ratio_color(ratio, cx))), legend("剩余".into(), free, None)]
+    } else {
+        used_cats.iter().map(|(c, col)| legend(c.name.clone(), c.tokens, Some(*col))).chain((reserved > 0).then(|| legend("为压缩预留".into(), reserved, None))).collect()
+    };
+    let cache = (usage.cache_total.total() > 0).then(|| {
+        let l = usage.cache_last;
+        h_flex().w_full().gap_2().items_center().text_size(px(12.))
+            .child(div().w(px(84.)).flex_none().text_color(t.muted_foreground).child("提示缓存"))
+            .child(div().flex_1().min_w_0().child(strip(l.total(), &[(l.read, t.success), (l.written, t.warning), (l.uncached, t.danger)], 4., cx)))
+            .child(div().w(px(40.)).flex_none().text_right().font_family(MONO).child(format!("{}%", l.hit_percent())))
+            .child(div().w(px(108.)).flex_none().text_right().text_size(px(11.)).text_color(t.muted_foreground).child(format!("主对话 {}%", usage.cache_total.hit_percent())))
+    });
     let no_limits = usage.five_hour_pct.is_none() && usage.weekly_pct.is_none();
     let note = match usage.limits_state {
         LimitsState::Checking => "正在获取额度…",
         LimitsState::Unavailable => "暂时获取不到额度(第三方服务商或离线),稍后重新打开再试。",
         LimitsState::Idle => "额度在打开此面板时获取一次。",
     };
-    v_flex().absolute().bottom(px(44.)).right(px(8.)).w(px(460.)).max_w_full().px_4().py_3().gap_2p5().rounded(px(10.)).border_1().border_color(t.border).bg(t.popover).shadow_lg()
+    // 在输入框正上方弹出,宽度与输入框一致;点外部由输入框统一关闭
+    v_flex().absolute().bottom(relative(1.)).mb_2().left_0().right_0().px_4().py_3().gap_2p5().rounded(px(10.)).border_1().border_color(t.border).bg(t.popover).shadow_lg()
         .child(h_flex().gap_2().items_baseline()
             .child(div().text_size(px(13.)).font_weight(FontWeight::SEMIBOLD).child("上下文窗口"))
             .child(div().text_size(px(12.)).text_color(t.muted_foreground).child(if known {
@@ -93,8 +117,9 @@ pub fn context_popup(usage: &Usage, this: Entity<Composer>, cx: &App) -> Div {
             } else {
                 "发送消息后统计".to_string()
             })))
-        .child(strip(ratio, ratio_color(ratio, cx), 6., cx))
-        .when(known, |d| d.child(h_flex().gap_4().child(legend("已使用", usage.context_used, Some(t.primary))).child(legend("剩余", free, None))))
+        .child(strip(usage.context_size, &parts, 6., cx))
+        .when(known, |d| d.child(h_flex().flex_wrap().gap_x_4().gap_y_1p5().children(legends)))
+        .when_some(cache, |d, row| d.child(row))
         .child(div().h(px(1.)).bg(t.border))
         .child(h_flex().items_baseline()
             .child(div().text_size(px(13.)).font_weight(FontWeight::SEMIBOLD).child("套餐用量"))
