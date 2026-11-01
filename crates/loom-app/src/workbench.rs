@@ -1496,6 +1496,8 @@ impl Workbench {
             .key_context("Workbench")
             .track_focus(&self.focus)
             .on_action(cx.listener(|this, _: &ToggleLeft, _, cx| { this.left_open = !this.left_open; cx.notify(); }))
+            .on_action(cx.listener(|this, _: &crate::app_menu::NavBack, window, cx| this.navigate(false, window, cx)))
+            .on_action(cx.listener(|this, _: &crate::app_menu::NavForward, window, cx| this.navigate(true, window, cx)))
             .on_action(cx.listener(|this, _: &ToggleRight, _, cx| { this.right_open = !this.right_open; cx.notify(); }))
             .on_action(cx.listener(|this, a: &ViewAgentRun, _, cx| {
                 this.right_open = true;

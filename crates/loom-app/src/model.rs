@@ -99,8 +99,10 @@ impl SessionModel {
     fn on_events(&mut self, events: Vec<AgentEvent>, cx: &mut Context<Self>) {
         let mut dirty_rows: Vec<usize> = Vec::new();
         let mut turn_ended = false;
+        // 同一批里连续打到同一条目的事件(流式 delta)只定位一次
+        let mut last_target: Option<String> = None;
         for ev in events {
-            let target = ev.target_id().map(str::to_string);
+            let target = ev.target_id().filter(|id| last_target.as_deref() != Some(*id)).map(str::to_string);
             if matches!(ev, AgentEvent::TurnEnded(_)) {
                 turn_ended = true;
             }
@@ -108,6 +110,7 @@ impl SessionModel {
             if let Some(id) = target {
                 if let Some(row) = self.state.row_of(&id) {
                     dirty_rows.push(row);
+                    last_target = Some(id);
                 }
             }
         }

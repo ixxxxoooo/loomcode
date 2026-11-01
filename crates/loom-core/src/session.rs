@@ -499,18 +499,19 @@ impl SessionState {
                 return true;
             }
             match item {
-                TimelineItem::Subagent(s) => s.children.iter().any(|c| contains(c, id)),
+                TimelineItem::Subagent(s) => s.children.iter().rev().any(|c| contains(c, id)),
                 TimelineItem::Permission(p) => p.tool.id == id,
                 _ => false,
             }
         }
-        self.items.iter().position(|i| contains(i, id))
+        // 流式事件的目标几乎总在末尾,从尾部往前找;id 唯一,结果与正向查找一致
+        self.items.iter().rposition(|i| contains(i, id))
     }
 
-    /// 递归按 id 查找条目(含子 Agent 内部)。
+    /// 递归按 id 查找条目(含子 Agent 内部),从尾部往前找(活跃条目通常在末尾)。
     pub fn find_mut(&mut self, id: &str) -> Option<&mut TimelineItem> {
         fn find<'a>(items: &'a mut [TimelineItem], id: &str) -> Option<&'a mut TimelineItem> {
-            for item in items.iter_mut() {
+            for item in items.iter_mut().rev() {
                 if item.id() == id {
                     return Some(item);
                 }

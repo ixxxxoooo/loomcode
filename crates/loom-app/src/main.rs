@@ -8,6 +8,7 @@
 #![recursion_limit = "512"]
 
 mod ansi;
+mod app_menu;
 mod ask_cards;
 mod dock_cards;
 mod agent_group;
@@ -195,8 +196,6 @@ impl Global for UiPrefs {}
 #[derive(Clone, Default)]
 pub struct Prefs(pub loom_config::AppSettings);
 
-actions!(loomcode_app, [QuitApp]);
-
 /// 工作台的弱引用(各处的小控件改全局偏好时经它转交)。
 pub struct WorkbenchRef(pub WeakEntity<workbench::Workbench>);
 impl Global for WorkbenchRef {}
@@ -252,14 +251,8 @@ fn main() {
             loom_diag::crash::clean_exit("用户退出")
         })
         .detach();
-        // ⌘Q 退出:全局动作(任何窗口都生效);先标记正常退出再结束,否则下次启动会被误判为崩溃
-        cx.on_action(|_: &QuitApp, cx| {
-            loom_lsp::hub::kill_all();
-            loom_diag::crash::clean_exit("用户退出(⌘Q)");
-            cx.quit();
-        });
-        cx.bind_keys([KeyBinding::new("cmd-q", QuitApp, None)]);
-        cx.set_menus(vec![Menu { name: "LoomCode".into(), items: vec![MenuItem::action("退出 LoomCode", QuitApp)], disabled: false }]);
+        // 应用菜单与系统级快捷键(⌘Q / ⌘H / ⌘M / 全屏 / ⌘W / ⌘[ ⌘] 等)
+        app_menu::install(cx);
         lang_hl::register();
         markdown_editor::init(cx);
         theme::apply(theme::ThemeKind::PaperLight, None, cx);
