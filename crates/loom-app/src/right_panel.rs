@@ -1,4 +1,4 @@
-//! 右侧固定面板:改动 / 文件 / 终端 / 计划 / 输出,分段切换,同一时刻只显示一个。
+//! 右侧面板:改动 / 文件 / 终端 / 计划 / 输出,以可开关的标签呈现(标签条在 `right_tabs.rs`),同一时刻只显示一个。
 //!
 //! 面板是独立实体,持有当前会话模型的引用,所有内容都从会话状态推导,
 //! 因此演示后端与真实 Claude 后端共用同一套界面。
@@ -134,6 +134,8 @@ impl EventEmitter<PanelEvent> for RightPanel {}
 
 pub struct RightPanel {
     pub tab: RightTab,
+    /// 已打开的标签(顺序即标签条顺序);为空时显示入口列表
+    pub open: Vec<RightTab>,
     /// 是否显示顶部分段栏(IDE 窗口用活动栏切换,不显示)
     pub show_tabs: bool,
     /// 标签行末尾的额外控件(Agent 窗口放右面板开关与 IDE 入口),由工作台注入
@@ -159,6 +161,7 @@ impl RightPanel {
         let sub = cx.observe(&hub, |_, _, cx| cx.notify());
         Self {
             tab: RightTab::Changes,
+            open: crate::right_tabs::DEFAULT_TABS.to_vec(),
             show_tabs: true,
             trailing: None,
             model: None,
@@ -170,6 +173,11 @@ impl RightPanel {
             _term_hub_sub: sub,
             git: crate::git_changes::GitPane::new(),
         }
+    }
+
+    /// 当前会话里 Claude 改动过的文件数(快捷竖条的圆点用)。
+    pub fn change_count(&self, cx: &App) -> usize {
+        collect_changes(&self.items(cx)).len()
     }
 
     /// 切换到另一个会话。
@@ -185,42 +193,18 @@ impl RightPanel {
     }
 
     pub fn set_tab(&mut self, tab: RightTab, cx: &mut Context<Self>) {
-        self.tab = tab;
-        cx.notify();
+        self.open_tab(tab, cx);
     }
 
     /// 请求在「文件」里打开某个路径(相对或绝对)。
     pub fn request_open(&mut self, path: String, cx: &mut Context<Self>) {
-        self.tab = RightTab::Files;
+        self.open_tab(RightTab::Files, cx);
         self.pending_open = Some(path);
         cx.notify();
     }
 
     fn items(&self, cx: &App) -> Vec<TimelineItem> {
         self.model.as_ref().map(|m| m.read(cx).state.items.clone()).unwrap_or_default()
-    }
-
-    // ---------- 顶部分段 ----------
-
-    fn tab_bar(&self, changes: usize, window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
-        let t = cx.theme().clone();
-        let tab = self.tab;
-        let trailing = self.trailing.clone();
-        crate::window_header::draggable(h_flex().id("rt-tabbar").h(px(crate::window_header::HEADER_H)).flex_none().px_2().gap_0p5().items_center())
-            .children(RightTab::ALL.into_iter().map(|rt| {
-                let on = rt == tab;
-                h_flex().id(SharedString::from(format!("rt-{}", rt.label()))).h(px(26.)).px_1p5().gap_1().items_center().rounded(px(6.)).cursor_pointer()
-                    .text_size(px(12.))
-                    .text_color(if on { t.foreground } else { t.muted_foreground })
-                    .when(on, |d| d.bg(t.muted))
-                    .hover(|d| d.bg(t.list_hover))
-                    .on_click(cx.listener(move |this, _, _, cx| this.set_tab(rt, cx)))
-                    .child(icon(rt.icon(), 12., if on { t.foreground } else { t.muted_foreground }))
-                    .child(rt.label())
-                    .when(rt == RightTab::Changes && changes > 0, |d| d.child(pill(changes.to_string(), t.primary_foreground, t.primary)))
-            }))
-            .child(div().flex_1().h_full())
-            .when_some(trailing, |d, f| d.child(f(window, cx)))
     }
 
     // ---------- 改动 ----------
@@ -388,13 +372,13 @@ impl Render for RightPanel {
             self.git_auto_refresh(items.len(), cx);
         }
         let change_count = collect_changes(&items).len();
-        let body = match self.tab {
+        let body = if self.open.is_empty() { self.empty_tabs_view(cx) } else { match self.tab {
             RightTab::Changes => self.changes_tab(&items, cx),
             RightTab::Files => self.files.render(cx),
             RightTab::Terminal => self.terminal_tab(&items, cx),
             RightTab::Plan => self.plan_view(&items, cx),
             RightTab::Output => self.output_view(&items, cx),
-        };
+        } };
         v_flex().size_full().bg(t.background)
             .when(self.show_tabs, |d| d.child(self.tab_bar(change_count, window, cx)))
             .child(div().flex_1().min_h_0().child(body))

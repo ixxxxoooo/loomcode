@@ -4,7 +4,6 @@
 //!
 //! @author ixxxxoooo
 
-use crate::ide_chat_header;
 use crate::ide_status;
 use crate::ide::{CloseTab, FindInProject, GoToLine, IdeView, NavBack, NavForward, NextTab, PrevTab, QuickOpen};
 use crate::right_panel::{PanelEvent, RightPanel};
@@ -54,6 +53,13 @@ pub struct IdeWindow {
     pub(crate) term_open: bool,
     pub(crate) term: Entity<crate::ide_terminal::BottomTerminal>,
     pub(crate) _quick_sub: Option<Subscription>,
+    /// 对话栏的会话标签(会话 id,顺序即标签顺序)与相关状态
+    pub(crate) chat_tabs: Vec<String>,
+    pub(crate) chat_last_active: Option<String>,
+    /// 所有标签都被关掉了
+    pub(crate) chat_empty: bool,
+    /// 对话栏展开为占满窗口
+    pub(crate) chat_wide: bool,
 }
 
 impl IdeWindow {
@@ -96,7 +102,7 @@ impl IdeWindow {
         // 调试用:LOOM_IDE_TERM=1 启动时就展开底部终端面板,方便截图
         let term_open = std::env::var("LOOM_IDE_TERM").is_ok_and(|v| v == "1");
         // 此时工作台可能正处于更新中,不在这里回读它;首次渲染时再同步
-        Self { wb, panel, ide, focus, left_open: true, chat_open: true, left_narrow: false, left_before: true, chat_narrow: false, chat_before: true, synced: None, mem_gen: 0, _subs: subs, search, search_open: false, quick: None, _quick_sub: None, term_open, term }
+        Self { wb, panel, ide, focus, left_open: true, chat_open: true, left_narrow: false, left_before: true, chat_narrow: false, chat_before: true, synced: None, mem_gen: 0, _subs: subs, search, search_open: false, quick: None, _quick_sub: None, term_open, term, chat_tabs: Vec::new(), chat_last_active: None, chat_empty: false, chat_wide: false }
     }
 
     /// 让面板与根目录跟随工作台当前会话。
@@ -293,6 +299,7 @@ impl IdeWindow {
 impl Render for IdeWindow {
     fn render(&mut self, window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
         self.sync_state(cx);
+        self.sync_chat_tabs(cx);
         self.apply_responsive(f32::from(window.viewport_size().width));
         let t = cx.theme().clone();
         let (parts, project, project_name, mode, fused, branch, demo) = {
@@ -331,16 +338,16 @@ impl Render for IdeWindow {
                     .child(
                         div().flex_1().min_w_0().h_full().child(
                             h_resizable("ide-split")
-                                .child(resizable_panel().size(px(260.)).size_range(px(160.)..px(520.)).flex_none().visible(self.left_open)
+                                .child(resizable_panel().size(px(260.)).size_range(px(160.)..px(520.)).flex_none().visible(self.left_open && !self.chat_wide)
                                     .child(div().size_full().child(if self.search_open { self.search.clone().into_any_element() } else { self.panel.clone().into_any_element() })))
-                                .child(resizable_panel().size_range(px(320.)..Pixels::MAX).child(
+                                .child(resizable_panel().size_range(px(320.)..Pixels::MAX).visible(!self.chat_wide).child(
                                     v_resizable("ide-vsplit")
                                         .child(resizable_panel().size_range(px(120.)..Pixels::MAX).child(div().size_full().child(self.ide.clone())))
                                         .child(resizable_panel().size(px(260.)).size_range(px(120.)..px(600.)).flex_none().visible(self.term_open)
                                             .child(div().size_full().child(self.term.clone()))),
                                 ))
-                                .child(resizable_panel().size(px(420.)).size_range(px(320.)..px(900.)).flex_none().visible(self.chat_open)
-                                    .child(v_flex().size_full().children(ide_chat_header::chat_header(&self.wb, cx)).child(div().flex_1().min_h_0().child(chat_panel(parts, branch.clone(), demo, cx))))),
+                                .child(resizable_panel().size(px(420.)).size_range(px(320.)..px(900.)).flex_none().visible(self.chat_open || self.chat_wide)
+                                    .child(v_flex().size_full().child(self.chat_tabs_bar(cx)).child(div().flex_1().min_h_0().child(if self.chat_empty { self.chat_empty_view(cx) } else { chat_panel(parts, branch.clone(), demo, cx) })))),
                         ),
                     ),
             )

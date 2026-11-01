@@ -1099,6 +1099,7 @@ impl Render for Workbench {
             Page::Customize => settings::render_customize(self, window, cx),
         };
         v_flex()
+            .relative()
             .key_context("Workbench")
             .track_focus(&self.focus)
             .on_action(cx.listener(|this, _: &ToggleLeft, _, cx| { this.left_open = !this.left_open; cx.notify(); }))
@@ -1148,6 +1149,10 @@ impl Render for Workbench {
                                 .child(div().size_full().child(self.panel.clone()))),
                     ),
                 ))
+            .when(!show_ide && !self.right_open && self.page == Page::Chat, |d| {
+                let changes = self.panel.read(cx).change_count(cx);
+                d.child(self.right_rail(changes, cx))
+            })
             .when_some(self.palette.clone(), |d, p| d.child(p))
     }
 }
