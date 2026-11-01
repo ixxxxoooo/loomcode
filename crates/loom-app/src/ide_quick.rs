@@ -28,6 +28,9 @@ impl IdeWindow {
             .into_iter()
             .map(|f| PaletteItem { title: f.rsplit('/').next().unwrap_or(&f).to_string(), subtitle: f.clone(), group: Group::File, icon: IconName::FileText, action: PaletteAction::OpenFile(f) })
             .collect();
+        // 最近打开的文件排在最前(查询为空时一眼能看到)
+        let recent: Vec<String> = self.ide.read(cx).recent.iter().filter_map(|p| std::path::Path::new(p).strip_prefix(&root).ok().map(|r| r.to_string_lossy().to_string())).collect();
+        items.sort_by_key(|i| recent.iter().position(|r| *r == i.subtitle).unwrap_or(usize::MAX));
         let mut cmd = |title: &str, sub: &str, ic: IconName, action: PaletteAction| {
             items.push(PaletteItem { title: title.into(), subtitle: sub.into(), group: Group::Command, icon: ic, action });
         };

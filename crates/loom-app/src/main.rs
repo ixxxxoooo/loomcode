@@ -36,6 +36,7 @@ mod ide_terminal;
 mod ide_watch;
 mod ide_chat_header;
 mod ide_gutter;
+mod ide_memory;
 mod ide_prefs;
 mod ide_brackets;
 mod ide_chrome;

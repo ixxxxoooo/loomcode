@@ -98,7 +98,9 @@ pub struct Workbench {
     pub projects: Vec<Project>,
     pub active: Option<String>,
     /// 会话访问历史(前进 / 后退箭头)
-    pub nav: crate::nav_history::NavHistory,
+    pub nav: crate::nav_history::NavHistory<String>,
+    /// 侧边栏里最近点选的项目(没有会话时,Agent 与 IDE 都以它为当前项目)
+    pub focus_project: Option<String>,
     /// 正在按前进 / 后退切换会话:这时打开会话不应再写入历史
     pub nav_navigating: bool,
     pub views: HashMap<String, SessionView>,
@@ -231,6 +233,7 @@ impl Workbench {
             projects,
             active: None,
             nav: Default::default(),
+            focus_project: None,
             nav_navigating: false,
             views: HashMap::new(),
             left_open: true,
@@ -396,6 +399,9 @@ impl Workbench {
     pub fn toggle_project(&mut self, ix: usize, cx: &mut Context<Self>) {
         if let Some(p) = self.projects.get_mut(ix) {
             p.expanded = !p.expanded;
+            // 点选项目即把它设为当前项目,没有会话时右侧文件树与 IDE 也跟着它
+            self.focus_project = Some(p.path.clone());
+            self.sync_panel(cx);
             cx.notify();
         }
     }
@@ -625,8 +631,9 @@ impl Workbench {
         }
         self.unread.remove(id);
         self.active = Some(id.to_string());
+        self.focus_project = self.projects.get(project_ix).map(|p| p.path.clone());
         if !self.nav_navigating {
-            self.nav.visit(id);
+            self.nav.visit(id.to_string());
         }
         crate::view_cache::touch(&mut self.view_order, id);
         self.evict_idle_views(cx);
@@ -673,8 +680,17 @@ impl Workbench {
     }
 
     /// 当前项目路径。
+    ///
+    /// 优先取当前会话所在项目;没有会话时取侧边栏点选的项目;再没有取第一个(最近的)项目。
     pub fn active_project_path(&self) -> Option<String> {
-        self.active.as_ref().and_then(|id| self.views.get(id)).and_then(|v| self.projects.get(v.project_ix)).map(|p| self.work_root(&p.path))
+        self.current_project_ix().and_then(|ix| self.projects.get(ix)).map(|p| self.work_root(&p.path))
+    }
+
+    /// 当前项目的下标(规则见 `active_project_path`)。
+    pub fn current_project_ix(&self) -> Option<usize> {
+        self.active.as_ref().and_then(|id| self.views.get(id)).map(|v| v.project_ix)
+            .or_else(|| self.focus_project.as_ref().and_then(|f| self.projects.iter().position(|p| &p.path == f)))
+            .or_else(|| (!self.projects.is_empty()).then_some(0))
     }
 
     /// 后台检测本机 claude 版本。
@@ -698,15 +714,14 @@ impl Workbench {
     /// 让右侧面板跟随当前会话。
     fn sync_panel(&mut self, cx: &mut Context<Self>) {
         let model = self.active_model().cloned();
-        let root = self.active.as_ref().and_then(|id| self.views.get(id)).and_then(|v| self.projects.get(v.project_ix)).map(|p| self.work_root(&p.path));
-        if let Some(root) = root {
+        if let Some(root) = self.active_project_path() {
             self.panel.update(cx, |p, cx| p.set_session(model, root, cx));
         }
     }
 
     /// 新会话默认落在哪个项目:当前会话所在项目,否则第一个。
     pub fn target_project(&self) -> usize {
-        self.active.as_ref().and_then(|id| self.views.get(id)).map(|v| v.project_ix).unwrap_or(0)
+        self.current_project_ix().unwrap_or(0)
     }
 
     /// 在指定项目里新建会话。真实模式没有任何项目时,先让用户选一个目录。

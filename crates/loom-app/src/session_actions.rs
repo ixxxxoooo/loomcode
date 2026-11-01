@@ -150,7 +150,7 @@ impl Workbench {
         if self.active.as_deref() == Some(id) {
             self.active = None;
         }
-        self.nav.remove(id);
+        self.nav.remove(&id.to_string());
         self.unread.remove(id);
         self.new_sessions.remove(id);
         self.view_order.retain(|x| x != id);

@@ -33,6 +33,23 @@ pub struct FileTree {
 pub use crate::file_lang::{Node, language_for, read_dir_sorted};
 
 impl FileTree {
+    /// 展开着的目录(绝对路径,排序后,保存记忆用)。
+    pub fn expanded_dirs(&self) -> Vec<String> {
+        let mut v: Vec<String> = self.expanded.iter().map(|p| p.to_string_lossy().to_string()).collect();
+        v.sort();
+        v
+    }
+
+    /// 按记忆展开目录(只展开仍在项目内且存在的目录)。
+    pub fn expand_dirs(&mut self, dirs: &[String]) {
+        for d in dirs {
+            let p = PathBuf::from(d);
+            if p.is_dir() && p.starts_with(&self.root) && self.expanded.insert(p.clone()) {
+                self.children.insert(p.clone(), read_dir_sorted(&p));
+            }
+        }
+    }
+
     /// 项目根目录。
     pub fn root_path(&self) -> &Path {
         &self.root

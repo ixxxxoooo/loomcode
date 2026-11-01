@@ -14,7 +14,7 @@ use gpui_kit::*;
 use std::collections::HashMap;
 use std::path::{Path, PathBuf};
 
-actions!(ide, [CloseTab, NextTab, PrevTab, QuickOpen, GoToLine, FindInProject]);
+actions!(ide, [CloseTab, NextTab, PrevTab, QuickOpen, GoToLine, FindInProject, NavBack, NavForward]);
 
 /// 超过这个大小的文件不在编辑器里打开。
 
@@ -55,12 +55,22 @@ pub struct IdeView {
     applied: Option<loom_config::EditorPrefs>,
     /// 编辑计数:延迟自动保存靠它判断「这之后还有没有新的编辑」
     edit_gen: u64,
+    /// 文件 / 行位置历史(IDE 标题栏的前进后退)
+    pub(crate) nav: crate::nav_history::NavHistory<(PathBuf, u32)>,
+    /// 正在按历史跳转或恢复标签:这期间不记录新的历史
+    pub(crate) nav_quiet: bool,
+    /// 刚打开文件、还没跳行:紧随其后的 `goto` 替换这一条而不是新增
+    pub(crate) fresh_open: bool,
+    /// 最近打开的文件,最近的在前
+    pub(crate) recent: Vec<String>,
+    /// 切换项目后待恢复的标签记忆(渲染时有窗口再恢复)
+    pub(crate) pending_restore: Option<loom_config::IdeMemory>,
 }
 
 impl IdeView {
     /// 创建空的编辑器视图。
     pub fn new() -> Self {
-        Self { root: String::new(), docs: HashMap::new(), tabs: TabModel::default(), note: None, images: Default::default(), minimap_bounds: Default::default(), applied: None, edit_gen: 0 }
+        Self { root: String::new(), docs: HashMap::new(), tabs: TabModel::default(), note: None, images: Default::default(), minimap_bounds: Default::default(), applied: None, edit_gen: 0, nav: Default::default(), nav_quiet: false, fresh_open: false, recent: Vec::new(), pending_restore: None }
     }
 
     /// 设置项目根目录(会话切换时由宿主调用)。
@@ -74,6 +84,11 @@ impl IdeView {
     /// 打开文件:`preview` 为真时作为预览标签(文件树单击),否则固定。
     /// 已打开的文件只激活;读取失败时在编辑区给出说明。
     pub fn open(&mut self, path: PathBuf, preview: bool, window: &mut Window, cx: &mut Context<Self>) {
+        self.open_inner(path, preview, true, window, cx);
+    }
+
+    /// 打开文件的实现;`focus` 为假时不抢焦点(恢复标签时用)。
+    pub(crate) fn open_inner(&mut self, path: PathBuf, preview: bool, focus: bool, window: &mut Window, cx: &mut Context<Self>) {
         self.note = None;
         if is_image(&path) {
             self.images.insert(path.clone());
@@ -94,8 +109,12 @@ impl IdeView {
             self.docs.remove(&old);
             self.images.remove(&old);
         }
-        self.focus_active(window, cx);
+        if focus {
+            self.focus_active(window, cx);
+        }
         self.refresh_marks(&path, cx);
+        let line = self.cursor_line(&path, cx);
+        self.record_open(&path, line);
         cx.notify();
     }
 
@@ -103,6 +122,8 @@ impl IdeView {
     pub fn activate(&mut self, path: &Path, window: &mut Window, cx: &mut Context<Self>) {
         self.tabs.activate(path);
         self.focus_active(window, cx);
+        let line = self.cursor_line(path, cx);
+        self.record_open(path, line);
         cx.notify();
     }
 
@@ -236,6 +257,9 @@ impl IdeView {
         let Some(doc) = self.tabs.active().and_then(|p| self.docs.get(p)) else { return };
         let pos = gpui_kit::component::input::Position::new(line.saturating_sub(1), col.saturating_sub(1));
         doc.editor.update(cx, |e, cx| e.set_cursor_position(pos, window, cx));
+        if let Some(path) = self.tabs.active().map(Path::to_path_buf) {
+            self.record_jump(&path, line);
+        }
     }
 
     /// 当前是否有打开的文件。
@@ -314,6 +338,7 @@ fn load(path: &Path, window: &mut Window, cx: &mut Context<IdeView>) -> Result<I
 
 impl Render for IdeView {
     fn render(&mut self, window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
+        self.restore_pending(window, cx);
         self.sync_prefs(window, cx);
         let t = cx.theme().clone();
         let root = v_flex()

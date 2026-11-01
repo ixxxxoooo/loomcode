@@ -6,7 +6,7 @@
 
 use crate::ide_chat_header;
 use crate::ide_status;
-use crate::ide::{CloseTab, FindInProject, GoToLine, IdeView, NextTab, PrevTab, QuickOpen};
+use crate::ide::{CloseTab, FindInProject, GoToLine, IdeView, NavBack, NavForward, NextTab, PrevTab, QuickOpen};
 use crate::right_panel::{PanelEvent, RightPanel};
 use crate::ui::{icon, no_drag};
 use gpui_kit::component::Disableable as _;
@@ -40,8 +40,10 @@ pub struct IdeWindow {
     pub(crate) left_before: bool,
     pub(crate) chat_narrow: bool,
     pub(crate) chat_before: bool,
-    /// 面板已同步到的会话 id
-    pub(crate) synced: Option<String>,
+    /// 面板已同步到的 (会话 id, 项目根目录);没有会话时项目由侧栏点选决定
+    pub(crate) synced: Option<(Option<String>, Option<String>)>,
+    /// IDE 记忆保存的防抖序号
+    pub(crate) mem_gen: u64,
     pub(crate) _subs: Vec<Subscription>,
     /// 快速打开(⌘P / ⌘K)面板
     /// 项目内搜索面板与是否在左栏显示它
@@ -83,14 +85,17 @@ impl IdeWindow {
         // 工作台变化(切换会话等)→ 同步面板与根目录
         subs.push(cx.observe(&wb, |this, _, cx| this.sync(cx)));
         // 编辑器光标移动 → 刷新状态栏
-        subs.push(cx.observe(&ide, |_, _, cx| cx.notify()));
+        subs.push(cx.observe(&ide, |this, _, cx| {
+            this.schedule_memory_save(cx);
+            cx.notify();
+        }));
         let focus = cx.focus_handle();
         window.focus(&focus, cx);
         let term = cx.new(|cx| crate::ide_terminal::BottomTerminal::new(panel.clone(), cx));
         // 调试用:LOOM_IDE_TERM=1 启动时就展开底部终端面板,方便截图
         let term_open = std::env::var("LOOM_IDE_TERM").is_ok_and(|v| v == "1");
         // 此时工作台可能正处于更新中,不在这里回读它;首次渲染时再同步
-        Self { wb, panel, ide, focus, left_open: true, chat_open: true, left_narrow: false, left_before: true, chat_narrow: false, chat_before: true, synced: None, _subs: subs, search, search_open: false, quick: None, _quick_sub: None, term_open, term }
+        Self { wb, panel, ide, focus, left_open: true, chat_open: true, left_narrow: false, left_before: true, chat_narrow: false, chat_before: true, synced: None, mem_gen: 0, _subs: subs, search, search_open: false, quick: None, _quick_sub: None, term_open, term }
     }
 
     /// 让面板与根目录跟随工作台当前会话。
@@ -106,16 +111,90 @@ impl IdeWindow {
             let wb = self.wb.read(cx);
             (wb.active.clone(), wb.active_model().cloned(), wb.active_project_path())
         };
-        if id == self.synced {
+        let key = (id, root.clone());
+        if self.synced.as_ref() == Some(&key) {
             return false;
         }
-        self.synced = id;
+        self.synced = Some(key);
         if let Some(root) = root {
-            self.ide.update(cx, |v, cx| v.set_root(root.clone(), cx));
+            let old = self.ide.read(cx).root.clone();
+            let switched = old != root;
+            if switched {
+                self.switch_project(&old, &root, cx);
+            }
             self.search.update(cx, |s, cx| s.set_root(root.clone(), cx));
-            self.panel.update(cx, |p, cx| p.set_session(model, root, cx));
+            self.panel.update(cx, |p, cx| p.set_session(model, root.clone(), cx));
+            if switched {
+                // 文件树换根后会清掉展开状态,按记忆重新展开
+                let dirs = self.ide.read(cx).pending_restore.as_ref().map(|m| m.expanded.clone()).unwrap_or_default();
+                self.panel.update(cx, |p, _| p.files.expand_dirs(&dirs));
+            }
         }
         true
+    }
+
+    /// 切换项目:先保存旧项目的标签记忆,清空编辑器,再挂起新项目的记忆等渲染时恢复。
+    fn switch_project(&mut self, old: &str, new: &str, cx: &mut Context<Self>) {
+        if !old.is_empty() {
+            self.save_memory_now(old, cx);
+        }
+        let mem = self.wb.read(cx).ui_state.ide.get(new).cloned().map(|mut m| {
+            m.prune(|p| std::path::Path::new(p).exists());
+            m
+        });
+        let new = new.to_string();
+        self.ide.update(cx, |v, cx| {
+            v.clear();
+            v.set_root(new, cx);
+            v.pending_restore = mem;
+        });
+    }
+
+    /// 把某个项目当前的标签、最近文件与展开目录写进 `state.json`(内容没变就不写)。
+    fn save_memory_now(&mut self, root: &str, cx: &mut Context<Self>) {
+        // 记忆还没恢复完时不能存:这时编辑器是空的,存下去会覆盖掉真正的记忆
+        if self.ide.read(cx).pending_restore.is_some() || self.ide.read(cx).root != root {
+            return;
+        }
+        let mut mem = self.ide.read(cx).snapshot();
+        mem.expanded = self.panel.read(cx).files.expanded_dirs();
+        let root = root.to_string();
+        self.wb.update(cx, |wb, _| {
+            if mem.tabs.is_empty() && mem.recent.is_empty() {
+                if wb.ui_state.ide.remove(&root).is_some() {
+                    wb.persist_ui_state();
+                }
+            } else if wb.ui_state.ide.get(&root) != Some(&mem) {
+                wb.ui_state.ide.insert(root, mem);
+                wb.persist_ui_state();
+            }
+        });
+    }
+
+    /// 编辑器状态变化后 0.8 秒保存一次记忆(防抖,光标移动等高频变化只会落一次盘)。
+    fn schedule_memory_save(&mut self, cx: &mut Context<Self>) {
+        self.mem_gen += 1;
+        let gen_at = self.mem_gen;
+        cx.spawn(async move |this, cx| {
+            cx.background_executor().timer(std::time::Duration::from_millis(800)).await;
+            let _ = this.update(cx, |this, cx| {
+                if this.mem_gen == gen_at {
+                    let root = this.ide.read(cx).root.clone();
+                    if !root.is_empty() {
+                        this.save_memory_now(&root, cx);
+                    }
+                }
+            });
+        })
+        .detach();
+    }
+
+    /// 按文件 / 行位置历史后退或前进,并在文件树里定位。
+    pub(crate) fn ide_navigate(&mut self, forward: bool, window: &mut Window, cx: &mut Context<Self>) {
+        if let Some(path) = self.ide.update(cx, |v, cx| v.navigate(forward, window, cx)) {
+            self.panel.update(cx, |p, _| p.files.reveal(&path));
+        }
+        cx.notify();
     }
 
     /// 在编辑器里打开文件(文件树点选,或融合模式下由工作台转发)。
@@ -159,7 +238,7 @@ impl IdeWindow {
     /// 标题栏:左侧侧栏开关 / 搜索 / 后退 / 前进、居中的项目名搜索框、右侧对话栏开关 + 回 Agent(与 Agent 窗口同位置)。
     fn title_bar(&self, project: String, fused: bool, cx: &mut Context<Self>) -> impl IntoElement {
         let t = cx.theme().clone();
-        let (can_back, can_fwd) = { let nav = &self.wb.read(cx).nav; (nav.can_back(), nav.can_forward()) };
+        let (can_back, can_fwd) = { let nav = &self.ide.read(cx).nav; (nav.can_back(), nav.can_forward()) };
         // 高度与 Agent 窗口的顶部行一致,切换按钮在两个窗口里位置不变
         TitleBar::new().h(px(crate::window_header::HEADER_H)).child(
             h_flex().w_full().items_center().gap_1().pr_2()
@@ -169,10 +248,10 @@ impl IdeWindow {
                         .on_click(cx.listener(|this, _, _, cx| { this.left_open = !this.left_open; cx.notify(); }))))
                     .child(no_drag(Button::new("iw-search").small().ghost().icon(IconName::Search).tooltip("搜索(⌘K)")
                         .on_click(cx.listener(|this, _, window, cx| this.toggle_quick(window, cx)))))
-                    .child(no_drag(Button::new("iw-back-nav").small().ghost().icon(IconName::ArrowLeft).tooltip("后退").disabled(!can_back)
-                        .on_click(cx.listener(|this, _, window, cx| this.wb.update(cx, |wb, cx| wb.navigate(false, window, cx))))))
-                    .child(no_drag(Button::new("iw-fwd-nav").small().ghost().icon(IconName::ArrowRight).tooltip("前进").disabled(!can_fwd)
-                        .on_click(cx.listener(|this, _, window, cx| this.wb.update(cx, |wb, cx| wb.navigate(true, window, cx)))))))
+                    .child(no_drag(Button::new("iw-back-nav").small().ghost().icon(IconName::ArrowLeft).tooltip("后退(⌃-)").disabled(!can_back)
+                        .on_click(cx.listener(|this, _, window, cx| this.ide_navigate(false, window, cx)))))
+                    .child(no_drag(Button::new("iw-fwd-nav").small().ghost().icon(IconName::ArrowRight).tooltip("前进(⌃⇧-)").disabled(!can_fwd)
+                        .on_click(cx.listener(|this, _, window, cx| this.ide_navigate(true, window, cx))))))
                 .child(div().flex_1().flex().justify_center().child(no_drag(
                     h_flex().id("iw-quick").cursor_pointer().on_click(cx.listener(|this, _, window, cx| this.toggle_quick(window, cx)))
                         .w(px(420.)).max_w_full().h(px(26.)).px_3().gap_2().items_center().justify_center().rounded(px(7.))
@@ -229,6 +308,8 @@ impl Render for IdeWindow {
             .on_action(cx.listener(|this, a: &OpenPath, window, cx| this.open_path(&a.path, window, cx)))
             .on_action(cx.listener(|this, _: &QuickOpen, window, cx| this.toggle_quick(window, cx)))
             .on_action(cx.listener(|this, _: &GoToLine, window, cx| this.goto_line_dialog(window, cx)))
+            .on_action(cx.listener(|this, _: &NavBack, window, cx| this.ide_navigate(false, window, cx)))
+            .on_action(cx.listener(|this, _: &NavForward, window, cx| this.ide_navigate(true, window, cx)))
             .on_action(cx.listener(|this, _: &FindInProject, window, cx| this.show_search(window, cx)))
             .on_action(cx.listener(|this, _: &crate::ide_reference::QuoteSelection, window, cx| this.quote_selection(window, cx)))
             .on_action(cx.listener(|this, _: &crate::term_actions::ToggleTerminal, window, cx| this.toggle_term(window, cx)))
@@ -273,6 +354,8 @@ fn bind_ide_keys(cx: &mut App) {
             KeyBinding::new("cmd-p", QuickOpen, Some("IdeWindow")),
             KeyBinding::new("cmd-k", QuickOpen, Some("IdeWindow")),
             KeyBinding::new("ctrl-g", GoToLine, Some("IdeWindow")),
+            KeyBinding::new("ctrl--", NavBack, Some("IdeWindow")),
+            KeyBinding::new("ctrl-_", NavForward, Some("IdeWindow")),
             KeyBinding::new("cmd-shift-f", FindInProject, Some("IdeWindow")),
             KeyBinding::new("cmd-l", crate::ide_reference::QuoteSelection, Some("IdeWindow")),
             KeyBinding::new("cmd-alt-right", NextTab, Some("IdeView")),

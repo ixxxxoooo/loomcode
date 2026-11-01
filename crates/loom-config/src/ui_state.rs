@@ -27,6 +27,57 @@ pub struct UiState {
     pub project_names: BTreeMap<String, String>,
     /// 多根工作区
     pub workspaces: Vec<WorkspaceDef>,
+    /// 项目路径 → 该项目的 IDE 记忆(标签、最近文件、展开的目录)
+    pub ide: BTreeMap<String, IdeMemory>,
+}
+
+/// 最近文件最多记多少个。
+pub const MAX_RECENT: usize = 30;
+
+/// IDE 里一个打开的标签。
+#[derive(Debug, Clone, PartialEq, Eq, Default, Serialize, Deserialize)]
+#[serde(default)]
+pub struct IdeTabMemory {
+    pub path: String,
+    /// 预览标签(斜体,会被下一个预览替换)
+    pub preview: bool,
+    /// 固定标签(排在最左)
+    pub pinned: bool,
+}
+
+/// 某个项目的 IDE 记忆:下次进入同一项目时恢复。
+#[derive(Debug, Clone, PartialEq, Eq, Default, Serialize, Deserialize)]
+#[serde(default)]
+pub struct IdeMemory {
+    /// 从左到右的标签
+    pub tabs: Vec<IdeTabMemory>,
+    /// 当前标签
+    pub active: Option<String>,
+    /// 最近打开的文件,最近的在前,至多 `MAX_RECENT` 个
+    pub recent: Vec<String>,
+    /// 文件树里展开的目录
+    pub expanded: Vec<String>,
+}
+
+impl IdeMemory {
+    /// 记一次打开:放到最近列表最前并去重、截断。
+    pub fn touch_recent(&mut self, path: &str) {
+        self.recent.retain(|p| p != path);
+        self.recent.insert(0, path.to_string());
+        self.recent.truncate(MAX_RECENT);
+    }
+
+    /// 丢掉磁盘上已不存在的路径(文件被删、被移动)。
+    ///
+    /// 参数:`exists` 判断路径是否仍存在。
+    pub fn prune(&mut self, exists: impl Fn(&str) -> bool) {
+        self.tabs.retain(|t| exists(&t.path));
+        self.recent.retain(|p| exists(p));
+        self.expanded.retain(|p| exists(p));
+        if self.active.as_deref().is_some_and(|a| !self.tabs.iter().any(|t| t.path == a)) {
+            self.active = self.tabs.last().map(|t| t.path.clone());
+        }
+    }
 }
 
 impl UiState {
@@ -173,6 +224,38 @@ fn toggle(set: &mut BTreeSet<String>, key: &str) -> bool {
 mod tests {
     use super::*;
     use loom_core::SessionBadge;
+
+    #[test]
+    fn ide记忆_最近文件去重并截断() {
+        let mut m = IdeMemory::default();
+        for i in 0..40 {
+            m.touch_recent(&format!("/p/f{i}"));
+        }
+        m.touch_recent("/p/f5");
+        assert_eq!(m.recent.len(), MAX_RECENT);
+        assert_eq!(m.recent[0], "/p/f5");
+        assert_eq!(m.recent.iter().filter(|p| *p == "/p/f5").count(), 1);
+    }
+
+    #[test]
+    fn ide记忆_丢弃不存在的路径并修正当前标签() {
+        let tab = |p: &str| IdeTabMemory { path: p.into(), preview: false, pinned: false };
+        let mut m = IdeMemory { tabs: vec![tab("/a"), tab("/gone"), tab("/b")], active: Some("/gone".into()), recent: vec!["/gone".into(), "/a".into()], expanded: vec!["/d".into(), "/x".into()] };
+        m.prune(|p| p != "/gone" && p != "/x");
+        assert_eq!(m.tabs.iter().map(|t| t.path.as_str()).collect::<Vec<_>>(), ["/a", "/b"]);
+        assert_eq!(m.active.as_deref(), Some("/b"));
+        assert_eq!(m.recent, ["/a"]);
+        assert_eq!(m.expanded, ["/d"]);
+    }
+
+    #[test]
+    fn ide记忆_往返序列化且旧文件缺字段不报错() {
+        let mut s = UiState::default();
+        s.ide.insert("/p".into(), IdeMemory { tabs: vec![IdeTabMemory { path: "/p/a".into(), preview: true, pinned: false }], active: Some("/p/a".into()), ..Default::default() });
+        let json = serde_json::to_string(&s).unwrap();
+        assert_eq!(serde_json::from_str::<UiState>(&json).unwrap(), s);
+        assert!(serde_json::from_str::<UiState>("{\"pinned\":[]}").unwrap().ide.is_empty());
+    }
 
     fn meta(id: &str, title: &str) -> SessionMeta {
         SessionMeta { id: id.into(), title: title.into(), updated: String::new(), pinned: false, archived: false, badge: SessionBadge::Idle }
