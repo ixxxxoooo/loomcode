@@ -117,8 +117,9 @@ pub fn render(wb: &Workbench, cx: &mut Context<Workbench>) -> impl IntoElement {
         .size_full()
         .bg(t.sidebar)
         .text_color(t.sidebar_foreground)
+        .child(wb.left_header(cx))
         .child(
-            v_flex().px_2().pt_2().pb_1().gap_0p5()
+            v_flex().px_2().pt_1().pb_1().gap_0p5()
                 .child(nav_row("nav-new", IconName::SquarePen, "新对话", Some("⌘N"), false, cx,
                     |this, window, cx| this.new_session(this.target_project(), window, cx)))
                 .child(nav_row("nav-auto-row", IconName::Timer, "自动化", None, wb.page == Page::Automation, cx,

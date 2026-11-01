@@ -134,6 +134,8 @@ pub struct RightPanel {
     pub tab: RightTab,
     /// 是否显示顶部分段栏(IDE 窗口用活动栏切换,不显示)
     pub show_tabs: bool,
+    /// 标签行末尾的额外控件(Agent 窗口放右面板开关与 IDE 入口),由工作台注入
+    pub trailing: Option<std::rc::Rc<dyn Fn(&mut Window, &mut App) -> AnyElement>>,
     model: Option<Entity<SessionModel>>,
     _sub: Option<Subscription>,
     /// 「改动」里已展开 Diff 的文件
@@ -156,6 +158,7 @@ impl RightPanel {
         Self {
             tab: RightTab::Changes,
             show_tabs: true,
+            trailing: None,
             model: None,
             _sub: None,
             open_changes: HashSet::new(),
@@ -197,10 +200,12 @@ impl RightPanel {
 
     // ---------- 顶部分段 ----------
 
-    fn tab_bar(&self, changes: usize, cx: &mut Context<Self>) -> impl IntoElement {
+    fn tab_bar(&self, changes: usize, window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
         let t = cx.theme().clone();
         let tab = self.tab;
-        h_flex().h(px(36.)).px_2().gap_0p5().items_center().border_b_1().border_color(t.border)
+        let trailing = self.trailing.clone();
+        h_flex().h(px(crate::window_header::HEADER_H)).flex_none().px_2().gap_0p5().items_center()
+            .window_control_area(WindowControlArea::Drag)
             .children(RightTab::ALL.into_iter().map(|rt| {
                 let on = rt == tab;
                 h_flex().id(SharedString::from(format!("rt-{}", rt.label()))).h(px(26.)).px_2().gap_1().items_center().rounded(px(6.)).cursor_pointer()
@@ -213,6 +218,8 @@ impl RightPanel {
                     .child(rt.label())
                     .when(rt == RightTab::Changes && changes > 0, |d| d.child(pill(changes.to_string(), t.primary_foreground, t.primary)))
             }))
+            .child(div().flex_1().h_full())
+            .when_some(trailing, |d, f| d.child(f(window, cx)))
     }
 
     // ---------- 改动 ----------
@@ -388,7 +395,7 @@ impl Render for RightPanel {
             RightTab::Output => self.output_view(&items, cx),
         };
         v_flex().size_full().bg(t.background)
-            .when(self.show_tabs, |d| d.child(self.tab_bar(change_count, cx)))
+            .when(self.show_tabs, |d| d.child(self.tab_bar(change_count, window, cx)))
             .child(div().flex_1().min_h_0().child(body))
     }
 }

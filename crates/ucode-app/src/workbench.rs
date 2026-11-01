@@ -9,13 +9,12 @@ use crate::model::{SessionModel, UiRequest};
 use crate::palette::{Group, Palette, PaletteAction, PaletteEvent, PaletteItem};
 use crate::right_panel::{PanelEvent, RightPanel};
 use crate::settings::{self, MemoryDoc, SettingsTab};
-use crate::ui::{no_drag, empty_state, icon};
+use crate::ui::{empty_state, icon};
 use crate::{sidebar, theme, timeline};
 use gpui_kit::assets::IconName;
 use gpui_kit::component::TitleBar;
-use gpui_kit::component::button::{Button, ButtonVariants};
 use crate::layout_rules::{CENTER_MIN, LEFT_MAX, LEFT_MIN, RIGHT_MAX, RIGHT_MIN};
-use gpui_kit::component::{ActiveTheme, Sizable, h_flex, h_resizable, resizable_panel, v_flex};
+use gpui_kit::component::{ActiveTheme, h_flex, h_resizable, resizable_panel, v_flex};
 use gpui_kit::prelude::FluentBuilder as _;
 use gpui_kit::*;
 use std::collections::{HashMap, HashSet};
@@ -184,6 +183,15 @@ impl Workbench {
         let focus = cx.focus_handle();
         let panel_root = if demo { demo_root.to_string_lossy().to_string() } else { std::env::var("HOME").unwrap_or_default() };
         let panel = cx.new(|cx| RightPanel::new(panel_root, demo, window, cx));
+        // 右面板标签行末尾放「面板开关 + IDE 入口」(没有整条标题栏后它们跟着右栏走)
+        {
+            let weak = cx.entity().downgrade();
+            panel.update(cx, |p, _| {
+                p.trailing = Some(std::rc::Rc::new(move |_, cx| {
+                    weak.update(cx, |wb, cx| wb.right_buttons(cx).into_any_element()).unwrap_or_else(|_| div().into_any_element())
+                }));
+            });
+        }
         // 画布 / 自动化 / 浏览器三个页面常驻:自动化需要在后台持续调度
         let home = std::env::var_os("HOME").map(PathBuf::from).unwrap_or_default();
         let (canvas_dir, auto_dir) = if demo {
@@ -991,23 +999,6 @@ impl Workbench {
         self.active.as_ref().and_then(|id| self.views.get(id)).map(|v| (v.model.clone(), v.composer.clone()))
     }
 
-    fn title_bar(&self, cx: &mut Context<Self>) -> impl IntoElement {
-        let t = cx.theme().clone();
-        let title = self.active_model().map(|m| m.read(cx).state.title.clone()).unwrap_or_else(|| "UCode".into());
-        TitleBar::new().child(
-            h_flex().w_full().items_center().gap_1().pr_2()
-                .child(no_drag(Button::new("tb-left").small().ghost().icon(IconName::PanelLeft).tooltip("侧栏(⌘B)")
-                    .on_click(cx.listener(|this, _, _, cx| { this.left_open = !this.left_open; cx.notify(); }))))
-                .child(no_drag(Button::new("tb-search").small().ghost().icon(IconName::Search).tooltip("搜索(⌘K)")
-                    .on_click(cx.listener(|this, _, window, cx| this.toggle_palette(window, cx)))))
-                .child(div().flex_1().flex().justify_center().text_size(px(13.)).text_color(t.muted_foreground).child(title))
-                .child(no_drag(Button::new("tb-right").small().ghost().icon(IconName::PanelRight).tooltip("右侧面板(⌥⌘B)")
-                    .on_click(cx.listener(|this, _, _, cx| { this.right_open = !this.right_open; cx.notify(); }))))
-                .child(no_drag(crate::ui::mode_switch("tb-ide", "IDE", if self.settings.fused_ide { IconName::Code } else { IconName::ExternalLink }, false).tooltip("切换到 IDE(⇧⌘E)")
-                    .on_click(cx.listener(|this, _, window, cx| this.toggle_ide(window, cx))))),
-        )
-    }
-
     /// 当前会话所在项目的 Git 分支。
     pub fn active_branch(&self) -> Option<String> {
         let v = self.active.as_ref().and_then(|id| self.views.get(id))?;
@@ -1016,17 +1007,6 @@ impl Workbench {
 
     fn chat_view(&self, cx: &mut Context<Self>) -> AnyElement {
         chat_panel_with_footer(self.chat_parts(), crate::branch_bar::footer(self, cx), cx)
-    }
-
-    /// 设置页的标题栏:整窗设置,左侧返回。
-    fn settings_title_bar(&self, cx: &mut Context<Self>) -> impl IntoElement {
-        let t = cx.theme().clone();
-        TitleBar::new().child(
-            h_flex().w_full().items_center().gap_1()
-                .child(no_drag(Button::new("st-back").small().ghost().icon(IconName::ArrowLeft).label("返回")
-                    .on_click(cx.listener(|this, _, _, cx| this.set_page(Page::Chat, cx)))))
-                .child(div().flex_1().flex().justify_center().text_size(px(13.)).text_color(t.muted_foreground).child("设置")),
-        )
     }
 
 }
@@ -1109,7 +1089,6 @@ impl Render for Workbench {
             .text_color(t.foreground)
             .when_some(ide_shell, |d, shell| d.child(div().flex_1().min_h_0().w_full().child(shell)))
             .when(!show_ide, |d| d
-                .child(if full_settings { self.settings_title_bar(cx).into_any_element() } else { self.title_bar(cx).into_any_element() })
                 .child(
                     h_flex().flex_1().min_h_0().w_full().child(
                         h_resizable("agent-split").with_state(&self.split)
@@ -1122,7 +1101,7 @@ impl Render for Workbench {
                             })
                             .child(resizable_panel().size(px(self.left_w)).size_range(px(LEFT_MIN)..px(LEFT_MAX)).flex_none().visible(self.left_visible())
                                 .child(sidebar::render(self, cx)))
-                            .child(resizable_panel().size_range(px(CENTER_MIN)..Pixels::MAX).child(div().size_full().child(center)))
+                            .child(resizable_panel().size_range(px(CENTER_MIN)..Pixels::MAX).child(div().size_full().child(v_flex().size_full().child(self.center_header(cx)).child(div().flex_1().min_h_0().w_full().child(center)))))
                             .child(resizable_panel().size(px(self.right_w)).size_range(px(RIGHT_MIN)..px(RIGHT_MAX)).flex_none().visible(self.right_visible())
                                 .child(div().size_full().child(self.panel.clone()))),
                     ),
