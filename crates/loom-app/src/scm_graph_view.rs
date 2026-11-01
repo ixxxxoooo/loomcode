@@ -237,14 +237,29 @@ impl ScmView {
         let file = f.clone();
         let h = hash.to_string();
         let lang_path = PathBuf::from(&f.path);
+        // 工作区里还在的文件:点击在编辑器打开(单击预览、双击固定);已删除的文件没法打开,点击改为展开差异
+        let exists = f.status != 'D' && self.top.as_ref().is_some_and(|top| PathBuf::from(top).join(&f.path).is_file());
+        let (rel, diff_h, diff_file) = (f.path.clone(), hash.to_string(), f.clone());
+        let diff_open = open.is_some();
         v_flex().w_full()
             .child(
                 h_flex().id(SharedString::from(format!("scm-cf-{key}"))).h(px(22.)).w_full().min_w_0().gap_1p5().items_center().cursor_pointer().px_1().rounded(px(4.))
                     .hover(|d| d.bg(t.list_hover))
-                    .on_click(cx.listener(move |this, _, _, cx| this.toggle_commit_diff(&h, &file, cx)))
+                    .on_click(cx.listener(move |this, ev: &ClickEvent, _, cx| {
+                        if exists {
+                            this.open_file(&rel, ev.click_count() >= 2, cx);
+                        } else {
+                            this.toggle_commit_diff(&h, &file, cx);
+                        }
+                    }))
                     .child(file_icon_img(&name, false, false, 14.))
                     .child(div().flex_none().max_w(px(170.)).truncate().text_size(px(12.)).text_color(color).when(f.status == 'D', |d| d.line_through()).child(name))
                     .child(div().flex_1().min_w_0().truncate().text_size(px(10.5)).text_color(t.muted_foreground).child(dir))
+                    .child(
+                        Button::new(SharedString::from(format!("scm-cf-diff-{key}"))).xsmall().ghost()
+                            .icon(if diff_open { IconName::ChevronDown } else { IconName::ChevronRight }).tooltip(if diff_open { "收起差异" } else { "展开这次提交的差异" })
+                            .on_click(cx.listener(move |this, _, _, cx| { cx.stop_propagation(); this.toggle_commit_diff(&diff_h, &diff_file, cx); })),
+                    )
                     .child(div().w(px(14.)).flex_none().text_size(px(11.)).font_family(MONO).font_weight(FontWeight::BOLD).text_color(color).child(f.status.to_string())),
             )
             .when_some(open, |d, state| {
