@@ -506,9 +506,10 @@ impl Render for Composer {
                                 .child(chip("chip-model", format!("{model_name} · {}", effort.label()), t.foreground, Pick::Model, Some(crate::brand_icons::brand_icon(&model_id, &model_name, 13., t.foreground)), this.clone()))
                                 .when(queued > 0, |d| d.child(pill(format!("排队 {queued}"), t.warning, t.muted)))
                                 .child(div().flex_1())
-                                .when(usage.context_size > 0, |d| {
+                                .child({
+                                    // 始终显示:没发过消息时也能点开查账户限额
                                     let this = this.clone();
-                                    d.child(crate::composer_pop::context_ring(&usage, move |cx| { this.update(cx, |c, cx| c.toggle(Pick::Context, cx)); }, cx))
+                                    crate::composer_pop::context_ring(&usage, move |cx| { this.update(cx, |c, cx| c.toggle(Pick::Context, cx)); }, cx)
                                 })
                                 .when_some(self.optimize_error.clone(), |d, e| d.child(div().text_size(px(11.)).text_color(t.danger).truncate().child(e)))
                                 .child(optimize_btn)

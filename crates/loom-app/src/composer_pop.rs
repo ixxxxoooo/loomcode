@@ -96,7 +96,7 @@ pub fn context_popup(usage: &Usage, this: Entity<Composer>, cx: &App) -> Div {
     let (a, b) = (this.clone(), this);
     v_flex().absolute().bottom(px(44.)).right(px(8.)).w(px(280.)).p_2().gap_1().rounded(px(10.)).border_1().border_color(t.border).bg(t.popover).shadow_lg()
         .child(div().text_size(px(12.)).font_weight(FontWeight::SEMIBOLD).child("上下文"))
-        .child(row("已用", format!("{} / {}", short_tokens(usage.context_used), short_tokens(usage.context_size))))
+        .child(row("已用", if usage.context_size == 0 { "发送消息后统计".to_string() } else { format!("{} / {}", short_tokens(usage.context_used), short_tokens(usage.context_size)) }))
         .child(row("占比", format!("{:.0}%", ratio * 100.)))
         .child(row("本会话花费", format!("${:.2}", usage.cost_usd)))
         .when_some(usage.five_hour_pct, |d, p| d.child(row("5 小时限额", format!("{p:.0}%"))))
