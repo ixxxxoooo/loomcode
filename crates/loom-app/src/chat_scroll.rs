@@ -12,8 +12,8 @@ use gpui_kit::component::button::{Button, ButtonVariants as _};
 use gpui_kit::assets::IconName;
 use gpui_kit::prelude::FluentBuilder as _;
 use gpui_kit::*;
-use std::cell::{Cell, RefCell};
 use std::ops::Range;
+use crate::row_probe::RowProbe;
 use std::rc::Rc;
 
 /// 视口外额外渲染的高度,滚动更顺滑。
@@ -24,10 +24,8 @@ const BOTTOM_SLOP: f32 = 24.;
 /// 滚动状态:包一层 `ListState`,提供与原 `MessageScrollerState` 同名的操作。
 pub struct ChatScroll {
     list: ListState,
-    /// 会话流容器(不含回弹位移)的顶边 Y,窗口坐标;绘制时由容器内的占位画布写入。
-    outer_top: Rc<Cell<f32>>,
-    /// 回弹期间冻结用的上一次稳定的吸附结果。
-    pub(crate) sticky_hold: RefCell<Option<(crate::sticky_user::Target, f32)>>,
+    /// 每帧各行实际画出的位置(吸附层据此判断)。
+    probe: Rc<RowProbe>,
 }
 
 impl ChatScroll {
@@ -35,7 +33,7 @@ impl ChatScroll {
     pub fn new(item_count: usize, _cx: &mut Context<Self>) -> Self {
         let list = ListState::new(item_count, ListAlignment::Top, OVERDRAW);
         list.set_follow_mode(FollowMode::Tail);
-        Self { list, outer_top: Rc::new(Cell::new(f32::NAN)), sticky_hold: RefCell::new(None) }
+        Self { list, probe: Rc::new(RowProbe::default()) }
     }
 
     /// 是否离开了底部(用滚动位置判断,不依赖行高是否全部测量)。
@@ -48,37 +46,26 @@ impl ChatScroll {
         max - top > BOTTOM_SLOP
     }
 
-    /// 列表此刻是否被滚动回弹位移着(列表顶边与容器顶边不一致)。位移期间行位置会跟着晃,
-    /// 吸附层据此冻结在上一次稳定的结果上,避免回弹时闪没、回弹结束又出现。
-    pub fn displaced(&self) -> bool {
-        let outer = self.outer_top.get();
-        !outer.is_nan() && (f32::from(self.list.viewport_bounds().top()) - outer).abs() > 0.5
-    }
-
-    /// 视口顶部的行下标与该行已滚出的像素数。
-    pub fn top(&self) -> (usize, f32) {
-        let o = self.list.logical_scroll_top();
-        (o.item_ix, f32::from(o.offset_in_item))
+    /// 这一帧画出来的最大行下标(没画过返回 None)。
+    pub fn max_painted(&self) -> Option<usize> {
+        self.probe.max_ix()
     }
 
     /// 指定行的卡片顶边是否已经滚过视口顶边(真正「到顶」才算,未到顶保持原状)。
+    ///
+    /// 画出来的行直接比较顶边(回弹位移对行与视口一视同仁,互相抵消);没画出来的行,
+    /// 在已画范围之前就是滚到了上面。
     pub fn row_scrolled_past(&self, row: usize) -> bool {
-        match self.list.bounds_for_item(row) {
+        match self.probe.top_of(row) {
             // 行内上方有 5px 间距,卡片顶边 = 行顶 + 5
-            Some(b) => b.top() + px(5.) < self.list.viewport_bounds().top(),
-            // 没有行位置时只在滚动位置有效(不是「末尾」占位)且确实在它之后才算滚过,
-            // 避免贴底跟随时滚动位置尚未落定,把可见的最新消息误判成已滚过
-            None => {
-                let o = self.list.logical_scroll_top();
-                o.item_ix < self.list.item_count() && o.item_ix > row
-            }
+            Some(top) => top + 5. < f32::from(self.list.viewport_bounds().top()),
+            None => self.probe.is_before_painted(row),
         }
     }
 
-    /// 指定行卡片顶边相对视口顶边的 Y(未渲染返回 None)。
+    /// 指定行卡片顶边相对视口顶边的 Y(这一帧没画出来返回 None)。
     pub fn row_top(&self, row: usize) -> Option<f32> {
-        let b = self.list.bounds_for_item(row)?;
-        Some(f32::from(b.top() + px(5.) - self.list.viewport_bounds().top()))
+        Some(self.probe.top_of(row)? + 5. - f32::from(self.list.viewport_bounds().top()))
     }
 
     /// 重置为 `item_count` 行并恢复跟随。
@@ -150,18 +137,23 @@ pub fn chat_scroller(
     cx: &App,
 ) -> impl IntoElement {
     let t = cx.theme().clone();
-    let (list, away) = {
+    let (list, away, probe) = {
         let s = state.read(cx);
-        (s.list.clone(), s.is_away_from_bottom())
+        (s.list.clone(), s.is_away_from_bottom(), s.probe.clone())
     };
     let list_el = list_el(list.clone(), move |ix, w, c| {
-        div().w_full().min_w_0().px_3().child(render_row(ix, w, c)).into_any_element()
+        let probe = probe.clone();
+        // 零尺寸占位画布:记录这一行实际画出的顶边
+        div().relative().w_full().min_w_0().px_3()
+            .child(canvas(move |b, _, _| probe.record(ix, f32::from(b.top())), |_, _, _, _| {}).absolute().size_full())
+            .child(render_row(ix, w, c)).into_any_element()
     });
     let weak = state.downgrade();
-    let outer_top = state.read(cx).outer_top.clone();
+    let probe = state.read(cx).probe.clone();
+    let probe_frame = probe.clone();
     div().id(id).relative().size_full().min_h_0().overflow_hidden()
-        // 占位画布:记录容器自己的顶边(不随回弹位移)
-        .child(canvas(move |b, _, _| outer_top.set(f32::from(b.top())), |_, _, _, _| {}).absolute().size_full())
+        // 帧起点:先于列表绘制,清掉上一帧的行位置记录
+        .child(canvas(move |_, _, _| probe_frame.begin_frame(), |_, _, _, _| {}).absolute().size_full())
         .child(
             div().size_full().min_h_0().min_w_0()
                 .child(gpui_kit::base::ScrollBounce::new(SharedString::from("timeline-bounce"), &list, list_el).on_scroll(move |_, cx| {

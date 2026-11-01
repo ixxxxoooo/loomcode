@@ -20,7 +20,7 @@ const INSET: f32 = 8.;
 const FADE_H: f32 = 28.;
 
 /// 吸附目标:行下标、消息 id、正文、其后下一条用户消息的行下标。
-#[derive(Debug, PartialEq, Clone)]
+#[derive(Debug, PartialEq)]
 pub struct Target {
     pub row: usize,
     pub id: String,
@@ -99,32 +99,18 @@ pub fn render(session: &Entity<SessionModel>, scroller: &Entity<ChatScroll>, cx:
                 .into_any_element(),
         );
     }
-    // 回弹位移期间冻结在上一次稳定的结果上;没有历史结果就不显示
-    let held = if sc.displaced() { sc.sticky_hold.borrow().clone() } else { None };
-    let (target, push) = match held {
-        Some(h) => h,
-        None if sc.displaced() => return None,
-        None => {
-            let top = sc.top().0;
-            let found = {
-                let m = session.read(cx);
-                resolve(&m.rows, &m.state.items, top, |r| sc.row_scrolled_past(r))
-            };
-            let Some(target) = found else {
-                *sc.sticky_hold.borrow_mut() = None;
-                return None;
-            };
-            let push = push_offset(target.next.and_then(|n| sc.row_top(n)), card_height(&target.text));
-            *sc.sticky_hold.borrow_mut() = Some((target.clone(), push));
-            (target, push)
-        }
-    };
+    let top = sc.max_painted().unwrap_or(0);
+    let target = {
+        let m = session.read(cx);
+        resolve(&m.rows, &m.state.items, top, |r| sc.row_scrolled_past(r))
+    }?;
+    let push = push_offset(target.next.and_then(|n| sc.row_top(n)), card_height(&target.text));
     let Target { id, text, .. } = target;
     let edit = {
         let (s, id, text) = (session.clone(), id.clone(), text.clone());
         move |window: &mut Window, cx: &mut App| { s.update(cx, |m, cx| m.begin_edit(&id, &text, true, window, cx)); }
     };
-    let (edit_click, edit_btn) = (edit.clone(), edit);
+    let edit_click = edit;
     let (s_retry, id_retry, copy_text) = (session.clone(), id.clone(), text.clone());
     let (copied, retried) = {
         let c = session.read(cx).copied.as_deref();
@@ -138,12 +124,12 @@ pub fn render(session: &Entity<SessionModel>, scroller: &Entity<ChatScroll>, cx:
             .child(
                 div().w_full().px_3().pt(px(INSET)).flex().justify_center().child(
                     div().id("sticky-user").group("sticky-user").relative().w_full().max_w(max_w)
-                        .px(px(14.)).py(px(8.)).pr(px(96.)).rounded(px(12.))
+                        .px(px(14.)).py(px(10.)).min_h(px(40.)).pr(px(60.)).rounded(px(12.))
                         .bg(t.muted).cursor_pointer().text_size(px(14.)).text_color(t.foreground).line_clamp(2)
                         .on_click(move |_, window, cx| edit_click(window, cx))
                         .child(text)
                         .child(
-                            h_flex().absolute().right(px(8.)).top(px(7.)).gap_0p5().when(!(copied || retried), |d| d.invisible().group_hover("sticky-user", |d| d.visible()))
+                            h_flex().absolute().right(px(8.)).bottom(px(8.)).gap_0p5().when(!(copied || retried), |d| d.invisible().group_hover("sticky-user", |d| d.visible()))
                                 .child(action_btn("sticky-retry".into(), IconName::RotateCcw, "重试(原样重新发送)", retried, cx)
                                     .on_click(move |_, _, cx| {
                                         cx.stop_propagation();
@@ -156,8 +142,7 @@ pub fn render(session: &Entity<SessionModel>, scroller: &Entity<ChatScroll>, cx:
                                         cx.write_to_clipboard(ClipboardItem::new_string(copy_text.clone()));
                                         s_cm.update(cx, |m, cx| m.mark_copied(&format!("c-{id_cm}"), cx));
                                     }))
-                                .child(action_btn("sticky-edit".into(), IconName::SquarePen, "编辑并重新发送", false, cx)
-                                    .on_click(move |_, window, cx| { cx.stop_propagation(); edit_btn(window, cx); })),
+
                         ),
                 ),
             )

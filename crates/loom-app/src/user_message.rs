@@ -111,7 +111,6 @@ fn render_card(session: &Entity<SessionModel>, id: &str, text: &str, images: &[S
     let shown: String = if long && !folded { text.lines().take(FOLD_LINES).collect::<Vec<_>>().join("\n") } else { text.clone() };
     let group = SharedString::from(format!("umsg-{id}"));
     let (s_fold, id_fold) = (session.clone(), id.to_string());
-    let (s_edit, id_edit, text_edit) = (session.clone(), id.to_string(), text.clone());
     let (s_retry, id_retry) = (session.clone(), id.to_string());
     let (s_click, id_click, text_click) = (session.clone(), id.to_string(), text.clone());
     let copy_text = text.clone();
@@ -121,7 +120,7 @@ fn render_card(session: &Entity<SessionModel>, id: &str, text: &str, images: &[S
     };
     let (s_copy_mark, id_copy_mark) = (session.clone(), id.to_string());
     let (s_retry_mark, id_retry_mark) = (session.clone(), id.to_string());
-    v_flex().id(SharedString::from(format!("umsg-card-{id}"))).group(group.clone()).relative().w_full().gap_2().px(px(14.)).py(px(10.)).pr(px(76.)).rounded(px(12.)).bg(t.muted).cursor_pointer()
+    v_flex().id(SharedString::from(format!("umsg-card-{id}"))).group(group.clone()).relative().w_full().gap_2().px(px(14.)).py(px(10.)).min_h(px(40.)).pr(px(60.)).rounded(px(12.)).bg(t.muted).cursor_pointer()
         .on_click(move |_, window, cx| {
             let (id, text) = (id_click.clone(), text_click.clone());
             s_click.update(cx, |m, cx| m.begin_edit(&id, &text, true, window, cx));
@@ -139,7 +138,7 @@ fn render_card(session: &Entity<SessionModel>, id: &str, text: &str, images: &[S
         })
         // 悬停时右下角出现:复制、编辑
         .child(
-            h_flex().absolute().right(px(8.)).bottom(px(6.)).gap_0p5().when(!(copied || retried), |d| d.invisible().group_hover(group, |d| d.visible()))
+            h_flex().absolute().right(px(8.)).bottom(px(8.)).gap_0p5().when(!(copied || retried), |d| d.invisible().group_hover(group, |d| d.visible()))
                 .child(action_btn(format!("umsg-retry-{id}"), IconName::RotateCcw, "重试(原样重新发送)", retried, cx)
                     .on_click(move |_, _, cx| {
                         cx.stop_propagation();
@@ -152,12 +151,7 @@ fn render_card(session: &Entity<SessionModel>, id: &str, text: &str, images: &[S
                         cx.write_to_clipboard(ClipboardItem::new_string(copy_text.clone()));
                         s_copy_mark.update(cx, |m, cx| m.mark_copied(&format!("c-{id_copy_mark}"), cx));
                     }))
-                .child(action_btn(format!("umsg-edit-{id}"), IconName::SquarePen, "编辑并重新发送", false, cx)
-                    .on_click(move |_, window, cx| {
-                        cx.stop_propagation();
-                        let (id, text) = (id_edit.clone(), text_edit.clone());
-                        s_edit.update(cx, |m, cx| m.begin_edit(&id, &text, true, window, cx));
-                    })),
+
         )
         .into_any_element()
 }
@@ -177,9 +171,11 @@ pub(crate) fn render_editor(session: &Entity<SessionModel>, input: &Entity<Texta
         .when(running, |d| d.child(div().text_size(px(11.)).text_color(t.muted_foreground).child("回合进行中,将排到本轮结束后发送。")))
         .child(
             h_flex().gap_2().items_center().justify_end()
+                .children(crate::edit_model::chip(session, cx).map(|c| div().flex_1().child(c)))
                 .child(Button::new("umsg-cancel").small().ghost().label("取消").on_click(move |_, _, cx| { s_cancel.update(cx, |m, cx| m.end_edit(cx)); }))
                 .child(send_button(false, has_text, move |window, cx| { s_send.update(cx, |m, cx| m.submit_edit(window, cx)); }, cx)),
         )
+        .children(crate::edit_model::list(session, cx))
         .into_any_element()
 }
 
@@ -189,6 +185,8 @@ pub struct UserEdit {
     pub input: Entity<TextareaState>,
     /// 从吸顶卡发起:编辑卡悬浮在会话流顶部、向下展开,不推挤会话流
     pub pinned: bool,
+    /// 模型列表是否展开
+    pub model_open: bool,
     pub(crate) _sub: Subscription,
 }
 
@@ -213,7 +211,7 @@ impl SessionModel {
             InputEvent::PressEnter { shift: false, .. } => this.submit_edit(window, cx),
             _ => {}
         });
-        self.editing = Some(UserEdit { id: id.to_string(), input, pinned, _sub: sub });
+        self.editing = Some(UserEdit { id: id.to_string(), input, pinned, model_open: false, _sub: sub });
         self.remeasure_id(id, cx);
         cx.notify();
     }
@@ -236,6 +234,14 @@ impl SessionModel {
         } else {
             self.send_prompt_with(text, images, files, cx);
         }
+    }
+
+    /// 展开 / 收起编辑卡里的模型列表。
+    pub fn toggle_edit_model(&mut self, cx: &mut Context<Self>) {
+        if let Some(e) = self.editing.as_mut() {
+            e.model_open = !e.model_open;
+        }
+        cx.notify();
     }
 
     /// 结束编辑(取消或发送后)。

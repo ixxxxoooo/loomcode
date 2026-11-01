@@ -89,6 +89,8 @@ mod right_rail;
 mod right_tabs;
 mod sidebar;
 mod smooth_scroll;
+mod edit_model;
+mod row_probe;
 mod sticky_user;
 mod sidebar_filter;
 mod term_actions;
