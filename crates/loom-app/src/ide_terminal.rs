@@ -113,6 +113,9 @@ impl IdeWindow {
         self.term_open = !self.term_open;
         if self.term_open {
             self.term.update(cx, |t, cx| t.focus_or_spawn(window, cx));
+        } else {
+            // 收起后焦点回到窗口根,否则下次 ⌃` 找不到处理者
+            window.focus(&self.focus, cx);
         }
         cx.notify();
     }

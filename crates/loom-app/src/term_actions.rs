@@ -13,6 +13,8 @@ impl Workbench {
     pub fn toggle_terminal(&mut self, window: &mut Window, cx: &mut Context<Self>) {
         if self.page == Page::Chat && self.right_open && self.panel.read(cx).tab == RightTab::Terminal {
             self.right_open = false;
+            // 收起后焦点回到工作台根,否则下次 ⌃` 找不到处理者
+            window.focus(&self.focus, cx);
         } else {
             self.page = Page::Chat;
             self.right_open = true;
