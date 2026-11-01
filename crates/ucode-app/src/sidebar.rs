@@ -49,11 +49,13 @@ fn session_row(wb: &Workbench, project_ix: usize, meta: &SessionMeta, cx: &mut C
             div().relative().w(px(44.)).h_full().flex_none()
                 .child(
                     h_flex().size_full().justify_end().items_center().gap_1().text_size(px(11.)).text_color(t.muted_foreground)
+                        // 悬停时让位给按钮(不靠覆盖底色,避免和行底色不一致)
+                        .group_hover(group.clone(), |d| d.invisible())
                         .when(pinned, |d| d.child(icon(IconName::Pin, 11., t.muted_foreground)))
                         .child(short_time(&meta.updated)),
                 )
                 .child(
-                    h_flex().absolute().inset_0().justify_end().items_center().gap_0p5().bg(if active { t.sidebar } else { t.sidebar_accent }).invisible()
+                    h_flex().absolute().inset_0().justify_end().items_center().gap_0p5().invisible()
                         .group_hover(group, |d| d.visible())
                         .on_mouse_down(MouseButton::Left, stop)
                         .child(Button::new(SharedString::from(format!("pin-{}", meta.id))).xsmall().ghost()
