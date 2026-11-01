@@ -352,6 +352,27 @@ impl Workbench {
             })
             .detach();
         }
+        // 主线程心跳(卡死检测看门狗据此判断界面线程是否还活着)+ 每 5 秒刷新实体计数
+        {
+            // 调试用:LOOM_CRASH_TEST=hang 在第 30 个心跳后让界面线程睡 20 秒,验证卡死记录与调用栈采样
+            let hang_test = std::env::var("LOOM_CRASH_TEST").is_ok_and(|v| v == "hang");
+            cx.spawn(async move |this, cx| {
+                let mut n: u64 = 0;
+                loop {
+                    cx.background_executor().timer(std::time::Duration::from_millis(100)).await;
+                    loom_diag::hang::beat();
+                    n += 1;
+                    if hang_test && n == 30 {
+                        loom_diag::warn!("LOOM_CRASH_TEST=hang:界面线程即将睡 20 秒");
+                        std::thread::sleep(std::time::Duration::from_secs(20));
+                    }
+                    if n % 50 == 1 {
+                        let _ = this.update(cx, |this, cx| this.update_gauges(cx));
+                    }
+                }
+            })
+            .detach();
+        }
         cx.set_global(crate::UiPrefs::from_settings(&wb.settings));
         crate::appearance::apply_scrollbar(wb.settings.appearance.scrollbar, cx);
         cx.set_global(crate::Prefs(wb.settings.clone()));
@@ -1257,6 +1278,26 @@ pub fn chat_panel_with_footer(parts: Option<(Entity<SessionModel>, Entity<Compos
 
 impl Render for Workbench {
     fn render(&mut self, window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
+        // 统计根视图的构建耗时(诊断页展示 p50 / p95 / 最大值)
+        let started = std::time::Instant::now();
+        let el = self.render_inner(window, cx);
+        loom_diag::frames::record(started.elapsed());
+        el
+    }
+}
+
+impl Workbench {
+    /// 刷新诊断页展示的实体计数(项目、会话、时间线条目、终端)。
+    fn update_gauges(&self, cx: &mut Context<Self>) {
+        let items: usize = self.views.values().map(|v| v.model.read(cx).state.items.len()).sum();
+        loom_diag::stats::set_gauge("项目", self.projects.len() as u64);
+        loom_diag::stats::set_gauge("已打开会话", self.views.len() as u64);
+        loom_diag::stats::set_gauge("时间线条目", items as u64);
+        let terms = crate::term_store::ProjectTerminals::hub(cx).read(cx).count();
+        loom_diag::stats::set_gauge("终端", terms as u64);
+    }
+
+    fn render_inner(&mut self, window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
         let t = cx.theme().clone();
         // 托盘跟着会话状态走(内容没变不会重建菜单)
         crate::tray::set_snapshot(self.tray_snapshot(cx));

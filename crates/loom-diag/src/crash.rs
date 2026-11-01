@@ -412,7 +412,7 @@ pub fn analyze_previous() {
 
 /// 调试用:2 秒后在后台线程制造一种故障,验证记录是否齐全。
 ///
-/// 参数:`kind` 取 `panic`(普通 panic)、`segv`(非法内存访问)、`abort`、`kill`(自己给自己 SIGKILL)。
+/// 参数:`kind` 取 `panic`(普通 panic)、`segv`(非法内存访问)、`abort`、`kill`(自己给自己 SIGKILL);`hang` 由应用侧制造。
 pub fn trigger_test(kind: &str) {
     let kind = kind.to_string();
     let _ = std::thread::Builder::new().name("loom-crash-test".into()).spawn(move || {
@@ -423,6 +423,8 @@ pub fn trigger_test(kind: &str) {
             // SAFETY: 故意写非法地址制造 EXC_BAD_ACCESS,仅用于调试验证。
             "segv" => unsafe { std::ptr::write_volatile(8 as *mut u8, 1) },
             "abort" => std::process::abort(),
+            // hang 要卡住界面线程,由应用侧的心跳循环处理
+            "hang" => {}
             // SAFETY: 向自己发 SIGKILL,模拟被强杀。
             "kill" => unsafe {
                 libc::kill(libc::getpid(), libc::SIGKILL);

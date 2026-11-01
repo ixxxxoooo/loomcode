@@ -5,8 +5,11 @@
 
 pub mod crash;
 pub mod crumbs;
+pub mod frames;
+pub mod hang;
 pub mod ips;
 pub mod logger;
+pub mod monitor;
 pub mod perf;
 pub mod records;
 pub mod sentinel;

@@ -200,7 +200,10 @@ fn main() {
     loom_diag::crash::install(loom_diag::RunInfo { version: env!("CARGO_PKG_VERSION").into(), mode: if demo { "demo" } else { "real" }.into() });
     objc_exc::install();
     log_startup_banner(demo, is_dev);
-    // 调试用:LOOM_CRASH_TEST=panic|segv|abort|kill 两秒后制造故障,验证崩溃记录是否齐全
+    // 资源采样与主线程卡死看门狗(开发版阈值放宽)
+    loom_diag::monitor::start();
+    loom_diag::hang::start(is_dev);
+    // 调试用:LOOM_CRASH_TEST=panic|segv|abort|kill|hang 两秒后制造故障,验证崩溃记录是否齐全
     if let Ok(kind) = std::env::var("LOOM_CRASH_TEST") {
         loom_diag::crash::trigger_test(&kind);
     }

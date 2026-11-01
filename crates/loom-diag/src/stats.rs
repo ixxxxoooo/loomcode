@@ -20,3 +20,20 @@ pub fn rss_mb() -> u64 {
 pub fn now_secs() -> u64 {
     std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH).map(|d| d.as_secs()).unwrap_or(0)
 }
+
+use std::collections::BTreeMap;
+use std::sync::Mutex;
+
+static GAUGES: Mutex<BTreeMap<&'static str, u64>> = Mutex::new(BTreeMap::new());
+
+/// 登记一个计数指标(如会话数、时间线条目数),诊断页展示。
+pub fn set_gauge(name: &'static str, value: u64) {
+    if let Ok(mut g) = GAUGES.lock() {
+        g.insert(name, value);
+    }
+}
+
+/// 读出所有计数指标(按名称排序)。
+pub fn gauges() -> Vec<(&'static str, u64)> {
+    GAUGES.lock().map(|g| g.iter().map(|(k, v)| (*k, *v)).collect()).unwrap_or_default()
+}

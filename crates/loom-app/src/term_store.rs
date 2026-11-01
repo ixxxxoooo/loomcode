@@ -66,6 +66,11 @@ impl ProjectTerminals {
         e
     }
 
+    /// 全部项目的终端总数。
+    pub fn count(&self) -> usize {
+        self.groups.values().map(|g| g.tabs.len()).sum()
+    }
+
     /// 某个项目的终端标签。
     pub fn tabs(&self, root: &str) -> &[TermTab] {
         self.groups.get(root).map_or(&[], |g| &g.tabs)
