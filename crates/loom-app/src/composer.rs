@@ -128,7 +128,12 @@ impl Composer {
             Ok("context") => Some(Pick::Context),
             _ => None,
         };
-        Self { session, input, open, outside_closed: None, suggestions: Vec::new(), sel: 0, attachments: Vec::new(), attach_counter: 0, demo, rewrite: None, optimizing: false, optimize_error: None, custom_commands: Vec::new(), custom_agents: Vec::new(), _sub: sub }
+        let mut this = Self { session, input, open, outside_closed: None, suggestions: Vec::new(), sel: 0, attachments: Vec::new(), attach_counter: 0, demo, rewrite: None, optimizing: false, optimize_error: None, custom_commands: Vec::new(), custom_agents: Vec::new(), _sub: sub };
+        // 调试用:LOOM_ATTACH=图片路径 启动即带一张附件,方便截图检查缩略图
+        if let Ok(p) = std::env::var("LOOM_ATTACH") {
+            this.add_image_path(std::path::Path::new(&p), cx);
+        }
+        this
     }
 
     /// 输入框里有没有未发送的内容(文字或附件);淘汰会话视图前要保护草稿。
@@ -427,17 +432,13 @@ impl Render for Composer {
         };
 
         let paste_weak = cx.entity().downgrade();
+        // 附件缩略图:点击预览大图,悬停右上角出现删除按钮
         let attach_chips = (!self.attachments.is_empty()).then(|| {
-            h_flex().flex_wrap().gap_1p5().px_3().pt_2().children(self.attachments.iter().enumerate().map(|(i, a)| {
+            h_flex().flex_wrap().gap_2().px_3().pt_3().children(self.attachments.iter().enumerate().map(|(i, a)| {
                 let this = this.clone();
-                h_flex().gap_1().items_center().pl_2().pr_1().h(px(22.)).rounded(px(6.)).bg(t.muted).border_1().border_color(t.border)
-                    .child(icon(IconName::Image, 12., t.muted_foreground))
-                    .child(div().text_size(px(12.)).child(a.name.clone()))
-                    .child(
-                        div().id(SharedString::from(format!("att-x-{i}"))).p(px(2.)).rounded(px(4.)).cursor_pointer().hover(|d| d.bg(t.list_hover))
-                            .on_click(move |_, _, cx| { this.update(cx, |c, cx| { if i < c.attachments.len() { c.attachments.remove(i); } cx.notify(); }); })
-                            .child(icon(IconName::X, 10., t.muted_foreground)),
-                    )
+                crate::image_viewer::thumbnail(&format!("att-{i}-{}", a.path), &a.path, &a.name, 56., Some(Box::new(move |_, cx| {
+                    this.update(cx, |c, cx| { if i < c.attachments.len() { c.attachments.remove(i); } cx.notify(); });
+                })), cx)
             }))
         });
 

@@ -33,6 +33,7 @@ mod file_tree_view;
 mod git_status;
 mod git_actions;
 mod git_changes;
+mod image_viewer;
 mod ide;
 mod ide_activity;
 mod ide_markdown;

@@ -12,7 +12,7 @@ use gpui_kit::component::input::{InputEvent, Textarea, TextareaState};
 use gpui_kit::component::{ActiveTheme, Sizable, h_flex, v_flex};
 use gpui_kit::prelude::FluentBuilder as _;
 use gpui_kit::*;
-use std::path::{Path, PathBuf};
+use std::path::Path;
 
 /// 超过这个行数的用户消息默认折叠。
 const FOLD_LINES: usize = 6;
@@ -53,17 +53,12 @@ pub fn render_user(session: &Entity<SessionModel>, id: &str, text: &str, images:
     }
 }
 
-/// 图片缩略图:本地文件存在就画图(点击用系统看图打开),否则(演示数据)退回文件名 chip。
+/// 图片缩略图:本地文件存在就画图(点击预览大图),否则(演示数据)退回文件名 chip。
 fn thumb(name: &str, cx: &App) -> AnyElement {
     let t = cx.theme();
     if Path::new(name).is_file() {
-        let path = PathBuf::from(name);
-        let open = path.clone();
-        div().id(SharedString::from(format!("thumb-{name}"))).size(px(THUMB)).flex_none().rounded(px(8.)).overflow_hidden().border_1().border_color(t.border).cursor_pointer()
-            .tooltip(|window, cx| gpui_kit::component::tooltip::Tooltip::new("点击查看原图").build(window, cx))
-            .on_click(move |_, _, _| { let _ = std::process::Command::new("open").arg(&open).spawn(); })
-            .child(img(path).size_full().object_fit(ObjectFit::Cover))
-            .into_any_element()
+        let label = Path::new(name).file_name().map(|n| n.to_string_lossy().to_string()).unwrap_or_default();
+        crate::image_viewer::thumbnail(&format!("u-{name}"), name, &label, THUMB, None, cx)
     } else {
         h_flex().gap_1().items_center().px_2().h(px(22.)).rounded(px(6.)).bg(t.background).border_1().border_color(t.border)
             .child(icon(IconName::Image, 12., t.muted_foreground))
