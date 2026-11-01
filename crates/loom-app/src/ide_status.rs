@@ -10,8 +10,8 @@ use gpui_kit::*;
 
 /// 构造状态栏。
 ///
-/// 参数:`project` 项目名;`branch` 当前分支;`info` 为 (行, 列, 语言, 是否 CRLF);`mode` 权限模式文字;`demo` 是否演示模式(开发版 / 演示模式标识显示在最左,正对左下角的设置按钮)。
-pub fn status_bar(project: Option<String>, branch: Option<String>, info: Option<(u32, u32, &'static str, bool)>, mode: Option<String>, demo: bool, cx: &App) -> impl IntoElement {
+/// 参数:`project` 项目名;`branch` 当前分支;`info` 为 (行, 列, 语言, 是否 CRLF);`lsp` 为 (语言服务器状态文字, 错误数, 警告数);`mode` 权限模式文字;`demo` 是否演示模式(开发版 / 演示模式标识显示在最左,正对左下角的设置按钮)。
+pub fn status_bar(project: Option<String>, branch: Option<String>, info: Option<(u32, u32, &'static str, bool)>, lsp: Option<(String, usize, usize)>, mode: Option<String>, demo: bool, cx: &App) -> impl IntoElement {
     let t = cx.theme().clone();
     let muted = t.muted_foreground;
     // 不用 StatusBar 组件:它不保证内容垂直居中。左右两组都 items_center,整条固定 24px 高
@@ -30,7 +30,18 @@ pub fn status_bar(project: Option<String>, branch: Option<String>, info: Option<
             group()
                 .when_some(crate::ui::env_badges(demo, cx), |d, b| d.child(b))
                 .when_some(project, |d, n| d.child(h_flex().gap_1().items_center().child(icon(IconName::Folder, 11., muted)).child(n)))
-                .when_some(branch, |d, b| d.child(h_flex().gap_1().items_center().child(icon(IconName::GitBranch, 11., muted)).child(b))),
+                .when_some(branch, |d, b| d.child(h_flex().gap_1().items_center().child(icon(IconName::GitBranch, 11., muted)).child(b)))
+                // 语言服务器:错误 / 警告计数(有才显示)与服务器名 / 状态
+                .when_some(lsp, |d, (label, errors, warnings)| {
+                    d.child(
+                        h_flex()
+                            .gap_2()
+                            .items_center()
+                            .when(errors > 0, |d| d.child(h_flex().gap_1().items_center().text_color(t.danger).child(icon(IconName::CircleX, 11., t.danger)).child(errors.to_string())))
+                            .when(warnings > 0, |d| d.child(h_flex().gap_1().items_center().text_color(t.warning).child(icon(IconName::TriangleAlert, 11., t.warning)).child(warnings.to_string())))
+                            .child(div().child(label)),
+                    )
+                }),
         )
         .child(div().flex_1())
         .child(

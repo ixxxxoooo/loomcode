@@ -109,6 +109,7 @@ impl Workbench {
         };
         match update::launch_replacer(&staged, &bundle) {
             Ok(()) => {
+                loom_lsp::hub::kill_all();
                 loom_diag::crash::clean_exit("应用更新后重启");
                 cx.quit()
             }

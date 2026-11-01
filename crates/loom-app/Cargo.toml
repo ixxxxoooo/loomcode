@@ -18,6 +18,9 @@ loom-canvas = { path = "../loom-canvas" }
 loom-automation = { path = "../loom-automation" }
 loom-browser = { path = "../loom-browser" }
 loom-claude = { path = "../loom-claude" }
+loom-lsp = { path = "../loom-lsp" }
+lsp-types = "0.97"
+anyhow = "1"
 serde_json.workspace = true
 gpui-kit-markdown-editor = { version = "0.1.1", default-features = false }
 async-channel = "2"

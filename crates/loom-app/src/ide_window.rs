@@ -305,7 +305,7 @@ impl Render for IdeWindow {
                     ),
             )
             .when_some(self.quick.clone(), |d, p| d.child(p))
-            .child(ide_status::status_bar(project_name, branch, self.ide.read(cx).cursor_info(cx), mode, demo, cx))
+            .child(ide_status::status_bar(project_name, branch, self.ide.read(cx).cursor_info(cx), self.ide.read(cx).lsp_summary(), mode, demo, cx))
     }
 }
 

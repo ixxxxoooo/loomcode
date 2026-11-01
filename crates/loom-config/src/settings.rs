@@ -74,11 +74,13 @@ pub struct EditorPrefs {
     pub blame_inline: bool,
     /// 行号左侧的 Git 追溯栏(逐行显示作者与时间,同一提交的连续行只在首行显示)
     pub blame_gutter: bool,
+    /// 语言服务器(LSP):悬停语义、跳转到定义、补全、诊断(之后新打开的文件生效)
+    pub lsp: bool,
 }
 
 impl Default for EditorPrefs {
     fn default() -> Self {
-        Self { minimap: true, minimap_slider_always: false, minimap_width: 100, minimap_git: true, line_numbers: true, folding: true, soft_wrap: false, tab_size: 4, bracket_match: true, auto_save: AutoSave::Off, max_file_kb: 1024, syntax_highlight: true, blame_inline: true, blame_gutter: false }
+        Self { minimap: true, minimap_slider_always: false, minimap_width: 100, minimap_git: true, line_numbers: true, folding: true, soft_wrap: false, tab_size: 4, bracket_match: true, auto_save: AutoSave::Off, max_file_kb: 1024, syntax_highlight: true, blame_inline: true, blame_gutter: false, lsp: true }
     }
 }
 

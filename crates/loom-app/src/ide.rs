@@ -48,6 +48,12 @@ pub struct IdeDoc {
     pub(crate) blame_gen: u64,
     /// 追溯与当前内容一致(编辑后到刷新完成之间为假)
     pub(crate) blame_fresh: bool,
+    /// 语言服务器同步句柄(没有对应服务器 / 未安装 / 功能关闭时为空)
+    pub(crate) lsp: Option<std::sync::Arc<crate::lsp::DocSync>>,
+    /// 同步给语言服务器的防抖序号
+    pub(crate) lsp_gen: u64,
+    /// 语言服务器给出的 (错误数, 警告数)
+    pub(crate) diag: (usize, usize),
     _subs: Vec<Subscription>,
 }
 
@@ -83,12 +89,14 @@ pub struct IdeView {
     pub(crate) blame_gutter: bool,
     /// 追溯栏的界面状态
     pub(crate) blame_ui: std::rc::Rc<crate::ide_blame::BlameUi>,
+    /// 已启动诊断监听
+    pub(crate) lsp_listening: bool,
 }
 
 impl IdeView {
     /// 创建空的编辑器视图。
     pub fn new() -> Self {
-        Self { root: String::new(), docs: HashMap::new(), tabs: TabModel::default(), note: None, images: Default::default(), minimap_ui: Default::default(), applied: None, edit_gen: 0, nav: Default::default(), nav_quiet: false, fresh_open: false, recent: Vec::new(), pending_restore: None, md: HashMap::new(), blame_gutter: false, blame_ui: Default::default() }
+        Self { root: String::new(), docs: HashMap::new(), tabs: TabModel::default(), note: None, images: Default::default(), minimap_ui: Default::default(), applied: None, edit_gen: 0, nav: Default::default(), nav_quiet: false, fresh_open: false, recent: Vec::new(), pending_restore: None, md: HashMap::new(), blame_gutter: false, blame_ui: Default::default(), lsp_listening: false }
     }
 
     /// 设置项目根目录(会话切换时由宿主调用)。
@@ -136,6 +144,7 @@ impl IdeView {
         }
         self.refresh_marks(&path, cx);
         self.refresh_blame(&path, cx);
+        self.lsp_attach(&path, cx);
         let line = self.cursor_line(&path, cx);
         self.record_open(&path, line);
         cx.notify();
@@ -270,8 +279,11 @@ impl IdeView {
         let path = path.to_path_buf();
         let Some(doc) = self.docs.get_mut(&path) else { return false };
         let text = doc.editor.read(cx).value().to_string();
-        match std::fs::write(&path, text) {
+        match std::fs::write(&path, &text) {
             Ok(()) => {
+                if let Some(sync) = &doc.lsp {
+                    sync.did_save(&text);
+                }
                 doc.saved = true;
                 doc.stale = false;
                 doc.mtime = std::fs::metadata(&path).and_then(|m| m.modified()).ok();
@@ -298,6 +310,7 @@ impl IdeView {
         match load(&path, window, cx) {
             Ok(doc) => {
                 self.docs.insert(path.clone(), doc);
+                self.lsp_attach(&path, cx);
                 self.focus_active(window, cx);
             }
             Err(note) => self.note = Some(note),
@@ -365,6 +378,7 @@ fn load(path: &Path, window: &mut Window, cx: &mut Context<IdeView>) -> Result<I
                 }
                 this.schedule_minimap(&key, cx);
                 this.schedule_blame(&key, cx);
+                this.schedule_lsp_sync(&key, cx);
                 this.schedule_autosave(&key, cx);
             }
             // 失焦自动保存:编辑器失去焦点(切标签 / 点到别处 / 窗口失焦)时写盘
@@ -387,7 +401,7 @@ fn load(path: &Path, window: &mut Window, cx: &mut Context<IdeView>) -> Result<I
     });
     let marks = None;
     let mtime = meta.modified().ok();
-    Ok(IdeDoc { editor, saved: true, crlf, mtime, stale: false, marks, minimap, mm_key: (theme, prefs.syntax_highlight), mm_gen: 0, hunks: Default::default(), bracket_pair: None, bracket_marks: None, blame: Default::default(), blame_gen: 0, blame_fresh: false, _subs: vec![sub, sub2] })
+    Ok(IdeDoc { editor, saved: true, crlf, mtime, stale: false, marks, minimap, mm_key: (theme, prefs.syntax_highlight), mm_gen: 0, hunks: Default::default(), bracket_pair: None, bracket_marks: None, blame: Default::default(), blame_gen: 0, blame_fresh: false, lsp: None, lsp_gen: 0, diag: (0, 0), _subs: vec![sub, sub2] })
 }
 
 impl Render for IdeView {

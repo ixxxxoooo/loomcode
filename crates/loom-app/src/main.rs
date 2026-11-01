@@ -68,6 +68,7 @@ mod ide_watch;
 mod ide_chat_tabs;
 mod ide_blame;
 mod ide_gutter;
+mod lsp;
 mod ide_memory;
 mod ide_prefs;
 mod ide_brackets;
@@ -218,7 +219,11 @@ fn main() {
     application().with_assets(gpui_kit::assets::AllAssets).run(move |cx| {
         init(cx);
         // 正常退出(⌘Q、托盘退出、更新重启等)时删除运行标记,下次启动才不会误判为异常退出
-        cx.on_app_quit(|_| async { loom_diag::crash::clean_exit("用户退出") }).detach();
+        cx.on_app_quit(|_| async {
+            loom_lsp::hub::kill_all();
+            loom_diag::crash::clean_exit("用户退出")
+        })
+        .detach();
         markdown_editor::init(cx);
         theme::apply(theme::ThemeKind::PaperLight, None, cx);
         cx.bind_keys([
@@ -228,6 +233,8 @@ fn main() {
             KeyBinding::new("cmd-,", workbench::OpenSettings, None),
             KeyBinding::new("cmd-n", workbench::NewSession, None),
             KeyBinding::new("cmd-s", workbench::SaveFile, None),
+            // 编辑器:跳转到定义(⌘ 点击是编辑器内置的)
+            KeyBinding::new("f12", gpui_kit::component::input::GoToDefinition, Some("Input")),
             KeyBinding::new("cmd-shift-e", workbench::ToggleIde, None),
             KeyBinding::new("ctrl-`", term_actions::ToggleTerminal, None),
             KeyBinding::new("ctrl-shift-`", term_actions::NewTerminal, None),

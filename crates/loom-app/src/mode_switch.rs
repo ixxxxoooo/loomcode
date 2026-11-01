@@ -131,6 +131,7 @@ impl Workbench {
         }
         loom_config::diag::info(&format!("切换模式并重启:→ {}", if to_demo { "演示" } else { "真实" }));
         if spawn_relaunch(to_demo) {
+            loom_lsp::hub::kill_all();
             loom_diag::crash::clean_exit("切换运行模式并重启");
             cx.quit();
         } else {

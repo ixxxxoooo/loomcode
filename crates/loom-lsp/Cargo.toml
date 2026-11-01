@@ -1,0 +1,9 @@
+[package]
+name = "loom-lsp"
+version.workspace = true
+edition.workspace = true
+
+[dependencies]
+loom-diag = { path = "../loom-diag" }
+serde_json.workspace = true
+async-channel = "2"

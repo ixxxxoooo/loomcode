@@ -3571,6 +3571,7 @@ dependencies = [
 name = "loom-app"
 version = "0.1.0"
 dependencies = [
+ "anyhow",
  "async-channel",
  "gpui-kit",
  "gpui-kit-markdown-editor",
@@ -3582,7 +3583,9 @@ dependencies = [
  "loom-core",
  "loom-demo",
  "loom-diag",
+ "loom-lsp",
  "loom-term",
+ "lsp-types",
  "objc2 0.6.5",
  "objc2-app-kit 0.3.2",
  "objc2-foundation 0.3.2",
@@ -3674,6 +3677,15 @@ dependencies = [
  "libc",
  "rustc-demangle",
  "serde",
+ "serde_json",
+]
+
+[[package]]
+name = "loom-lsp"
+version = "0.1.0"
+dependencies = [
+ "async-channel",
+ "loom-diag",
  "serde_json",
 ]
 
