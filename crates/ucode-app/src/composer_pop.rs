@@ -1,5 +1,5 @@
 //! 输入框里的两个弹层:
-//! - 模型弹层(级联):左列选模型,悬停后右列展开该模型的思考强度(带档位说明),点强度同时选定两者;
+//! - 模型弹层:上面选模型,下面是思考强度的分段条(强度与模型放在一起,因为互相影响)和当前档位说明;
 //! - 上下文弹层:点右下角的圆环打开,显示用量、花费,并提供「压缩」「新会话继续」。
 //!
 //! @author ixxxxoooo
@@ -45,37 +45,35 @@ pub fn context_ring(usage: &Usage, on_click: impl Fn(&mut App) + 'static, cx: &A
         .child(format!("{:.0}%", ratio * 100.))
 }
 
-/// 模型弹层(级联):左列是模型,悬停某个模型,右列展开它的思考强度,点强度同时选定两者。
+/// 模型弹层。
 ///
-/// 参数:`models` 可选模型;`current` 当前模型 id;`hovered` 悬停中的模型 id(没有则跟随当前模型);
-/// `effort` 当前强度;`this` 输入框实体(回调用)。
-pub fn model_popup(models: &[ModelInfo], current: &str, hovered: Option<&str>, effort: Effort, this: Entity<Composer>, cx: &App) -> Div {
+/// 参数:`models` 可选模型;`current` 当前模型 id;`effort` 当前强度;`this` 输入框实体(回调用)。
+pub fn model_popup(models: &[ModelInfo], current: &str, effort: Effort, this: Entity<Composer>, cx: &App) -> Div {
     let t = cx.theme().clone();
-    let active = hovered.unwrap_or(current).to_string();
     let list = models.iter().enumerate().map(|(i, m)| {
-        let (hv, id, on, shown) = (this.clone(), m.id.clone(), m.id == current, m.id == active);
-        let id2 = id.clone();
+        let (this, id, on) = (this.clone(), m.id.clone(), m.id == current);
         h_flex().id(SharedString::from(format!("pick-model-{i}"))).gap_2().px_2().h(px(30.)).items_center().rounded(px(6.)).cursor_pointer()
-            .when(shown, |d| d.bg(t.list_hover))
-            .on_hover(move |hovering, _, cx| { if *hovering { let id = id2.clone(); hv.update(cx, |c, cx| c.hover_model(&id, cx)); } })
+            .hover(|d| d.bg(t.list_hover))
+            .on_click(move |_, _, cx| { let id = id.clone(); this.update(cx, |c, cx| c.choose_model(&id, cx)); })
             .child(div().w(px(14.)).child(if on { icon(IconName::Check, 12., t.primary).into_any_element() } else { div().into_any_element() }))
             .child(div().text_size(px(13.)).child(m.name.clone()))
             .child(div().flex_1())
-            .child(icon(IconName::ChevronRight, 12., t.muted_foreground))
+            .child(div().text_size(px(11.)).text_color(t.muted_foreground).child(m.description.clone()))
     });
-    let efforts = Effort::ALL.into_iter().map(|e| {
-        let (this, id, on) = (this.clone(), active.clone(), e == effort && active == current);
-        h_flex().id(SharedString::from(format!("pick-effort-{}", e.cli_value()))).gap_2().px_2().h(px(30.)).items_center().rounded(px(6.)).cursor_pointer()
-            .hover(|d| d.bg(t.list_hover))
-            .on_click(move |_, _, cx| { let id = id.clone(); this.update(cx, |c, cx| c.choose_model_effort(&id, e, cx)); })
-            .child(div().w(px(14.)).child(if on { icon(IconName::Check, 12., t.primary).into_any_element() } else { div().into_any_element() }))
-            .child(div().w(px(36.)).text_size(px(13.)).child(e.label()))
-            .child(div().text_size(px(11.)).text_color(t.muted_foreground).child(e.hint()))
-    });
-    let panel = || v_flex().p_1().rounded(px(10.)).border_1().border_color(t.border).bg(t.popover).shadow_lg();
-    h_flex().absolute().bottom(px(44.)).left(px(8.)).items_start().gap_1()
-        .child(panel().w(px(180.)).children(list))
-        .child(panel().w(px(340.)).child(div().px_2().pt_1().pb_0p5().text_size(px(11.)).text_color(t.muted_foreground).child("思考强度")).children(efforts))
+    let segments = h_flex().gap_0p5().p_0p5().rounded(px(8.)).bg(t.muted).children(Effort::ALL.into_iter().map(|e| {
+        let (this, on) = (this.clone(), e == effort);
+        div().id(SharedString::from(format!("pick-effort-{}", e.cli_value()))).flex_1().h(px(26.)).flex().items_center().justify_center().rounded(px(6.)).cursor_pointer().text_size(px(12.))
+            .when(on, |d| d.bg(t.background).text_color(t.foreground).shadow_sm())
+            .when(!on, |d| d.text_color(t.muted_foreground).hover(|d| d.bg(t.list_hover)))
+            .on_click(move |_, _, cx| { this.update(cx, |c, cx| c.choose_effort(e, cx)); })
+            .child(e.label())
+    }));
+    v_flex().absolute().bottom(px(44.)).left(px(8.)).w(px(300.)).p_1().rounded(px(10.)).border_1().border_color(t.border).bg(t.popover).shadow_lg()
+        .children(list)
+        .child(div().h(px(1.)).my_1().bg(t.border))
+        .child(div().px_2().pt_1().pb_0p5().text_size(px(11.)).text_color(t.muted_foreground).child("思考强度"))
+        .child(div().px_1().child(segments))
+        .child(div().px_2().py_1p5().text_size(px(11.)).text_color(t.muted_foreground).child(effort.hint()))
 }
 
 /// 上下文弹层。

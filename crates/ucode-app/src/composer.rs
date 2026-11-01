@@ -64,8 +64,6 @@ pub struct Composer {
     session: Entity<SessionModel>,
     input: Entity<TextareaState>,
     open: Option<Pick>,
-    /// 模型级联菜单:鼠标悬停的模型 id(右侧显示它的思考强度)
-    sub_model: Option<String>,
     suggestions: Vec<Suggestion>,
     /// 补全列表当前高亮项
     sel: usize,
@@ -112,7 +110,7 @@ impl Composer {
             Ok("context") => Some(Pick::Context),
             _ => None,
         };
-        Self { session, input, open, sub_model: None, suggestions: Vec::new(), sel: 0, attachments: Vec::new(), attach_counter: 0, demo, _sub: sub }
+        Self { session, input, open, suggestions: Vec::new(), sel: 0, attachments: Vec::new(), attach_counter: 0, demo, _sub: sub }
     }
 
     /// 输入框里有没有未发送的内容(文字或附件);淘汰会话视图前要保护草稿。
@@ -261,22 +259,10 @@ impl Composer {
         cx.notify();
     }
 
-    /// 级联菜单悬停到某个模型,右侧切换成它的强度列表。
-    pub(crate) fn hover_model(&mut self, id: &str, cx: &mut Context<Self>) {
-        if self.sub_model.as_deref() != Some(id) {
-            self.sub_model = Some(id.to_string());
-            cx.notify();
-        }
-    }
-
-    /// 级联菜单第二级:同时选定模型和思考强度,并关闭弹层。
-    pub(crate) fn choose_model_effort(&mut self, id: &str, effort: Effort, cx: &mut Context<Self>) {
+    /// 选择模型并关闭弹层。
+    pub(crate) fn choose_model(&mut self, id: &str, cx: &mut Context<Self>) {
         self.open = None;
-        self.sub_model = None;
-        self.session.update(cx, |m, cx| {
-            m.set_model(id.to_string(), cx);
-            m.set_effort(effort, cx);
-        });
+        self.session.update(cx, |m, cx| m.set_model(id.to_string(), cx));
         cx.notify();
     }
 
@@ -303,7 +289,6 @@ impl Composer {
     /// 关闭当前弹层。
     pub(crate) fn close_pop(&mut self, cx: &mut Context<Self>) {
         self.open = None;
-        self.sub_model = None;
         cx.notify();
     }
 }
@@ -337,7 +322,7 @@ impl Render for Composer {
         let popup = self.open.map(|kind| match kind {
             Pick::Model => {
                 let (models, current) = { let st = &self.session.read(cx).state; (st.models.clone(), st.model.clone()) };
-                crate::composer_pop::model_popup(&models, &current, self.sub_model.as_deref(), effort, this.clone(), cx)
+                crate::composer_pop::model_popup(&models, &current, effort, this.clone(), cx)
             }
             Pick::Context => crate::composer_pop::context_popup(&usage, this.clone(), cx),
             Pick::Mode => {
