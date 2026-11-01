@@ -53,7 +53,6 @@ impl IdeView {
     /// 查找光标处符号的所有引用:一处直接跳转,多处弹出引用预览窗(对标 VS Code 的 Peek References)。
     pub(crate) fn find_references(&mut self, window: &mut Window, cx: &mut Context<Self>) {
         let Some((_, sync, full, rope, offset)) = self.lsp_context_pub(cx) else { return };
-        let symbol = rope.word_range(offset).and_then(|r| full.get(r)).unwrap_or("").to_string();
         cx.spawn_in(window, async move |this, cx| {
             let res: Result<Vec<RawRef>> = cx
                 .background_spawn(async move {
@@ -89,7 +88,7 @@ impl IdeView {
                     this.open_at(r.path, r.line, r.col, window, cx);
                 }
                 Ok(items) if !items.is_empty() => {
-                    let st = PeekState::new(items, symbol, cx);
+                    let st = PeekState::new(items, offset);
                     this.set_overlay(Overlay::Refs(st), cx);
                 }
                 Ok(_) => Self::notify_ui(window, cx, Notification::info("没有找到引用")),

@@ -44,11 +44,14 @@ impl IdeView {
 
     /// 浮层元素(没有浮层返回 `None`)。
     pub(crate) fn overlay_element(&mut self, cx: &mut Context<Self>) -> Option<AnyElement> {
+        if matches!(self.overlay, Some(Overlay::Refs(_))) {
+            return self.peek_overlay(cx);
+        }
         let o = self.overlay.as_ref()?;
         let t = cx.theme().clone();
-        let weak = cx.weak_entity();
         let (title, body): (String, AnyElement) = match o {
-            Overlay::Refs(st) => crate::ide_peek::peek_body(st, cx),
+            // 引用预览窗不是居中的卡片,走自己的渲染(见 `peek_overlay`)
+            Overlay::Refs(_) => return self.peek_overlay(cx),
             Overlay::Actions { title, items } => {
                 let rows = items.iter().enumerate().map(|(i, a)| {
                     h_flex().id(("ov-act", i)).h(px(28.)).px_2().items_center().rounded(px(4.)).cursor_pointer().hover(|d| d.bg(t.list_hover)).text_size(px(12.5))
@@ -67,25 +70,7 @@ impl IdeView {
             }
         };
         let width = match o { Overlay::Diff { .. } => 900., Overlay::Refs(_) => 1040., _ => 560. };
-        let esc = canvas(|b, _, _| b, move |_, _, window, _| {
-            let w = weak.clone();
-            window.on_key_event(move |e: &KeyDownEvent, _, window, cx| {
-                let key = e.keystroke.key.clone();
-                let _ = w.update(cx, |this, cx| match key.as_str() {
-                    "escape" => this.close_overlay(window, cx),
-                    // 引用预览窗:↑↓ 切换、回车打开
-                    "up" if matches!(this.overlay, Some(Overlay::Refs(_))) => this.peek_move(-1, cx),
-                    "down" if matches!(this.overlay, Some(Overlay::Refs(_))) => this.peek_move(1, cx),
-                    "enter" => {
-                        if let Some(Overlay::Refs(st)) = &this.overlay {
-                            let i = st.selected;
-                            this.peek_open(i, window, cx);
-                        }
-                    }
-                    _ => {}
-                });
-            });
-        }).absolute().size_full();
+        let esc = key_canvas(cx.weak_entity());
         Some(
             deferred(
                 div().id("ide-overlay").absolute().inset_0().flex().justify_center().pt(px(70.))
@@ -105,4 +90,26 @@ impl IdeView {
             ).into_any_element(),
         )
     }
+}
+
+/// 浮层的键盘处理(Esc 关闭;引用预览窗里 ↑↓ 切换、回车打开):一个不占位的画布,绘制时登记窗口级按键监听。
+pub(crate) fn key_canvas(weak: WeakEntity<IdeView>) -> Canvas<Bounds<Pixels>> {
+    canvas(|b, _, _| b, move |_, _, window, _| {
+        let w = weak.clone();
+        window.on_key_event(move |e: &KeyDownEvent, _, window, cx| {
+            let key = e.keystroke.key.clone();
+            let _ = w.update(cx, |this, cx| match key.as_str() {
+                "escape" => this.close_overlay(window, cx),
+                "up" if matches!(this.overlay, Some(Overlay::Refs(_))) => this.peek_move(-1, cx),
+                "down" if matches!(this.overlay, Some(Overlay::Refs(_))) => this.peek_move(1, cx),
+                "enter" => {
+                    if let Some(Overlay::Refs(st)) = &this.overlay {
+                        let i = st.selected;
+                        this.peek_open(i, window, cx);
+                    }
+                }
+                _ => {}
+            });
+        });
+    }).absolute().size_full()
 }
