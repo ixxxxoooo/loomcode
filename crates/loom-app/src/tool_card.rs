@@ -61,7 +61,9 @@ fn diff_stats(tool: &ToolCall) -> Option<(usize, usize)> {
 /// 渲染一个工具调用(紧凑行 + 可展开内容)。
 pub fn render_tool(session: &Entity<SessionModel>, tool: &ToolCall, cx: &App) -> AnyElement {
     let t = cx.theme();
-    let expanded = session.read(cx).is_expanded(&tool.id);
+    // 详细档下编辑与命令默认展开;手动点击反转默认状态
+    let detailed = cx.try_global::<crate::UiPrefs>().is_some_and(|p| p.tool_density == loom_config::ToolDensity::Detailed) && crate::row_groups::expands_in_detailed(tool);
+    let expanded = session.read(cx).is_expanded(&tool.id) != detailed;
     let has_body = !tool.content.is_empty();
     let id = tool.id.clone();
     let s = session.clone();

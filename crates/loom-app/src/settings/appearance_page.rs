@@ -9,7 +9,7 @@ use gpui_kit::assets::IconName;
 use gpui_kit::component::{ActiveTheme, h_flex, v_flex};
 use gpui_kit::prelude::FluentBuilder as _;
 use gpui_kit::*;
-use loom_config::ScrollbarStyle;
+use loom_config::{ScrollbarStyle, ToolDensity};
 
 /// 外观页在主题 / 强调色之后的全部区块。
 pub fn sections(wb: &Workbench, cx: &mut Context<Workbench>) -> Vec<AnyElement> {
@@ -33,6 +33,9 @@ pub fn sections(wb: &Workbench, cx: &mut Context<Workbench>) -> Vec<AnyElement> 
             row("内容宽度", "会话时间线与输入框的最大宽度;窄屏或分屏时会自动收窄", segmented("w-chat",
                 vec![(680u16, "紧凑"), (820, "标准"), (920, "较宽"), (1080, "宽"), (1600, "铺满")], a.chat_width, cx,
                 |this, v, cx| this.update_settings(cx, |s| s.appearance.chat_width = v)), cx),
+            row("工具调用详细程度", a.tool_density.describe(), segmented("tool-density",
+                ToolDensity::ALL.iter().map(|d| (*d, d.label())).collect(), a.tool_density, cx,
+                |this, v, cx| this.update_settings(cx, |s| s.appearance.tool_density = v)), cx),
         ], cx).into_any_element(),
         group("设置页宽度", rows![
             row("内容宽度", "统一控制所有设置页右侧内容的最大宽度;窗口较窄时自动收窄", segmented("w-settings",

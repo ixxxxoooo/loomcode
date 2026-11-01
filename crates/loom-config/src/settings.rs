@@ -191,7 +191,43 @@ pub enum SpinnerStyle {
     Minimal,
 }
 
-/// 外观偏好:内容宽度、字号、滚动条、等待动画。
+/// 工具调用详细程度(参考 OhMyAgent 与 Cursor 的「对话密度」)。
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, Default)]
+#[serde(rename_all = "snake_case")]
+pub enum ToolDensity {
+    /// 精简:相邻的工具调用(不论读、改、跑命令)合并成一行摘要
+    Compact,
+    /// 标准:只把连续的浏览类调用(读文件、搜索、访问网页)合并成摘要;编辑、命令等各占一行
+    #[default]
+    Standard,
+    /// 详细:每个工具调用单独一行,编辑与命令在行下直接显示 Diff / 输出
+    Detailed,
+}
+
+impl ToolDensity {
+    /// 三个档位。
+    pub const ALL: [ToolDensity; 3] = [Self::Compact, Self::Standard, Self::Detailed];
+
+    /// 档位名。
+    pub fn label(self) -> &'static str {
+        match self {
+            Self::Compact => "精简",
+            Self::Standard => "标准",
+            Self::Detailed => "详细",
+        }
+    }
+
+    /// 一句话说明。
+    pub fn describe(self) -> &'static str {
+        match self {
+            Self::Compact => "相邻的工具调用合并成一行摘要,如「运行了 2 条命令、读取了 3 个文件」",
+            Self::Standard => "只合并连续的浏览类调用;编辑与命令各占一行,点开看详情",
+            Self::Detailed => "每个工具调用一行,编辑的 Diff 与命令输出直接显示在行下",
+        }
+    }
+}
+
+/// 外观偏好:内容宽度、字号、滚动条、等待动画、工具调用详细程度。
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 #[serde(default)]
 pub struct AppearancePrefs {
@@ -203,11 +239,13 @@ pub struct AppearancePrefs {
     pub timeline_font_pct: u16,
     pub scrollbar: ScrollbarStyle,
     pub spinner: SpinnerStyle,
+    /// 工具调用详细程度
+    pub tool_density: ToolDensity,
 }
 
 impl Default for AppearancePrefs {
     fn default() -> Self {
-        Self { chat_width: 820, settings_width: 760, timeline_font_pct: 100, scrollbar: ScrollbarStyle::System, spinner: SpinnerStyle::Classic }
+        Self { chat_width: 820, settings_width: 760, timeline_font_pct: 100, scrollbar: ScrollbarStyle::System, spinner: SpinnerStyle::Classic, tool_density: ToolDensity::Standard }
     }
 }
 

@@ -199,7 +199,11 @@ impl Workbench {
             Vec::new()
         };
         let settings_path = if demo { demo_root.join("settings.json") } else { AppSettings::default_path().unwrap_or_else(|| demo_root.join("settings.json")) };
-        let settings = AppSettings::load(&settings_path);
+        let mut settings = AppSettings::load(&settings_path);
+        // 调试用:LOOM_DENSITY=compact|standard|detailed 覆盖工具调用详细程度(只用于截图验证)
+        if let Ok(d) = std::env::var("LOOM_DENSITY") {
+            settings.appearance.tool_density = match d.as_str() { "compact" => loom_config::ToolDensity::Compact, "detailed" => loom_config::ToolDensity::Detailed, _ => loom_config::ToolDensity::Standard };
+        }
         let last_customize = settings.last_customize_tab.clone();
         let last_tab = SettingsTab::from_name(&settings.last_settings_tab).unwrap_or(SettingsTab::General);
         let ui_state_path = settings_path.with_file_name("state.json");
@@ -674,6 +678,7 @@ impl Workbench {
     /// 修改偏好:立即生效并落盘。
     pub fn update_settings(&mut self, cx: &mut Context<Self>, f: impl FnOnce(&mut AppSettings)) {
         let (old_theme, old_accent, old_expand) = (self.settings.theme, self.settings.accent.clone(), self.settings.expand_thinking);
+        let old_density = self.settings.appearance.tool_density;
         let old_layout = (self.settings.appearance.chat_width, self.settings.appearance.timeline_font_pct, self.settings.appearance.scrollbar);
         f(&mut self.settings);
         if let Err(e) = self.settings.save(&self.settings_path) {
@@ -687,6 +692,12 @@ impl Workbench {
         if self.settings.theme != old_theme || self.settings.accent != old_accent {
             let kind = theme::ThemeKind::from(self.settings.theme);
             cx.defer(move |cx| theme::apply(kind, None, cx));
+        }
+        // 工具调用详细程度变了:所有会话按新档位重新分组
+        if self.settings.appearance.tool_density != old_density {
+            for v in self.views.values() {
+                v.model.update(cx, |m, cx| m.rebuild_rows(cx));
+            }
         }
         // 只有「默认展开思考」会改变对话流行高,其它偏好不必重新测量全部会话
         let layout = (self.settings.appearance.chat_width, self.settings.appearance.timeline_font_pct, self.settings.appearance.scrollbar);

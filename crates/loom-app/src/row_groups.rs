@@ -6,6 +6,7 @@
 //! @author ixxxxoooo
 
 use std::ops::Range;
+use loom_config::ToolDensity;
 use loom_core::{TimelineItem, ToolCall, ToolKind, ToolStatus};
 
 /// 一行显示内容。
@@ -31,11 +32,24 @@ impl Row {
 }
 
 /// 参与折叠的工具:普通工具调用(不含子 Agent、待办、切换模式,它们有自己的卡片)。
-fn foldable(item: &TimelineItem) -> Option<&ToolCall> {
-    match item {
-        TimelineItem::Tool(t) if !matches!(t.kind, ToolKind::Subagent | ToolKind::Todo | ToolKind::SwitchMode) => Some(t),
-        _ => None,
+///
+/// 精简档所有普通工具都参与;标准档只有浏览类(读、搜、访问网页、思考);详细档都不折叠。
+fn foldable(item: &TimelineItem, density: ToolDensity) -> Option<&ToolCall> {
+    let TimelineItem::Tool(t) = item else { return None };
+    if matches!(t.kind, ToolKind::Subagent | ToolKind::Todo | ToolKind::SwitchMode) {
+        return None;
     }
+    let ok = match density {
+        ToolDensity::Compact => true,
+        ToolDensity::Standard => matches!(t.kind, ToolKind::Read | ToolKind::Search | ToolKind::Fetch | ToolKind::Browser | ToolKind::Think),
+        ToolDensity::Detailed => false,
+    };
+    ok.then_some(t)
+}
+
+/// 这个工具在「详细」档下是否默认展开(编辑 Diff、命令输出直接显示)。
+pub fn expands_in_detailed(tool: &ToolCall) -> bool {
+    tool.content.iter().any(|c| matches!(c, loom_core::ToolContent::Diff { .. } | loom_core::ToolContent::Terminal { .. }))
 }
 
 /// 回合在进行时,末尾是否需要「处理中」提示:最后一个条目没有在流式输出 / 没有运行中的工具 /
@@ -52,17 +66,17 @@ pub fn needs_working_row(items: &[TimelineItem]) -> bool {
     }
 }
 
-/// 由时间线条目算出显示行。连续 2 个及以上的普通工具调用合成一行。
+/// 由时间线条目算出显示行。连续 2 个及以上的可折叠工具调用合成一行(哪些可折叠由详细程度决定)。
 ///
-/// 参数:`items` 时间线条目;`working` 回合是否在进行(需要时在末尾加「处理中」行)。
+/// 参数:`items` 时间线条目;`working` 回合是否在进行(需要时在末尾加「处理中」行);`density` 工具调用详细程度。
 /// 返回:显示行列表。
-pub fn build_rows(items: &[TimelineItem], working: bool) -> Vec<Row> {
+pub fn build_rows(items: &[TimelineItem], working: bool, density: ToolDensity) -> Vec<Row> {
     let mut rows = Vec::with_capacity(items.len());
     let mut i = 0;
     while i < items.len() {
-        if foldable(&items[i]).is_some() {
+        if foldable(&items[i], density).is_some() {
             let mut j = i + 1;
-            while j < items.len() && foldable(&items[j]).is_some() {
+            while j < items.len() && foldable(&items[j], density).is_some() {
                 j += 1;
             }
             if j - i >= 2 {
@@ -139,19 +153,48 @@ mod tests {
     #[test]
     fn 连续两个以上工具合并成一行() {
         let items = vec![text("a"), tool("1", ToolKind::Read, ToolStatus::Completed), tool("2", ToolKind::Execute, ToolStatus::Completed), text("b"), tool("3", ToolKind::Read, ToolStatus::Completed), text("c")];
-        assert_eq!(build_rows(&items, false), vec![Row::Item(0), Row::Tools(1..3), Row::Item(3), Row::Item(4), Row::Item(5)]);
+        assert_eq!(build_rows(&items, false, ToolDensity::Compact), vec![Row::Item(0), Row::Tools(1..3), Row::Item(3), Row::Item(4), Row::Item(5)]);
     }
 
     #[test]
     fn 子agent和待办不参与合并() {
         let items = vec![tool("1", ToolKind::Read, ToolStatus::Completed), tool("2", ToolKind::Subagent, ToolStatus::Completed), tool("3", ToolKind::Read, ToolStatus::Completed)];
-        assert_eq!(build_rows(&items, false).len(), 3);
+        assert_eq!(build_rows(&items, false, ToolDensity::Compact).len(), 3);
+    }
+
+    #[test]
+    fn 标准档只合并浏览类() {
+        // 读、读、跑命令、读、读:命令打断,两段浏览各自合并,命令单独一行
+        let items = vec![
+            tool("1", ToolKind::Read, ToolStatus::Completed), tool("2", ToolKind::Search, ToolStatus::Completed),
+            tool("3", ToolKind::Execute, ToolStatus::Completed),
+            tool("4", ToolKind::Read, ToolStatus::Completed), tool("5", ToolKind::Fetch, ToolStatus::Completed),
+            tool("6", ToolKind::Edit, ToolStatus::Completed),
+        ];
+        assert_eq!(build_rows(&items, false, ToolDensity::Standard), vec![Row::Tools(0..2), Row::Item(2), Row::Tools(3..5), Row::Item(5)]);
+    }
+
+    #[test]
+    fn 详细档不合并() {
+        let items = vec![tool("1", ToolKind::Read, ToolStatus::Completed), tool("2", ToolKind::Read, ToolStatus::Completed), tool("3", ToolKind::Execute, ToolStatus::Completed)];
+        assert_eq!(build_rows(&items, false, ToolDensity::Detailed), vec![Row::Item(0), Row::Item(1), Row::Item(2)]);
+    }
+
+    #[test]
+    fn 详细档只展开有_diff_或输出的工具() {
+        let mut edit = ToolCall::new("1", "x", "x");
+        edit.content = vec![loom_core::ToolContent::Diff { path: "a".into(), old: "".into(), new: "b".into() }];
+        let mut read = ToolCall::new("2", "x", "x");
+        read.content = vec![loom_core::ToolContent::Text("很长的文件内容".into())];
+        assert!(expands_in_detailed(&edit));
+        assert!(!expands_in_detailed(&read));
+        assert!(!expands_in_detailed(&ToolCall::new("3", "x", "x")));
     }
 
     #[test]
     fn 条目到行的映射() {
         let items = vec![text("a"), tool("1", ToolKind::Read, ToolStatus::Completed), tool("2", ToolKind::Read, ToolStatus::Completed), text("b")];
-        let rows = build_rows(&items, false);
+        let rows = build_rows(&items, false, ToolDensity::Compact);
         assert_eq!(item_to_row(&rows, items.len()), vec![0, 1, 1, 2]);
     }
 

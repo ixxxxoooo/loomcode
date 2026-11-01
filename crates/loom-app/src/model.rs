@@ -99,7 +99,7 @@ impl SessionModel {
         }
         // 重新算显示行;只有尾部会变,把变化的那一段整体替换,并重新测量内容变了的行
         let old_rows = std::mem::take(&mut self.rows);
-        self.rows = crate::row_groups::build_rows(&self.state.items, self.state.phase == Phase::Running);
+        self.rows = crate::row_groups::build_rows(&self.state.items, self.state.phase == Phase::Running, Self::density(cx));
         self.item_row = crate::row_groups::item_to_row(&self.rows, self.state.items.len());
         let common = old_rows.iter().zip(&self.rows).take_while(|(a, b)| a == b).count();
         let dirty: Vec<usize> = {
@@ -132,6 +132,20 @@ impl SessionModel {
         cx.notify();
     }
 
+    /// 当前的工具调用详细程度。
+    fn density(cx: &App) -> loom_config::ToolDensity {
+        cx.try_global::<crate::UiPrefs>().map_or_else(Default::default, |p| p.tool_density)
+    }
+
+    /// 详细程度变了:按新档位重算显示行,并重置虚拟列表。
+    pub fn rebuild_rows(&mut self, cx: &mut Context<Self>) {
+        self.rows = crate::row_groups::build_rows(&self.state.items, self.state.phase == Phase::Running, Self::density(cx));
+        self.item_row = crate::row_groups::item_to_row(&self.rows, self.state.items.len());
+        let n = self.rows.len();
+        self.scroller.update(cx, |s, cx| s.reset(n, cx));
+        cx.notify();
+    }
+
     /// 载入历史会话的回放事件(真实模式恢复会话时使用)。
     ///
     /// 回放是异步完成的,期间用户可能已经发出了消息:历史必须排在这些实时条目的前面。
@@ -142,7 +156,7 @@ impl SessionModel {
         }
         self.state.items.extend(live);
         // 条目整体变了:一次性重置虚拟列表,避免逐条增量与高度缓存错位
-        self.rows = crate::row_groups::build_rows(&self.state.items, self.state.phase == Phase::Running);
+        self.rows = crate::row_groups::build_rows(&self.state.items, self.state.phase == Phase::Running, Self::density(cx));
         self.item_row = crate::row_groups::item_to_row(&self.rows, self.state.items.len());
         let n = self.rows.len();
         self.scroller.update(cx, |s, cx| s.reset(n, cx));

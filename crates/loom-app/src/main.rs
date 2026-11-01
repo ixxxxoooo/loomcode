@@ -112,6 +112,8 @@ pub struct UiPrefs {
     pub font_scale: f32,
     /// 等待动画文案风格
     pub spinner: loom_config::SpinnerStyle,
+    /// 工具调用详细程度
+    pub tool_density: loom_config::ToolDensity,
 }
 impl UiPrefs {
     /// 由偏好得到界面偏好副本。
@@ -122,6 +124,7 @@ impl UiPrefs {
             chat_width: f32::from(s.appearance.chat_width.clamp(560, 1600)),
             font_scale: f32::from(s.appearance.timeline_font_pct.clamp(85, 150)) / 100.,
             spinner: s.appearance.spinner,
+            tool_density: s.appearance.tool_density,
         }
     }
 }
