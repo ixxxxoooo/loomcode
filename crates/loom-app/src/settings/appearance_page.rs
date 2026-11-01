@@ -33,10 +33,12 @@ pub fn sections(wb: &Workbench, cx: &mut Context<Workbench>) -> Vec<AnyElement> 
             row("内容宽度", "会话时间线与输入框的最大宽度;窄屏或分屏时会自动收窄", segmented("w-chat",
                 vec![(680u16, "紧凑"), (820, "标准"), (920, "较宽"), (1080, "宽"), (1600, "铺满")], a.chat_width, cx,
                 |this, v, cx| this.update_settings(cx, |s| s.appearance.chat_width = v)), cx),
-            row("工具调用详细程度", a.tool_density.describe(), segmented("tool-density",
-                ToolDensity::ALL.iter().map(|d| (*d, d.label())).collect(), a.tool_density, cx,
-                |this, v, cx| this.update_settings(cx, |s| s.appearance.tool_density = v)), cx),
-            super::density_preview::density_preview(a.tool_density, cx),
+            // 设置行与示例预览放在同一个条目里,中间不画分隔线
+            v_flex().w_full()
+                .child(row("工具调用详细程度", a.tool_density.describe(), segmented("tool-density",
+                    ToolDensity::ALL.iter().map(|d| (*d, d.label())).collect(), a.tool_density, cx,
+                    |this, v, cx| this.update_settings(cx, |s| s.appearance.tool_density = v)), cx))
+                .child(super::density_preview::density_preview(a.tool_density, cx)),
         ], cx).into_any_element(),
         group("设置页宽度", rows![
             row("内容宽度", "统一控制所有设置页右侧内容的最大宽度;窗口较窄时自动收窄", segmented("w-settings",
