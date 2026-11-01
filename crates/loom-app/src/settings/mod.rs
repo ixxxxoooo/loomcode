@@ -1,7 +1,7 @@
 //! 设置页:左侧分类导航(带搜索、键盘上下切换、记住上次分类)+ 右侧表单。所有修改即时生效并写入 `~/.loomcode/settings.json`。
 //!
 //! 子模块:`widgets` 公共控件;`forms` / `fields` 表单状态;`nav` 导航搜索与键盘;`pages` 通用 / 外观 / 对话 / 快捷键 / 关于;
-//! Claude 配置页 `model_page` / `providers_page` / `mapping_page` / `prompts_page` / `permissions_page` / `trust_page` / `env_page`;
+//! Claude 配置页 `model_page` / `providers_page`(含模型映射,见 `mapping_page`) / `prompts_page` / `permissions_page` / `trust_page` / `env_page`;
 //! 工作台页 `editor_page` / `terminal_page` / `browser_page` / `scm_page` / `intel_page`;
 //! 插件、MCP、技能、命令、子 Agent、规则、Hooks 统一收在「自定义」里(`customize_page`,左侧栏入口与设置分类共用),
 //! 各标签的内容是 `plugins_page` / `mcp_page` / `items_page` / `claude_pages`(记忆与共用编辑器)/ `hooks_page`;
@@ -75,7 +75,6 @@ pub enum SettingsTab {
     Customize,
     Model,
     Providers,
-    Mapping,
     Prompts,
     Permissions,
     Trust,
@@ -97,7 +96,7 @@ impl SettingsTab {
     /// 导航分组。
     pub const GROUPS: [(&'static str, &'static [SettingsTab]); 4] = [
         ("客户端", &[Self::General, Self::Appearance, Self::Chat, Self::Shortcuts]),
-        ("Claude Code", &[Self::Customize, Self::Model, Self::Providers, Self::Mapping, Self::Prompts, Self::Network, Self::Permissions, Self::Trust, Self::Env]),
+        ("Claude Code", &[Self::Customize, Self::Model, Self::Providers, Self::Prompts, Self::Network, Self::Permissions, Self::Trust, Self::Env]),
         ("工作台", &[Self::Editor, Self::Terminal, Self::Browser, Self::Scm, Self::Intel]),
         ("其他", &[Self::Usage, Self::Privacy, Self::Diagnostics, Self::Advanced, Self::About]),
     ];
@@ -117,7 +116,6 @@ impl SettingsTab {
             Self::Customize => "customize",
             Self::Model => "model",
             Self::Providers => "providers",
-            Self::Mapping => "mapping",
             Self::Prompts => "prompts",
             Self::Permissions => "permissions",
             Self::Trust => "trust",
@@ -151,7 +149,6 @@ impl SettingsTab {
             Self::Customize => "自定义",
             Self::Model => "模型与思考",
             Self::Providers => "模型服务商",
-            Self::Mapping => "模型映射",
             Self::Prompts => "提示词",
             Self::Permissions => "权限",
             Self::Trust => "项目信任",
@@ -179,8 +176,7 @@ impl SettingsTab {
             Self::Shortcuts => "快捷键 键盘 按键",
             Self::Customize => "插件 mcp 技能 skills 命令 子agent 规则 钩子 hooks 记忆 claude.md 市场",
             Self::Model => "模型 思考 thinking 压缩 compact 输出风格 effort 默认模式",
-            Self::Providers => "服务商 api key base url 密钥 deepseek",
-            Self::Mapping => "映射 opus sonnet haiku 模型映射",
+            Self::Providers => "服务商 api key base url 密钥 deepseek 映射 模型映射 opus sonnet haiku 槽位",
             Self::Prompts => "提示词 系统提示 追加 prompt",
             Self::Permissions => "权限 允许 拒绝 询问 规则 模式 bypass",
             Self::Trust => "信任 项目信任 hooks mcp",
@@ -209,7 +205,6 @@ impl SettingsTab {
             Self::Customize => IconName::Plug,
             Self::Model => IconName::Sparkle,
             Self::Providers => IconName::Server,
-            Self::Mapping => IconName::ArrowLeftRight,
             Self::Prompts => IconName::FileText,
             Self::Permissions => IconName::Shield,
             Self::Trust => IconName::ShieldCheck,
@@ -262,7 +257,6 @@ pub fn render(wb: &mut Workbench, window: &mut Window, cx: &mut Context<Workbenc
         SettingsTab::Customize => customize_page::render(wb, window, cx),
         SettingsTab::Model => model_page::render(wb, cx),
         SettingsTab::Providers => providers_page::render(wb, cx),
-        SettingsTab::Mapping => mapping_page::render(wb, cx),
         SettingsTab::Prompts => prompts_page::render(wb, cx),
         SettingsTab::Env => env_page::render(wb, cx),
         SettingsTab::Network => network_page::render(wb, cx),

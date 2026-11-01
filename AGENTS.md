@@ -28,7 +28,7 @@ cargo run -p loom-app               # 真实模式:读 ~/.claude/projects,按需
 scripts/package.sh [--dmg]           # 打包 dist/LoomCode.app
 ```
 
-调试用环境变量(只用于截图与验证):`LOOM_SESSION`、`LOOM_TAB`、`LOOM_FILE`、`LOOM_IDE`、`LOOM_PAGE`(canvas / automation / browser / customize)、`LOOM_URL`、`LOOM_SETTINGS`(取值见 `SettingsTab::key`:general / appearance / editor / terminal / trust 等 23 个)、`LOOM_PALETTE`、`LOOM_POPUP`(model / context,输入框弹层)、`LOOM_THEME`(light / dark / system / one-light / one-dark)、`LOOM_DIALOG`、`LOOM_TERM_SELECT`、`LOOM_CHANGES`、`LOOM_CUSTOMIZE`(plugins / mcp / skills / commands / agents / rules / hooks,选中自定义页标签)、`LOOM_IDE_TERM`、`LOOM_WINDOW_SIZE`、`LOOM_PREFILL`、`LOOM_AUTOSEND`、`LOOM_TERM_CMD`、`LOOM_CANVAS_SKIP`、`LOOM_DEV`(开发版标识,由 `scripts/dev.sh` 设置)。截图:`scripts/shots.sh <场景id>`(输出 `/tmp/loom-<id>.png`)。
+调试用环境变量(只用于截图与验证):`LOOM_SESSION`、`LOOM_TAB`、`LOOM_FILE`、`LOOM_IDE`、`LOOM_PAGE`(canvas / automation / browser / customize)、`LOOM_URL`、`LOOM_SETTINGS`(取值见 `SettingsTab::key`:general / appearance / editor / terminal / trust 等 22 个)、`LOOM_PALETTE`、`LOOM_POPUP`(model / context,输入框弹层)、`LOOM_THEME`(light / dark / system / one-light / one-dark)、`LOOM_DIALOG`、`LOOM_TERM_SELECT`、`LOOM_CHANGES`、`LOOM_CUSTOMIZE`(plugins / mcp / skills / commands / agents / rules / hooks,选中自定义页标签)、`LOOM_IDE_TERM`、`LOOM_WINDOW_SIZE`、`LOOM_PREFILL`、`LOOM_AUTOSEND`、`LOOM_TERM_CMD`、`LOOM_CANVAS_SKIP`、`LOOM_DEV`(开发版标识,由 `scripts/dev.sh` 设置)。截图:`scripts/shots.sh <场景id>`(输出 `/tmp/loom-<id>.png`)。
 
 ## 开发流程规则(每次改动都必须执行)
 

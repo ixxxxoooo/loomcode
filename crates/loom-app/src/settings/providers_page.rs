@@ -1,5 +1,5 @@
 //! 模型服务商页:管理 Anthropic 协议兼容的服务商(地址、密钥、模型清单、测试连接)。
-//! 模型槽位到服务商模型的映射在「模型映射」页(`mapping_page`)。
+//! 页底嵌入「模型映射」区块(`mapping_page::sections`):模型槽位到服务商模型的映射。
 //!
 //! @author ixxxxoooo
 
@@ -64,7 +64,7 @@ pub fn render(wb: &Workbench, cx: &mut Context<Workbench>) -> AnyElement {
     let selected = ui.selected.clone();
     let list: Vec<(String, String, bool)> = ui.store.providers.iter().map(|p| (p.id.clone(), p.name.clone(), wb.provider_has_key(&p.id))).collect();
     v_flex().w_full()
-        .child(page_header("模型服务商", "接入 Anthropic 协议兼容的服务(DeepSeek、智谱、Kimi、MiniMax、百炼等)", match &status {
+        .child(page_header("模型服务商", "接入 Anthropic 协议兼容的服务(DeepSeek、智谱、Kimi、MiniMax、百炼等),并把模型槽位映射过去", match &status {
             Ok(()) => pill("映射生效中", t.success, t.muted),
             Err(e) => pill(e.clone(), t.muted_foreground, t.muted),
         }, cx))
@@ -85,6 +85,7 @@ pub fn render(wb: &Workbench, cx: &mut Context<Workbench>) -> AnyElement {
                     .on_click(cx.listener(|this, _, window, cx| this.add_provider(None, window, cx)))), cx),
         ], cx))
         .children(detail(wb, cx))
+        .children(super::mapping_page::sections(wb, cx))
         .child(note("配置存 ~/.loomcode/providers.json,API Key 单独存 provider-keys.json(权限 0600),只在启动 claude 时以环境变量注入,不改动 ~/.claude;对之后新建或重新连接的会话生效", cx))
         .into_any_element()
 }

@@ -1,4 +1,4 @@
-//! Agent 与模型页:当前配置层的 model、扩展思考、思考预算、自动压缩、输出风格、apiKeyHelper。
+//! 模型与思考页:当前配置层的 model、扩展思考、思考预算、自动压缩、输出风格、apiKeyHelper。
 //! 文本框失焦或回车即写入当前配置层,不需要「保存」按钮。
 //!
 //! @author ixxxxoooo
@@ -38,7 +38,7 @@ fn api_provider(wb: &Workbench) -> &'static str {
     }
 }
 
-/// 渲染 Agent 与模型页。
+/// 渲染模型与思考页。
 pub fn render(wb: &Workbench, cx: &mut Context<Workbench>) -> AnyElement {
     let t = cx.theme().clone();
     let scope = wb.effective_scope();
@@ -50,7 +50,7 @@ pub fn render(wb: &Workbench, cx: &mut Context<Workbench>) -> AnyElement {
     };
     let presets = ["opus", "sonnet", "haiku", "opusplan"];
     v_flex().w_full()
-        .child(page_header("Agent 与模型", "Claude Code 自己的设置(settings.json),对终端里的 claude 同样生效;新会话的默认模型 / 模式在「对话」页", div(), cx))
+        .child(page_header("模型与思考", "Claude Code 自己的设置(settings.json),对终端里的 claude 同样生效;新会话的默认模型 / 模式在「对话」页", div(), cx))
         .child(scope_header(wb, target, cx))
         .children(error_banner(wb, cx))
         .child(group(&format!("{}层", scope.label()), rows![
