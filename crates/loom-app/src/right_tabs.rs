@@ -25,6 +25,7 @@ impl RightTab {
             Self::Terminal => "在项目目录运行命令",
             Self::Plan => "查看待办与计划",
             Self::Output => "查看运行输出与日志",
+            Self::Subagent => "查看子 Agent 的完整对话",
         }
     }
 }

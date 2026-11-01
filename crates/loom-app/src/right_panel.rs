@@ -155,7 +155,9 @@ pub struct RightPanel {
     pub show_tabs: bool,
     /// 标签行末尾的额外控件(Agent 窗口放右面板开关与 IDE 入口),由工作台注入
     pub trailing: Option<std::rc::Rc<dyn Fn(&mut Window, &mut App) -> AnyElement>>,
-    model: Option<Entity<SessionModel>>,
+    pub(crate) model: Option<Entity<SessionModel>>,
+    /// 「子 Agent」标签正在看的子 Agent(条目 id)
+    pub(crate) subagent: Option<String>,
     _sub: Option<Subscription>,
     /// 「改动」里已展开 Diff 的文件
     open_changes: HashSet<String>,
@@ -191,6 +193,7 @@ impl RightPanel {
             open_changes: HashSet::new(),
             files: FileTree::new(root.clone()),
             pending_open: None,
+            subagent: None,
             root,
             _term_hub_sub: sub,
             git: crate::git_changes::GitPane::new(),
@@ -232,7 +235,7 @@ impl RightPanel {
         cx.notify();
     }
 
-    fn items(&self, cx: &App) -> Vec<TimelineItem> {
+    pub(crate) fn items(&self, cx: &App) -> Vec<TimelineItem> {
         self.model.as_ref().map(|m| m.read(cx).state.items.clone()).unwrap_or_default()
     }
 
@@ -409,6 +412,7 @@ impl Render for RightPanel {
             RightTab::Terminal => self.terminal_tab(&items, cx),
             RightTab::Plan => self.plan_view(&items, cx),
             RightTab::Output => self.output_view(&items, cx),
+            RightTab::Subagent => self.subagent_view(&items, window, cx),
         } };
         v_flex().size_full().bg(t.background)
             .when(self.show_tabs, |d| d.child(self.tab_bar(change_count, window, cx)))

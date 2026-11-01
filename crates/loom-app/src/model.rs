@@ -372,6 +372,10 @@ pub enum UiRequest {
     OpenCanvas(String),
     /// 一个回合结束(真实模式下用来刷新侧栏会话列表与 Git 分支)
     SessionSettled,
+    /// 在右侧标签里打开某个子 Agent 的完整对话(条目 id)
+    OpenSubagent(String),
+    /// 在右侧「文件」里预览某个文件
+    OpenFile(String),
 }
 
 impl EventEmitter<UiRequest> for SessionModel {}

@@ -1,9 +1,9 @@
 //! 子 Agent 卡片(对标 OhMyAgent / Cursor,无框):两行纯文字。
-//! 第一行「类型图标 + 任务标题 + 类型名(灰)」;第二行是状态、待办计数与当前活动 / 用时。点击展开内部活动。
+//! 第一行「类型图标 + 任务标题 + 类型名(灰)」;第二行是状态、待办计数与当前活动 / 用时。点击在右侧标签里打开完整对话,右侧箭头展开内联预览。
 //!
 //! @author ixxxxoooo
 
-use crate::model::SessionModel;
+use crate::model::{SessionModel, UiRequest};
 use crate::timeline;
 use crate::ui::icon;
 use gpui_kit::assets::IconName;
@@ -20,6 +20,7 @@ pub fn render(session: &Entity<SessionModel>, card_data: &SubagentCard, depth: u
     let t = cx.theme().clone();
     let expanded = session.read(cx).is_expanded(&card_data.id);
     let (id, s) = (card_data.id.clone(), session.clone());
+    let (tid, ts) = (card_data.id.clone(), session.clone());
     let active = matches!(card_data.status, SubagentStatus::Starting | SubagentStatus::Running);
     let icon_color = match card_data.status {
         SubagentStatus::Failed => t.danger,
@@ -53,7 +54,8 @@ pub fn render(session: &Entity<SessionModel>, card_data: &SubagentCard, depth: u
     let title = if card_data.description.is_empty() { card_data.agent_type.clone() } else { card_data.description.clone() };
     let head = h_flex().id(SharedString::from(format!("sub-{}", card_data.id))).w_full().px_2().py(px(5.)).gap_2().items_start().cursor_pointer()
         .hover(|d| d.bg(t.list_hover)).rounded(px(6.))
-        .on_click(move |_, _, cx| { s.update(cx, |m, cx| m.toggle(&id, cx)); })
+        // 点击整块:在右侧标签里打开完整对话;右侧箭头只展开 / 收起这里的内联预览
+        .on_click(move |_, _, cx| { s.update(cx, |_, cx| cx.emit(UiRequest::OpenSubagent(id.clone()))); })
         .child(div().w(px(16.)).h(px(20.)).flex().items_center().justify_center().child(icon(IconName::Bot, 14., icon_color)))
         .child(v_flex().flex_1().min_w_0().gap(px(2.))
             .child(h_flex().gap_1p5().items_baseline()
@@ -66,6 +68,11 @@ pub fn render(session: &Entity<SessionModel>, card_data: &SubagentCard, depth: u
                     .child(div().text_color(label_color).child(label)))
                 .when_some(todo.filter(|(_, n)| *n > 0), |d, (a, n)| d.child(div().text_size(px(11.)).text_color(t.muted_foreground).child(format!("待办 {a}/{n}"))))
                 .when_some(trailing.filter(|x| !x.is_empty()), |d, x| d.child(div().flex_1().min_w_0().truncate().text_size(px(11.)).text_color(t.muted_foreground.opacity(0.8)).child(x)))));
+    let head = head.child(
+        div().id(SharedString::from(format!("sub-t-{}", card_data.id))).flex_none().size(px(20.)).flex().items_center().justify_center().rounded(px(4.)).hover(|d| d.bg(t.border))
+            .on_click(move |_, _, cx| { cx.stop_propagation(); ts.update(cx, |m, cx| m.toggle(&tid, cx)); })
+            .child(icon(if expanded { IconName::ChevronDown } else { IconName::ChevronRight }, 12., t.muted_foreground)),
+    );
     let mut col = v_flex().w_full().child(head);
     if expanded {
         let mut body = v_flex().w_full().pl(px(26.)).pr_2().gap_1();

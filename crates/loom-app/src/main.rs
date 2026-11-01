@@ -11,6 +11,8 @@ mod ansi;
 mod ask_cards;
 mod dock_cards;
 mod subagent_card;
+mod subagent_tab;
+mod tool_present;
 mod wizard_card;
 mod appearance;
 mod app_icon;

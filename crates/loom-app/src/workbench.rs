@@ -55,6 +55,8 @@ pub enum RightTab {
     Terminal,
     Plan,
     Output,
+    /// 子 Agent 的完整对话(只能从时间线里的子 Agent 卡片打开,不在「+」菜单里)
+    Subagent,
 }
 
 impl RightTab {
@@ -68,6 +70,7 @@ impl RightTab {
             Self::Terminal => "terminal",
             Self::Plan => "plan",
             Self::Output => "output",
+            Self::Subagent => "subagent",
         }
     }
 
@@ -78,6 +81,7 @@ impl RightTab {
             Self::Terminal => "终端",
             Self::Plan => "计划",
             Self::Output => "输出",
+            Self::Subagent => "子 Agent",
         }
     }
 
@@ -88,6 +92,7 @@ impl RightTab {
             Self::Terminal => IconName::Terminal,
             Self::Plan => IconName::ListTodo,
             Self::Output => IconName::ScrollText,
+            Self::Subagent => IconName::Bot,
         }
     }
 }
@@ -935,6 +940,16 @@ impl Workbench {
             UiRequest::OpenChanges => {
                 self.right_open = true;
                 self.panel.update(cx, |p, cx| p.set_tab(RightTab::Changes, cx));
+            }
+            UiRequest::OpenSubagent(id) => {
+                self.right_open = true;
+                let id = id.clone();
+                self.panel.update(cx, |p, cx| p.open_subagent(id, cx));
+            }
+            UiRequest::OpenFile(path) => {
+                self.right_open = true;
+                let path = path.clone();
+                self.panel.update(cx, |p, cx| p.request_open(path, cx));
             }
             UiRequest::OpenCanvas(id) => {
                 self.page = Page::Canvas;

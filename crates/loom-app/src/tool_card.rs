@@ -38,7 +38,8 @@ fn status_indicator(status: ToolStatus, cx: &App) -> AnyElement {
     match status {
         ToolStatus::Pending => icon(IconName::Clock, 12., t.muted_foreground).into_any_element(),
         ToolStatus::Running => Spinner::new().xsmall().into_any_element(),
-        ToolStatus::Completed => icon(IconName::Check, 12., t.success).into_any_element(),
+        // 成功不加勾,只在进行中 / 失败时标示状态
+        ToolStatus::Completed => div().into_any_element(),
         ToolStatus::Failed => icon(IconName::X, 12., t.danger).into_any_element(),
     }
 }
@@ -68,14 +69,35 @@ pub fn render_tool(session: &Entity<SessionModel>, tool: &ToolCall, cx: &App) ->
     let id = tool.id.clone();
     let s = session.clone();
     let stats = diff_stats(tool);
-    let title_color = if tool.status == ToolStatus::Failed { t.danger } else { t.foreground };
-
+    let failed = tool.status == ToolStatus::Failed;
+    let p = crate::tool_present::present(tool);
+    // 命令带说明时,行内显示说明(Agent 写的一句话),具体命令留给展开详情
+    let described = tool.kind == ToolKind::Execute && p.detail.is_some();
+    let group = SharedString::from(format!("trow-{}", tool.id));
+    let open_path = (matches!(tool.kind, ToolKind::Read | ToolKind::Edit | ToolKind::Write)).then(|| tool.locations.first().cloned().or_else(|| p.is_path.then(|| p.subject.clone()))).flatten();
+    let subject_color = if failed { t.danger } else { t.foreground };
+    let subject = if described {
+        div().min_w_0().truncate().text_size(px(13.)).text_color(subject_color).child(p.detail.clone().unwrap_or_default()).into_any_element()
+    } else if p.is_path {
+        let name = p.subject.rsplit('/').next().unwrap_or(&p.subject).to_string();
+        h_flex().min_w_0().gap(px(5.)).items_center()
+            .child(crate::file_icons::file_icon_img(&name, false, false, 14.))
+            .child(div().min_w_0().truncate().text_size(px(13.)).font_weight(FontWeight::MEDIUM).text_color(subject_color).child(name))
+            .into_any_element()
+    } else if matches!(tool.kind, ToolKind::Execute | ToolKind::Search) {
+        div().min_w_0().truncate().text_size(px(12.)).font_family(MONO).text_color(subject_color).child(p.subject.clone()).into_any_element()
+    } else {
+        div().min_w_0().truncate().text_size(px(13.)).font_weight(FontWeight::MEDIUM).text_color(subject_color).child(p.subject.clone()).into_any_element()
+    };
+    // 纯文字行(对齐 Cursor / OhMyAgent):贴合内容宽度,没有整行底色;箭头与「打开文件」悬停才出现;成功不打勾
     let header = h_flex()
         .id(SharedString::from(format!("tool-{}", tool.id)))
-        .w_full()
-        .h(px(26.))
+        .group(group.clone())
+        .self_start()
+        .max_w_full()
         .px_2()
-        .gap_2()
+        .py(px(5.))
+        .gap(px(7.))
         .items_center()
         .rounded(px(6.))
         .when(has_body, |d| d.cursor_pointer().hover(|d| d.bg(t.list_hover)))
@@ -84,8 +106,22 @@ pub fn render_tool(session: &Entity<SessionModel>, tool: &ToolCall, cx: &App) ->
                 s.update(cx, |m, cx| m.toggle(&id, cx));
             })
         })
-        .child(icon(tool_icon(tool.kind), 14., t.muted_foreground))
-        .child(div().flex_1().min_w_0().truncate().text_size(px(13.)).text_color(title_color).child(tool.title.clone()))
+        .child(div().w(px(16.)).flex().justify_center().child(icon(tool_icon(tool.kind), 12., if failed { t.danger } else { t.muted_foreground })))
+        .when(!p.verb.is_empty(), |d| d.child(div().flex_none().text_size(px(12.)).text_color(t.muted_foreground).child(p.verb.clone())))
+        .child(subject)
+        .when(!described, |d| d.when_some(p.detail.clone().filter(|x| !x.is_empty()), |d, x| {
+            d.child(div().flex_none().text_size(px(11.)).text_color(t.muted_foreground.opacity(0.75)).child(x))
+        }))
+        .when_some(open_path, |d, path| {
+            let sess = session.clone();
+            d.child(
+                div().id(SharedString::from(format!("tool-open-{}", tool.id))).flex_none().size(px(16.)).flex().items_center().justify_center().rounded(px(4.))
+                    .invisible().group_hover(group.clone(), |d| d.visible())
+                    .hover(|d| d.bg(t.border))
+                    .on_click(move |_, _, cx| { cx.stop_propagation(); sess.update(cx, |_, cx| cx.emit(crate::model::UiRequest::OpenFile(path.clone()))); })
+                    .child(icon(IconName::ExternalLink, 11., t.muted_foreground)),
+            )
+        })
         .when_some(stats, |d, (a, r)| {
             d.child(
                 h_flex().gap_1().text_size(px(11.)).font_family(MONO)
@@ -95,11 +131,14 @@ pub fn render_tool(session: &Entity<SessionModel>, tool: &ToolCall, cx: &App) ->
         })
         // 只在耗时较长(≥1 秒)时显示,太短的耗时只是噪音
         .when_some(tool.duration_ms.filter(|ms| tool.status.is_finished() && *ms >= 1000), |d, ms| {
-            d.child(div().text_size(px(11.)).text_color(t.muted_foreground).child(format!("{:.1} s", ms as f64 / 1000.)))
+            d.child(div().text_size(px(11.)).text_color(t.muted_foreground.opacity(0.75)).child(format!("{:.1} s", ms as f64 / 1000.)))
         })
         .child(status_indicator(tool.status, cx))
         .when(has_body, |d| {
-            d.child(icon(if expanded { IconName::ChevronDown } else { IconName::ChevronRight }, 12., t.muted_foreground))
+            d.child(
+                div().flex_none().when(!expanded, |d| d.invisible().group_hover(group.clone(), |d| d.visible()))
+                    .child(icon(if expanded { IconName::ChevronDown } else { IconName::ChevronRight }, 11., t.muted_foreground)),
+            )
         });
 
     v_flex()
