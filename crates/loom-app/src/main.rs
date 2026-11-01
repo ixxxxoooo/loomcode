@@ -230,7 +230,11 @@ fn main() {
     loom_config::legacy::migrate_home();
     // 诊断日志:~/.loomcode/logs/loomcode.log;崩溃信息也写进去
     if let Some(home) = std::env::var_os("HOME") {
-        loom_config::diag::init(&std::path::PathBuf::from(home));
+        loom_config::diag::init(&std::path::PathBuf::from(&home));
+        // 会话概要索引落盘:下次启动不必重读 ~/.claude/projects 下的全部 jsonl
+        if !demo {
+            loom_claude::session_index::set_cache_file(std::path::PathBuf::from(home).join(".loomcode").join("session-index.json"));
+        }
     }
     loom_diag::crash::install(loom_diag::RunInfo { version: env!("CARGO_PKG_VERSION").into(), mode: if demo { "demo" } else { "real" }.into() });
     objc_exc::install();
