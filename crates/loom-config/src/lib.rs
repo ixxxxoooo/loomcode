@@ -3,6 +3,7 @@
 //! 原则:不读取、不输出任何密钥;环境变量只展示名称,值一律遮盖。
 
 pub mod claude;
+pub mod items;
 pub mod legacy;
 pub mod settings;
 pub mod ui_state;

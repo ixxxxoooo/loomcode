@@ -2,9 +2,30 @@
 //!
 //! @author ixxxxoooo
 
-use gpui_kit::component::input::{InputState, TextareaState};
+use super::SettingsTab;
+use gpui_kit::component::input::{EditorState, InputState, TextareaState};
 use gpui_kit::*;
 use loom_config::Scope;
+use loom_config::items::{Item, ItemKind, MemoryFile};
+use std::collections::HashMap;
+use std::path::PathBuf;
+
+/// 正在编辑的 Markdown 文件(记忆、命令、子 Agent、Skill 共用)。
+pub struct DocEdit {
+    pub path: PathBuf,
+    pub editor: Entity<EditorState>,
+    pub saved: bool,
+    /// 打开它的设置分类;切到别的分类时不显示
+    pub tab: SettingsTab,
+}
+
+/// 新建命令 / 子 Agent / Skill 的表单。
+pub struct ItemForm {
+    pub open: bool,
+    pub scope: Scope,
+    pub name: Entity<InputState>,
+    pub description: Entity<InputState>,
+}
 
 /// MCP 编辑表单。
 pub struct McpForm {
@@ -40,6 +61,11 @@ pub struct Forms {
     pub dir: Entity<InputState>,
     pub mcp: McpForm,
     pub hook: HookForm,
+    pub item: ItemForm,
+    pub doc: Option<DocEdit>,
+    /// 扫描结果缓存(进入设置页、切换项目、增删后刷新)
+    pub items: HashMap<ItemKind, Vec<Item>>,
+    pub memory_files: Vec<MemoryFile>,
     /// 最近一次写配置失败的提示(显示在页顶,下次成功时清除)
     pub error: Option<String>,
 }
@@ -74,6 +100,15 @@ impl Forms {
                 command: input(window, cx, "要执行的命令"),
                 timeout: input(window, cx, "超时秒数(可空)"),
             },
+            item: ItemForm {
+                open: false,
+                scope: Scope::User,
+                name: input(window, cx, "名称:小写字母、数字、- 和 _"),
+                description: input(window, cx, "描述:Claude 据此判断什么时候使用"),
+            },
+            doc: None,
+            items: HashMap::new(),
+            memory_files: Vec::new(),
             error: None,
         }
     }

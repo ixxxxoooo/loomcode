@@ -6,7 +6,7 @@ for id in "$@"; do
   LOOM_DEMO=1 LOOM_SESSION="$id" ./target/debug/loomcode >/dev/null 2>&1 &
   pid=$!
   sleep "${WAIT:-4}"
-  scripts/shot.py "/tmp/loom-$id${SUFFIX}.png" >/dev/null 2>&1
+  scripts/shot.py "/tmp/loom-$id${SUFFIX}.png" loomcode "$pid" >/dev/null 2>&1
   kill $pid 2>/dev/null
   wait $pid 2>/dev/null
 done

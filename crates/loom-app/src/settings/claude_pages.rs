@@ -1,10 +1,12 @@
-//! 与 Claude Code 配置相关的公共部件与记忆页。
+//! 与 Claude Code 配置相关的公共部件(来源层标签、Markdown 编辑器)与记忆页。
 //!
 //! @author ixxxxoooo
 
-use super::widgets::page_title;
-use crate::ui::{MONO, caption, pill};
+use super::SettingsTab;
+use super::widgets::{error_banner, page_title, section_title};
+use crate::ui::{MONO, caption, icon, pill};
 use crate::workbench::Workbench;
+use gpui_kit::assets::IconName;
 use gpui_kit::component::button::{Button, ButtonVariants};
 use gpui_kit::component::input::Editor;
 use gpui_kit::component::{ActiveTheme, Sizable, h_flex, v_flex};
@@ -18,22 +20,60 @@ pub fn scope_pill(scope: Scope, cx: &App) -> impl IntoElement {
     pill(scope.label(), t.muted_foreground, t.muted)
 }
 
-/// 记忆页:编辑当前项目根目录的 CLAUDE.md。
-pub fn memory(wb: &mut Workbench, window: &mut Window, cx: &mut Context<Workbench>) -> AnyElement {
-    wb.ensure_memory(window, cx);
+/// 共用的 Markdown 编辑器:路径 + 保存 / 关闭 + 编辑区。只显示属于 `tab` 的文件。
+///
+/// 参数:`wb` 工作台;`tab` 当前设置分类;`closable` 是否显示关闭按钮。返回:编辑器元素,没有打开文件时为 `None`。
+pub fn doc_editor(wb: &Workbench, tab: SettingsTab, closable: bool, cx: &mut Context<Workbench>) -> Option<Div> {
     let t = cx.theme().clone();
-    let Some(doc) = wb.memory.as_ref() else {
-        return v_flex().child(page_title("记忆")).child(caption("先打开一个项目会话", cx)).into_any_element();
-    };
-    let path = doc.path.display().to_string();
+    let doc = wb.forms().doc.as_ref().filter(|d| d.tab == tab)?;
     let saved = doc.saved;
-    v_flex().w_full().gap_2()
-        .child(page_title("记忆(CLAUDE.md)"))
+    let exists = doc.path.exists();
+    Some(v_flex().w_full().pt_4().gap_2()
         .child(h_flex().gap_2().items_center()
-            .child(div().flex_1().min_w_0().truncate().font_family(MONO).text_size(px(12.)).text_color(t.muted_foreground).child(path))
-            .child(Button::new("memory-save").small().when(!saved, |b| b.primary()).when(saved, |b| b.ghost()).label(if saved { "已保存" } else { "保存" })
-                .on_click(cx.listener(|this, _, _, cx| this.save_memory(cx)))))
-        .child(div().w_full().h(px(460.)).rounded(px(8.)).border_1().border_color(t.border).overflow_hidden()
-            .child(Editor::new(&doc.editor).bordered(false).appearance(false).size_full()))
+            .child(icon(IconName::FileText, 13., t.muted_foreground))
+            .child(div().flex_1().min_w_0().truncate().font_family(MONO).text_size(px(12.)).text_color(t.muted_foreground).child(doc.path.display().to_string()))
+            .when(!exists, |d| d.child(pill("保存后创建", t.warning, t.muted)))
+            .when(closable, |d| d.child(Button::new("doc-close").small().ghost().label("关闭").on_click(cx.listener(|this, _, _, cx| this.close_doc(cx)))))
+            .child(Button::new("doc-save").small().when(!saved, |b| b.primary()).when(saved, |b| b.ghost()).label(if saved { "已保存" } else { "保存" })
+                .on_click(cx.listener(|this, _, _, cx| this.save_doc(cx)))))
+        .child(div().w_full().h(px(440.)).rounded(px(8.)).border_1().border_color(t.border).overflow_hidden()
+            .child(Editor::new(&doc.editor).bordered(false).appearance(false).size_full())))
+}
+
+/// 记忆页:按加载顺序列出记忆文件,点选后在下方编辑。
+pub fn memory(wb: &mut Workbench, window: &mut Window, cx: &mut Context<Workbench>) -> AnyElement {
+    let tab = SettingsTab::Memory;
+    let files = wb.forms().memory_files.clone();
+    // 第一次进入:默认打开项目 CLAUDE.md(没有项目时打开用户级)
+    if wb.forms().doc.as_ref().is_none_or(|d| d.tab != tab) {
+        if let Some(f) = files.iter().find(|f| f.group == "项目").or_else(|| files.first()) {
+            wb.open_doc(f.path.clone(), tab, window, cx);
+        }
+    }
+    let t = cx.theme().clone();
+    let current = wb.forms().doc.as_ref().map(|d| d.path.clone());
+    let mut last_group = "";
+    let mut list = v_flex().w_full().gap_0p5();
+    for (i, f) in files.into_iter().enumerate() {
+        if f.group != last_group {
+            last_group = f.group;
+            list = list.child(section_title(f.group, cx));
+        }
+        let on = current.as_ref() == Some(&f.path);
+        let path = f.path.clone();
+        list = list.child(h_flex().id(SharedString::from(format!("mem-{i}"))).w_full().h(px(32.)).px_2().gap_2().items_center().rounded(px(6.)).cursor_pointer()
+            .when(on, |d| d.bg(t.list_active)).hover(|d| d.bg(t.list_hover))
+            .on_click(cx.listener(move |this, _, window, cx| this.open_doc(path.clone(), tab, window, cx)))
+            .child(icon(IconName::FileText, 13., if f.exists { t.foreground } else { t.muted_foreground }))
+            .child(div().flex_1().min_w_0().truncate().font_family(MONO).text_size(px(12.)).child(f.path.display().to_string()))
+            .child(caption(f.label.clone(), cx))
+            .when(!f.exists, |d| d.child(pill("未创建", t.muted_foreground, t.muted))));
+    }
+    v_flex().w_full()
+        .child(page_title("记忆"))
+        .child(caption("Claude 启动时按从上到下的顺序加载这些文件,后加载的优先。规则文件放在 .claude/rules/*.md;AGENTS.md 不会自动加载,需在 CLAUDE.md 里写 @AGENTS.md 导入", cx))
+        .children(error_banner(wb, cx))
+        .child(list)
+        .children(doc_editor(wb, tab, false, cx))
         .into_any_element()
 }

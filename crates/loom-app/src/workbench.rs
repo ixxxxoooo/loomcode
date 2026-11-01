@@ -8,7 +8,7 @@ use crate::ide_window::IdeWindow;
 use crate::model::{SessionModel, UiRequest};
 use crate::palette::{Group, Palette, PaletteAction, PaletteEvent, PaletteItem};
 use crate::right_panel::{PanelEvent, RightPanel};
-use crate::settings::{self, MemoryDoc, SettingsTab};
+use crate::settings::{self, SettingsTab};
 use crate::ui::{empty_state, icon};
 use crate::{sidebar, theme, timeline};
 use gpui_kit::assets::IconName;
@@ -141,7 +141,6 @@ pub struct Workbench {
     /// 设置页表单的输入框状态(首次进入设置页时创建)
     pub settings_forms: Option<settings::Forms>,
     pub settings_tab: SettingsTab,
-    pub memory: Option<MemoryDoc>,
     pub claude_info: Option<String>,
     pub palette: Option<Entity<Palette>>,
     _palette_sub: Option<Subscription>,
@@ -250,7 +249,6 @@ impl Workbench {
             cfg_scope: loom_config::Scope::Local,
             settings_forms: None,
             settings_tab: SettingsTab::General,
-            memory: None,
             claude_info: None,
             palette: None,
             _palette_sub: None,
@@ -420,6 +418,9 @@ impl Workbench {
         cmd("设置:权限规则", "", IconName::Shield, PaletteAction::OpenSettings(Some("permissions")));
         cmd("设置:MCP 服务器", "", IconName::Plug, PaletteAction::OpenSettings(Some("mcp")));
         cmd("设置:记忆 CLAUDE.md", "", IconName::Brain, PaletteAction::OpenSettings(Some("memory")));
+        cmd("设置:斜杠命令", "", IconName::SquareTerminal, PaletteAction::OpenSettings(Some("commands")));
+        cmd("设置:子 Agent", "", IconName::Bot, PaletteAction::OpenSettings(Some("agents")));
+        cmd("设置:Skills", "", IconName::Sparkles, PaletteAction::OpenSettings(Some("skills")));
         cmd("切换权限模式", "⇧Tab", IconName::Shield, PaletteAction::CycleMode);
         cmd("切换 IDE 模式", "⇧⌘E", IconName::Code, PaletteAction::ToggleIde);
         cmd("显示 / 隐藏左侧栏", "⌘B", IconName::PanelLeft, PaletteAction::ToggleLeft);
@@ -539,6 +540,7 @@ impl Workbench {
             };
             let model = cx.new(|cx| SessionModel::new(handle, cx));
             let composer = cx.new(|cx| Composer::new(model.clone(), self.demo, window, cx));
+            self.push_extensions(&composer, &self.work_root(&cwd), cx);
             // 调试用:预填输入框,方便截图检查补全
             if let Ok(text) = std::env::var("LOOM_PREFILL") {
                 composer.update(cx, |c, cx| c.set_text(&text, window, cx));

@@ -1,16 +1,18 @@
 //! 设置页:左侧分类导航 + 右侧表单。所有修改即时生效并写入 `~/.loomcode/settings.json`。
 //!
 //! 子模块:`widgets` 公共控件;`forms` 表单状态;`pages` 通用 / 对话 / 快捷键 / 关于;
-//! `permissions_page` / `mcp_page` / `hooks_page` / `claude_pages`(记忆)Claude 配置页;
-//! `actions` / `mcp_actions` / `hook_actions` 这些页面的 Workbench 方法。
+//! `permissions_page` / `mcp_page` / `hooks_page` / `items_page`(命令、子 Agent、Skills)/
+//! `claude_pages`(记忆与共用编辑器)Claude 配置页;`actions` / `mcp_actions` / `hook_actions` / `doc_actions` 对应的 Workbench 方法。
 //!
 //! @author ixxxxoooo
 
 mod actions;
 mod claude_pages;
+mod doc_actions;
 mod forms;
 mod hook_actions;
 mod hooks_page;
+mod items_page;
 mod mcp_actions;
 mod mcp_page;
 mod pages;
@@ -22,11 +24,10 @@ pub use forms::Forms;
 use crate::ui::icon;
 use crate::workbench::Workbench;
 use gpui_kit::assets::IconName;
-use gpui_kit::component::input::EditorState;
 use gpui_kit::component::{ActiveTheme, h_flex, v_flex};
 use gpui_kit::prelude::FluentBuilder as _;
 use gpui_kit::*;
-use std::path::PathBuf;
+use loom_config::items::ItemKind;
 
 /// 设置分类。
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -36,18 +37,24 @@ pub enum SettingsTab {
     Permissions,
     Mcp,
     Hooks,
+    Commands,
+    Agents,
+    Skills,
     Memory,
     Shortcuts,
     About,
 }
 
 impl SettingsTab {
-    pub const ALL: [SettingsTab; 8] = [
+    pub const ALL: [SettingsTab; 11] = [
         Self::General,
         Self::Chat,
         Self::Permissions,
         Self::Mcp,
         Self::Hooks,
+        Self::Commands,
+        Self::Agents,
+        Self::Skills,
         Self::Memory,
         Self::Shortcuts,
         Self::About,
@@ -61,6 +68,9 @@ impl SettingsTab {
             Self::Permissions => "权限",
             Self::Mcp => "MCP 服务器",
             Self::Hooks => "钩子",
+            Self::Commands => "斜杠命令",
+            Self::Agents => "子 Agent",
+            Self::Skills => "Skills",
             Self::Memory => "记忆",
             Self::Shortcuts => "快捷键",
             Self::About => "关于",
@@ -75,18 +85,14 @@ impl SettingsTab {
             Self::Permissions => IconName::Shield,
             Self::Mcp => IconName::Plug,
             Self::Hooks => IconName::Webhook,
+            Self::Commands => IconName::SquareTerminal,
+            Self::Agents => IconName::Bot,
+            Self::Skills => IconName::Sparkles,
             Self::Memory => IconName::Brain,
             Self::Shortcuts => IconName::Keyboard,
             Self::About => IconName::Info,
         }
     }
-}
-
-/// 记忆页正在编辑的 CLAUDE.md。
-pub struct MemoryDoc {
-    pub path: PathBuf,
-    pub editor: Entity<EditorState>,
-    pub saved: bool,
 }
 
 /// 渲染整个设置页。
@@ -104,6 +110,9 @@ pub fn render(wb: &mut Workbench, window: &mut Window, cx: &mut Context<Workbenc
         SettingsTab::Permissions => permissions_page::permissions(wb, cx),
         SettingsTab::Mcp => mcp_page::mcp(wb, cx),
         SettingsTab::Hooks => hooks_page::hooks(wb, cx),
+        SettingsTab::Commands => items_page::render(wb, ItemKind::Command, tab, cx),
+        SettingsTab::Agents => items_page::render(wb, ItemKind::Agent, tab, cx),
+        SettingsTab::Skills => items_page::render(wb, ItemKind::Skill, tab, cx),
         SettingsTab::Memory => claude_pages::memory(wb, window, cx),
         SettingsTab::Shortcuts => pages::shortcuts(cx),
         SettingsTab::About => pages::about(wb, cx),

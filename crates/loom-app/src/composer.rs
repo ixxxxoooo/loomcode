@@ -72,6 +72,10 @@ pub struct Composer {
     attachments: Vec<Attachment>,
     attach_counter: usize,
     demo: bool,
+    /// 自定义斜杠命令与 Skills:(`/名称`, 描述),由工作台扫描 `.claude` 后注入
+    custom_commands: Vec<(String, String)>,
+    /// 自定义子 Agent 名称(`@` 补全用)
+    custom_agents: Vec<String>,
     _sub: Subscription,
 }
 
@@ -112,7 +116,7 @@ impl Composer {
             Ok("context") => Some(Pick::Context),
             _ => None,
         };
-        Self { session, input, open, outside_closed: None, suggestions: Vec::new(), sel: 0, attachments: Vec::new(), attach_counter: 0, demo, _sub: sub }
+        Self { session, input, open, outside_closed: None, suggestions: Vec::new(), sel: 0, attachments: Vec::new(), attach_counter: 0, demo, custom_commands: Vec::new(), custom_agents: Vec::new(), _sub: sub }
     }
 
     /// 输入框里有没有未发送的内容(文字或附件);淘汰会话视图前要保护草稿。
@@ -140,6 +144,14 @@ impl Composer {
         self.refresh_suggestions(cx);
     }
 
+    /// 注入自定义命令 / Skills 与子 Agent(工作台扫描 `.claude` 目录后调用)。
+    ///
+    /// 参数:`commands` (`/名称`, 描述) 列表;`agents` 子 Agent 名称。
+    pub fn set_extensions(&mut self, commands: Vec<(String, String)>, agents: Vec<String>) {
+        self.custom_commands = commands;
+        self.custom_agents = agents;
+    }
+
     pub fn refresh_suggestions(&mut self, cx: &mut Context<Self>) {
         let text = self.input.read(cx).value().to_string();
         let mut out = Vec::new();
@@ -148,6 +160,11 @@ impl Composer {
                 for (c, d) in BUILTIN_COMMANDS {
                     if c[1..].starts_with(q) {
                         out.push(Suggestion { insert: format!("{c} "), label: c.to_string(), detail: d.to_string() });
+                    }
+                }
+                for (c, d) in &self.custom_commands {
+                    if c[1..].starts_with(q) && !out.iter().any(|x: &Suggestion| x.label == *c) {
+                        out.push(Suggestion { insert: format!("{c} "), label: c.clone(), detail: d.clone() });
                     }
                 }
                 if self.demo {
@@ -167,7 +184,8 @@ impl Composer {
                         out.push(Suggestion { insert: format!("{}@{f} ", &text[..at]), label: format!("@{f}"), detail: "文件".into() });
                     }
                 }
-                for a in ["Explore", "code-reviewer", "general-purpose"] {
+                let builtin = ["Explore", "Plan", "general-purpose"].map(str::to_string);
+                for a in builtin.iter().chain(self.custom_agents.iter()) {
                     if a.to_lowercase().starts_with(&q.to_lowercase()) {
                         out.push(Suggestion { insert: format!("{}@{a} ", &text[..at]), label: format!("@{a}"), detail: "子 Agent".into() });
                     }

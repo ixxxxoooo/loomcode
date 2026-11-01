@@ -1,10 +1,9 @@
-//! 设置页用到的 Workbench 方法:按当前项目加载 Claude 配置、配置层选择、权限规则与权限层设置、CLAUDE.md。
+//! 设置页用到的 Workbench 方法:按当前项目加载 Claude 配置、配置层选择、权限规则与权限层设置。
 //!
 //! @author ixxxxoooo
 
-use super::{Forms, MemoryDoc};
+use super::Forms;
 use crate::workbench::Workbench;
-use gpui_kit::component::input::{EditorState, InputEvent};
 use gpui_kit::*;
 use loom_config::{Rule, Scope};
 use serde_json::Value;
@@ -15,6 +14,7 @@ impl Workbench {
     pub fn ensure_forms(&mut self, window: &mut Window, cx: &mut Context<Self>) {
         if self.settings_forms.is_none() {
             self.settings_forms = Some(Forms::new(window, cx));
+            self.refresh_items();
         }
     }
 
@@ -40,6 +40,7 @@ impl Workbench {
         let root = self.active_project_path();
         self.claude_cfg = loom_config::claude::load(&self.claude_home, root.as_deref().map(Path::new));
         self.claude_cfg_root = root;
+        self.refresh_items();
     }
 
     /// 当前项目根(没有打开项目时为 `None`)。
@@ -136,39 +137,5 @@ impl Workbench {
             None => Ok(()),
         };
         self.finish_cfg_write(result, cx);
-    }
-
-    /// 确保记忆页的编辑器对应当前项目的 CLAUDE.md。
-    pub fn ensure_memory(&mut self, window: &mut Window, cx: &mut Context<Self>) {
-        let Some(project) = self.active_project_path() else { return };
-        let path = PathBuf::from(project).join("CLAUDE.md");
-        if self.memory.as_ref().is_some_and(|m| m.path == path) {
-            return;
-        }
-        let text = std::fs::read_to_string(&path).unwrap_or_default();
-        let editor = cx.new(|cx| EditorState::new(window, cx).language("markdown").default_value(text));
-        // 编辑后标记为未保存
-        cx.subscribe(&editor, |this, _, ev: &InputEvent, cx| {
-            if matches!(ev, InputEvent::Change) {
-                if let Some(m) = this.memory.as_mut() {
-                    m.saved = false;
-                    cx.notify();
-                }
-            }
-        })
-        .detach();
-        self.memory = Some(MemoryDoc { path, editor, saved: true });
-    }
-
-    /// 保存记忆文件。
-    pub fn save_memory(&mut self, cx: &mut Context<Self>) {
-        if let Some(doc) = self.memory.as_mut() {
-            let text = doc.editor.read(cx).value().to_string();
-            match std::fs::write(&doc.path, text) {
-                Ok(()) => doc.saved = true,
-                Err(e) => eprintln!("保存 CLAUDE.md 失败:{e}"),
-            }
-            cx.notify();
-        }
     }
 }

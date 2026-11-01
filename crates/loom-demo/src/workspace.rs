@@ -182,6 +182,15 @@ pub const DEMO_CLAUDE_SETTINGS: &str = r#"{
   }
 }"#;
 
+/// 演示用的自定义命令、子 Agent、Skill 与用户级 CLAUDE.md(相对 `~/.claude`)。
+const DEMO_EXTENSIONS: &[(&str, &str)] = &[
+    ("CLAUDE.md", "# 个人偏好\n\n- 回答用中文\n- 改完代码先跑测试\n"),
+    ("commands/review-pr.md", "---\ndescription: 审查当前分支相对 main 的改动\nargument-hint: [关注点]\n---\n\n审查 `git diff main...HEAD`,重点关注 $ARGUMENTS。\n"),
+    ("commands/git/changelog.md", "---\ndescription: 根据最近提交生成更新日志\n---\n\n读取最近 20 条提交,按 feat / fix 分组写成更新日志。\n"),
+    ("agents/code-reviewer.md", "---\nname: code-reviewer\ndescription: 代码审查专家,改完代码后主动使用\ntools: Read, Grep, Glob\nmodel: sonnet\n---\n\n你是资深代码审查员……\n"),
+    ("skills/release-notes/SKILL.md", "---\nname: release-notes\ndescription: 发版时整理发布说明\n---\n\n# 发布说明\n\n1. 汇总本版本的提交\n2. 按模块分组\n"),
+];
+
 /// 生成演示家目录(每次启动重置):用户层 MCP 在 `~/.claude.json` 顶层,
 /// router-demo 另有一个本地层 MCP 并禁用了 playwright。
 pub fn seed_claude_home(root: &Path) -> io::Result<PathBuf> {
@@ -189,6 +198,11 @@ pub fn seed_claude_home(root: &Path) -> io::Result<PathBuf> {
     let _ = fs::remove_dir_all(&home);
     fs::create_dir_all(home.join(".claude"))?;
     fs::write(home.join(".claude/settings.json"), DEMO_CLAUDE_SETTINGS)?;
+    for (rel, text) in DEMO_EXTENSIONS {
+        let path = home.join(".claude").join(rel);
+        fs::create_dir_all(path.parent().unwrap_or(&home))?;
+        fs::write(path, text)?;
+    }
     let router = root.join("router-demo").to_string_lossy().to_string();
     let claude_json = serde_json::json!({
         "mcpServers": {
