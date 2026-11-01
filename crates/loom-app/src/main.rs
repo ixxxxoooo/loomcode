@@ -136,6 +136,7 @@ mod term_store;
 mod term_tabs;
 mod terminal_view;
 mod theme;
+mod theme_palettes;
 mod timeline;
 mod tool_card;
 mod ui;

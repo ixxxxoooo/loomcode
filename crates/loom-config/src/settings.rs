@@ -17,8 +17,57 @@ pub enum ThemeChoice {
     OneLight,
     /// One 深色
     OneDark,
+    /// Claude 风格浅色(奶油底 + 赤陶橙)
+    ClaudeLight,
+    /// Claude 风格深色
+    ClaudeDark,
+    /// Nord(冷蓝灰)
+    Nord,
+    /// Solarized 浅色
+    SolarizedLight,
+    /// Solarized 深色
+    SolarizedDark,
+    /// Dracula(紫黑)
+    Dracula,
+    /// Gruvbox 深色(暖棕)
+    GruvboxDark,
     /// 跟随系统外观
     System,
+}
+
+impl ThemeChoice {
+    /// 全部主题,按设置页展示顺序。
+    pub const ALL: [ThemeChoice; 12] = [
+        Self::ClaudeLight, Self::ClaudeDark, Self::PaperLight, Self::PaperDark, Self::OneLight, Self::OneDark,
+        Self::Nord, Self::SolarizedLight, Self::SolarizedDark, Self::Dracula, Self::GruvboxDark, Self::System,
+    ];
+
+    /// 稳定的短标识(用于按主题记忆强调色、`LOOM_THEME` 环境变量)。
+    pub fn key(self) -> &'static str {
+        match self {
+            Self::PaperLight => "paper-light",
+            Self::PaperDark => "paper-dark",
+            Self::OneLight => "one-light",
+            Self::OneDark => "one-dark",
+            Self::ClaudeLight => "claude-light",
+            Self::ClaudeDark => "claude-dark",
+            Self::Nord => "nord",
+            Self::SolarizedLight => "solarized-light",
+            Self::SolarizedDark => "solarized-dark",
+            Self::Dracula => "dracula",
+            Self::GruvboxDark => "gruvbox-dark",
+            Self::System => "system",
+        }
+    }
+
+    /// 按短标识反查主题;兼容旧的 `light` / `dark`。
+    pub fn from_key(key: &str) -> Option<Self> {
+        match key {
+            "light" => Some(Self::PaperLight),
+            "dark" => Some(Self::PaperDark),
+            k => Self::ALL.into_iter().find(|c| c.key() == k),
+        }
+    }
 }
 
 /// 网络代理模式。
@@ -297,6 +346,8 @@ pub struct AppSettings {
     pub log_level: String,
     /// 主题强调色(十六进制 RRGGBB);空则用主题默认
     pub accent: Option<String>,
+    /// 各主题各自记住的强调色(键为 `ThemeChoice::key`);切换主题时自动换入
+    pub theme_accents: std::collections::BTreeMap<String, String>,
     /// 追加到 Claude Code 系统提示末尾的内容(所有新会话)
     pub append_prompt: String,
     /// 加载 CLAUDE.md;关闭时注入 `CLAUDE_CODE_DISABLE_CLAUDE_MDS=1`
@@ -340,6 +391,7 @@ impl Default for AppSettings {
             auto_update_check: true,
             log_level: "info".into(),
             accent: None,
+            theme_accents: Default::default(),
             append_prompt: String::new(),
             load_claude_md: true,
             proxy_mode: ProxyMode::System,
@@ -359,6 +411,17 @@ impl Default for AppSettings {
 }
 
 impl AppSettings {
+    /// 主题从 `old` 切走时:把旧主题的强调色存进记忆表,再换入新主题记住的强调色(没有则回到主题默认)。
+    ///
+    /// 参数:`old` 切换前的主题;`old_accent` 切换前生效的强调色。
+    pub fn swap_theme_accent(&mut self, old: ThemeChoice, old_accent: Option<String>) {
+        match old_accent {
+            Some(a) => { self.theme_accents.insert(old.key().to_string(), a); }
+            None => { self.theme_accents.remove(old.key()); }
+        }
+        self.accent = self.theme_accents.get(self.theme.key()).cloned();
+    }
+
     /// 默认存放位置 `~/.loomcode/settings.json`。
     pub fn default_path() -> Option<PathBuf> {
         std::env::var_os("HOME").map(|h| PathBuf::from(h).join(".loomcode").join("settings.json"))

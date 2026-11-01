@@ -358,14 +358,7 @@ impl Workbench {
             wb.reload_projects(window, cx);
         }
         window.focus(&wb.focus, cx);
-        let kind = match std::env::var("LOOM_THEME").as_deref() {
-            Ok("dark") => theme::ThemeKind::PaperDark,
-            Ok("system") => theme::ThemeKind::System,
-            Ok("light") => theme::ThemeKind::PaperLight,
-            Ok("one-light") => theme::ThemeKind::OneLight,
-            Ok("one-dark") => theme::ThemeKind::OneDark,
-            _ => theme::ThemeKind::from(wb.settings.theme),
-        };
+        let kind = std::env::var("LOOM_THEME").ok().and_then(|k| ThemeChoice::from_key(&k)).unwrap_or(wb.settings.theme);
         // 日志级别:环境变量 LOOM_LOG 优先,否则用设置里保存的
         if std::env::var_os("LOOM_LOG").is_none() {
             if let Some(l) = loom_diag::Level::parse(&wb.settings.log_level) {
@@ -582,10 +575,10 @@ impl Workbench {
         cmd("切换 IDE 模式", "⇧⌘E", IconName::Code, PaletteAction::ToggleIde);
         cmd("显示 / 隐藏左侧栏", "⌘B", IconName::PanelLeft, PaletteAction::ToggleLeft);
         cmd("显示 / 隐藏右侧面板", "⌥⌘B", IconName::PanelRight, PaletteAction::ToggleRight);
-        cmd("主题:纸感浅色", "", IconName::Sun, PaletteAction::SetTheme(ThemeChoice::PaperLight));
-        cmd("主题:纸感深色", "", IconName::Moon, PaletteAction::SetTheme(ThemeChoice::PaperDark));
-        cmd("主题:One 浅色", "", IconName::Sun, PaletteAction::SetTheme(ThemeChoice::OneLight));
-        cmd("主题:One 深色", "", IconName::Moon, PaletteAction::SetTheme(ThemeChoice::OneDark));
+        for c in ThemeChoice::ALL.into_iter().filter(|c| *c != ThemeChoice::System) {
+            let dark = theme::is_dark_theme(c).unwrap_or(false);
+            cmd(&format!("主题:{}", theme::preview(c).0), "", if dark { IconName::Moon } else { IconName::Sun }, PaletteAction::SetTheme(c));
+        }
         cmd("主题:跟随系统", "", IconName::Monitor, PaletteAction::SetTheme(ThemeChoice::System));
         cmd("打开 Canvas 画布", "", IconName::LayoutDashboard, PaletteAction::OpenPage("canvas"));
         cmd("打开自动化", "", IconName::Timer, PaletteAction::OpenPage("automation"));
@@ -806,6 +799,13 @@ impl Workbench {
         let old_layout = (self.settings.appearance.chat_width, self.settings.appearance.timeline_font_pct, self.settings.appearance.scrollbar);
         let old_log = self.settings.log_level.clone();
         f(&mut self.settings);
+        if self.settings.theme != old_theme {
+            // 换主题:旧主题的强调色记下,换入新主题自己的强调色(f 里同时改了强调色则以 f 为准)
+            let manual = self.settings.accent != old_accent;
+            let chosen = self.settings.accent.clone();
+            self.settings.swap_theme_accent(old_theme, old_accent.clone());
+            if manual { self.settings.accent = chosen; }
+        }
         if self.settings.log_level != old_log {
             if let Some(l) = loom_diag::Level::parse(&self.settings.log_level) {
                 loom_diag::set_level(l);

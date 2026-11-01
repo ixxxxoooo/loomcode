@@ -5,6 +5,7 @@
 use super::widgets::{block_row, group, page_header, row, rows, segmented, switch_row};
 use crate::ui::{MONO, pill};
 use crate::workbench::Workbench;
+use loom_config::ThemeChoice;
 use gpui_kit::component::Disableable as _;
 use gpui_kit::component::button::{Button, ButtonVariants};
 use gpui_kit::component::input::Input;
@@ -82,7 +83,7 @@ pub fn appearance(wb: &Workbench, cx: &mut Context<Workbench>) -> AnyElement {
             block_row("配色方案", "纸感为默认;One 是中性灰蓝风格;也可以跟随系统明暗", theme_picker(wb, cx), cx),
         ], cx))
         .child(group("强调色", rows![
-            row("强调色", "按钮、选中态、链接等使用的主题色", accent_picker(wb, cx), cx),
+            row("强调色", "按钮、选中态、悬停、焦点环、选区、链接等使用的主题色;每个主题单独记忆,并按明暗自动调整明度", accent_picker(wb, cx), cx),
         ], cx))
         .children(super::appearance_page::sections(wb, cx))
         .into_any_element()
@@ -92,10 +93,10 @@ pub fn appearance(wb: &Workbench, cx: &mut Context<Workbench>) -> AnyElement {
 fn theme_picker(wb: &Workbench, cx: &mut Context<Workbench>) -> Div {
     let t = cx.theme().clone();
     let cur = wb.settings.theme;
-    h_flex().w_full().flex_wrap().gap_3().children(crate::theme::PREVIEWS.iter().enumerate().map(|(i, (choice, name, bg, fg, accent))| {
-        let choice = *choice;
+    h_flex().w_full().flex_wrap().gap_3().children(ThemeChoice::ALL.into_iter().enumerate().map(|(i, choice)| {
+        let (name, bg, fg, accent) = crate::theme::preview(choice);
         let on = cur == choice;
-        let (bg, fg, accent): (Hsla, Hsla, Hsla) = (rgb(*bg).into(), rgb(*fg).into(), rgb(*accent).into());
+        let (bg, fg, accent): (Hsla, Hsla, Hsla) = (rgb(bg).into(), rgb(fg).into(), rgb(accent).into());
         v_flex().id(SharedString::from(format!("theme-{i}"))).w(px(120.)).gap_1p5().cursor_pointer()
             .on_click(cx.listener(move |this, _, _, cx| this.update_settings(cx, |s| s.theme = choice)))
             .child(v_flex().h(px(68.)).p_2().gap_1().rounded(px(crate::theme::R_MD)).border_2().bg(bg)
@@ -108,7 +109,7 @@ fn theme_picker(wb: &Workbench, cx: &mut Context<Workbench>) -> Div {
 }
 
 /// 强调色预设:(名称, RRGGBB);`None` 为主题默认。
-const ACCENTS: &[(&str, Option<&str>)] = &[("默认橙", None), ("蓝", Some("2563EB")), ("绿", Some("16A34A")), ("紫", Some("7C3AED")), ("粉", Some("DB2777")), ("青", Some("0891B2"))];
+const ACCENTS: &[(&str, Option<&str>)] = &[("主题默认", None), ("赤陶", Some("C15F3C")), ("橙", Some("EA580C")), ("红", Some("DC2626")), ("粉", Some("DB2777")), ("紫", Some("7C3AED")), ("蓝", Some("2563EB")), ("青", Some("0891B2")), ("绿", Some("16A34A"))];
 
 /// 强调色选择:预设色点 + 自定义十六进制。
 fn accent_picker(wb: &Workbench, cx: &mut Context<Workbench>) -> Div {
@@ -116,7 +117,11 @@ fn accent_picker(wb: &Workbench, cx: &mut Context<Workbench>) -> Div {
     let cur = wb.settings.accent.clone();
     h_flex().gap_1p5().items_center()
         .children(ACCENTS.iter().enumerate().map(|(i, (_name, hex))| {
-            let color: Hsla = rgb(hex.and_then(crate::theme::parse_hex).unwrap_or(0xF54E00)).into();
+            // 色点显示该主题下的实际效果(按明暗调整过明度);主题默认显示主题自带的主题色
+            let color: Hsla = match hex.and_then(crate::theme::parse_hex) {
+                Some(v) => crate::theme::adapt_accent(rgb(v).into(), t.is_dark()),
+                None => rgb(crate::theme::preview(wb.settings.theme).3).into(),
+            };
             let on = cur.as_deref() == *hex;
             let v = hex.map(str::to_string);
             div().id(SharedString::from(format!("accent-{i}"))).size(px(20.)).rounded_full().bg(color).cursor_pointer()
