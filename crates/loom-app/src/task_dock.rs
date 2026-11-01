@@ -1,7 +1,7 @@
 //! 输入框上方的后台任务坞。
 //!
-//! 胶囊固定在输入框上方,点击后列表在胶囊**上方**悬浮展开(不挤动布局);再点胶囊、点列表以外、按 Esc 都会收起。
-//! 列表按类别分组(子代理 / 后台命令 / 监听 / 工作流 / 其他),已结束的任务折叠在最后的「已结束」里;
+//! 每个类别(子代理 / 后台命令 / 监听 / 工作流 / 其他 / 已结束)一个胶囊,排成一排,固定在输入框上方;
+//! 点哪个胶囊,那一类的列表就在上方悬浮展开(不挤动布局);再点同一个胶囊、点列表以外、按 Esc 都会收起,点另一个胶囊直接切换;
 //! 完整输出与历史在右侧「任务」标签里。
 //!
 //! @author ixxxxoooo
@@ -17,81 +17,63 @@ use gpui_kit::prelude::FluentBuilder as _;
 use gpui_kit::*;
 use loom_core::*;
 
-/// 「已结束」分组展开后最多显示的行数。
+/// 「已结束」列表最多显示的行数。
 const FINISHED_ROWS: usize = 20;
 /// 悬浮列表的最大高度。
 const PANEL_MAX_H: f32 = 380.;
 
-/// 输入框上方的任务坞;没有可显示的任务(或没有运行中的任务且列表没展开)时返回 `None`。
+/// 输入框上方的任务坞:每个类别一个胶囊,排成一排;点哪个胶囊,列表就在上方悬浮展开那一类。
 ///
-/// 参数:`session` 会话模型。返回:与输入框同宽的计数胶囊,展开时带向上悬浮的分组列表。
+/// 参数:`session` 会话模型。返回:胶囊行(含向上悬浮的列表);没有可显示的任务,或没有运行中的任务且没展开时返回 `None`。
 pub fn dock(session: &Entity<SessionModel>, cx: &App) -> Option<AnyElement> {
     let m = session.read(cx);
-    let running = m.state.running_task_count();
-    if !m.state.tasks.iter().any(|t| t.visible()) || (running == 0 && !m.tasks_open) {
+    let sections = group_tasks(&m.state.tasks);
+    if sections.is_empty() || (m.state.running_task_count() == 0 && m.tasks_open.is_none()) {
         return None;
     }
-    let t = cx.theme();
-    let open = m.tasks_open;
     let now = now_ms();
-    let counts = |k: TaskKind| m.state.tasks.iter().filter(|x| x.counts_as_running() && x.kind == k).count();
-    let parts: Vec<String> = [(TaskKind::Agent, "子代理"), (TaskKind::Shell, "命令"), (TaskKind::Monitor, "监听"), (TaskKind::Workflow, "工作流")]
-        .into_iter().filter(|(k, _)| counts(*k) > 0).map(|(k, unit)| format!("{} {unit}", counts(k))).collect();
-    let stalled = m.state.tasks.iter().filter(|x| x.counts_as_running() && x.idle_ms(now) >= STALL_MS && x.kind == TaskKind::Agent).count();
-    let label = if running > 0 { format!("{running} 个后台任务运行中") } else { "后台任务已全部结束".to_string() };
-    let s = session.clone();
-    let capsule = h_flex().id("task-dock-capsule").self_start().h(px(28.)).px_2p5().gap_2().items_center().rounded(px(14.)).cursor_pointer()
-        .border_1().border_color(t.border).bg(t.background).hover(|d| d.bg(t.list_hover))
-        .on_click(move |_, _, cx| { s.update(cx, |m, cx| m.toggle_tasks(cx)); })
-        .child(if running > 0 { Spinner::new().xsmall().into_any_element() } else { icon(IconName::Activity, 12., t.muted_foreground).into_any_element() })
-        .child(div().text_size(px(12.)).text_color(t.foreground).child(label))
-        .when(!parts.is_empty(), |d| d.child(div().text_size(px(11.)).text_color(t.muted_foreground).child(parts.join(" · "))))
-        .when(stalled > 0, |d| d.child(h_flex().gap_1().items_center().child(icon(IconName::TriangleAlert, 11., t.warning)).child(div().text_size(px(11.)).text_color(t.warning).child(format!("{stalled} 个疑似停滞")))))
-        .child(icon(if open { IconName::ChevronDown } else { IconName::ChevronUp }, 12., t.muted_foreground));
-    // 胶囊始终占固定的一行高度;列表是绝对定位的悬浮层,不参与布局
-    let mut host = div().relative().w_full().max_w(px(crate::timeline::content_max_w(cx))).h(px(28.)).child(capsule);
-    if open {
-        host = host.child(panel(session, now, cx));
+    let capsules: Vec<AnyElement> = sections.iter().map(|sec| capsule(session, sec, m.tasks_open == Some(sec.group), now, cx)).collect();
+    // 胶囊行始终占固定的一行高度;列表是绝对定位的悬浮层,不参与布局
+    let mut host = div().relative().w_full().max_w(px(crate::timeline::content_max_w(cx))).child(h_flex().w_full().min_h(px(28.)).gap_2().children(capsules));
+    if let Some(sec) = m.tasks_open.and_then(|g| sections.iter().find(|s| s.group == g)) {
+        host = host.child(panel(session, sec, group_total(&sections), now, cx));
     }
     Some(div().w_full().flex().justify_center().px_4().pt_1().pb_1().child(host).into_any_element())
 }
 
-/// 悬浮的分组列表。
-fn panel(session: &Entity<SessionModel>, now: u64, cx: &App) -> AnyElement {
+/// 全部任务数(「查看全部」文案用)。
+fn group_total(sections: &[TaskSection<'_>]) -> usize {
+    sections.iter().map(|s| s.tasks.len()).sum()
+}
+
+/// 一类任务的胶囊:图标(有运行中的转圈)+ 类别名 + 数量,子代理有疑似停滞时带警告;展开的那个高亮。
+fn capsule(session: &Entity<SessionModel>, sec: &TaskSection<'_>, active: bool, now: u64, cx: &App) -> AnyElement {
     let t = cx.theme();
-    let m = session.read(cx);
-    let sections = group_tasks(&m.state.tasks);
-    let total: usize = sections.iter().map(|s| s.tasks.len()).sum();
-    let finished_open = m.tasks_finished_open;
-    let mut body = v_flex().w_full().py_1();
-    for sec in &sections {
-        let finished = sec.group == TaskGroup::Finished;
-        let running = sec.tasks.iter().filter(|x| x.counts_as_running()).count();
-        let title = if finished { format!("{} · {}", sec.group.label(), sec.tasks.len()) } else if running == sec.tasks.len() { format!("{} · {}", sec.group.label(), running) } else { format!("{} · {} 个运行中", sec.group.label(), running) };
-        let s = session.clone();
-        body = body.child(
-            h_flex().id(SharedString::from(format!("dock-group-{:?}", sec.group))).h(px(26.)).px_3().gap_1p5().items_center().text_size(px(11.)).text_color(t.muted_foreground)
-                .when(finished, |d| d.cursor_pointer().hover(|d| d.text_color(t.foreground)).on_click(move |_, _, cx| { s.update(cx, |m, cx| m.toggle_finished_tasks(cx)); }))
-                .child(match sec.group.kind() {
-                    Some(k) => icon(kind_icon(k), 12., t.muted_foreground).into_any_element(),
-                    None => icon(if finished_open { IconName::ChevronDown } else { IconName::ChevronRight }, 12., t.muted_foreground).into_any_element(),
-                })
-                .child(title),
-        );
-        if finished && !finished_open {
-            continue;
-        }
-        let limit = if finished { FINISHED_ROWS } else { usize::MAX };
-        for task in sec.tasks.iter().take(limit) {
-            body = body.child(if sec.group == TaskGroup::Agent { agent_row(session, task, now, cx) } else { command_row(session, task, now, cx) });
-        }
-    }
+    let group = sec.group;
+    let running = sec.tasks.iter().filter(|x| x.counts_as_running()).count();
+    let stalled = sec.tasks.iter().filter(|x| x.counts_as_running() && x.idle_ms(now) >= STALL_MS).count();
+    let finished = group == TaskGroup::Finished;
+    let s = session.clone();
+    h_flex().id(SharedString::from(format!("task-capsule-{group:?}"))).h(px(28.)).px_2p5().gap_1p5().items_center().rounded(px(14.)).cursor_pointer()
+        .border_1().border_color(if active { t.primary } else { t.border }).bg(if active { t.list_active } else { t.background }).hover(|d| d.bg(t.list_hover))
+        .on_click(move |_, _, cx| { s.update(cx, |m, cx| m.toggle_tasks(group, cx)); })
+        .child(if running > 0 { Spinner::new().xsmall().into_any_element() } else { icon(group.kind().map_or(IconName::Check, kind_icon), 12., t.muted_foreground).into_any_element() })
+        .child(div().text_size(px(12.)).text_color(if finished { t.muted_foreground } else { t.foreground }).child(format!("{} {}", if group == TaskGroup::Other { "其他" } else { group.label() }, if finished { sec.tasks.len() } else { running.max(sec.tasks.len()) })))
+        .when(stalled > 0, |d| d.child(h_flex().gap_0p5().items_center().child(icon(IconName::TriangleAlert, 11., t.warning)).child(div().text_size(px(11.)).text_color(t.warning).child(format!("{stalled} 停滞")))))
+        .into_any_element()
+}
+
+/// 悬浮的任务列表(只含被点开的那一类)。
+fn panel(session: &Entity<SessionModel>, sec: &TaskSection<'_>, total: usize, now: u64, cx: &App) -> AnyElement {
+    let t = cx.theme();
+    let limit = if sec.group == TaskGroup::Finished { FINISHED_ROWS } else { usize::MAX };
+    let rows = sec.tasks.iter().take(limit).map(|task| if sec.group == TaskGroup::Agent { agent_row(session, task, now, cx) } else { command_row(session, task, now, cx) });
     let s2 = session.clone();
     let s_out = session.clone();
     v_flex().id("task-dock-panel").absolute().bottom(px(32.)).left_0().w_full().occlude()
         .rounded(px(10.)).border_1().border_color(t.border).bg(t.popover).shadow_lg().overflow_hidden()
         .on_mouse_down_out(move |_, _, cx| { s_out.update(cx, |m, cx| m.dismiss_tasks_outside(cx)); })
-        .child(v_flex().id("task-dock-list").w_full().max_h(px(PANEL_MAX_H)).overflow_y_scroll().child(body))
+        .child(v_flex().id("task-dock-list").w_full().max_h(px(PANEL_MAX_H)).overflow_y_scroll().py_1().children(rows))
         .child(
             h_flex().id("task-dock-all").h(px(28.)).px_3().gap_1().items_center().flex_none().border_t_1().border_color(t.border).cursor_pointer().text_size(px(11.)).text_color(t.muted_foreground)
                 .hover(|d| d.text_color(t.foreground))
