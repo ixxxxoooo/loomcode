@@ -25,7 +25,7 @@ use loom_config::{AppSettings, ClaudeConfig, ThemeChoice, UiState};
 use loom_core::*;
 use loom_claude::{ClaudeBackend, LazyBackend};
 use loom_demo::DemoBackend;
-use gpui_kit::component::input::{EditorState, InputState};
+use gpui_kit::component::input::InputState;
 
 actions!(loomcode, [TogglePalette, ToggleLeft, ToggleRight, OpenSettings, CycleMode, NewSession, Escape, SaveFile, ToggleIde]);
 
@@ -133,6 +133,10 @@ pub struct Workbench {
     /// 已打开会话的使用顺序(队首最久未用),用于淘汰空闲会话
     pub view_order: Vec<String>,
     pub claude_cfg: ClaudeConfig,
+    /// `claude_cfg` 是按哪个项目根加载的(`None` 表示只有用户层)
+    pub claude_cfg_root: Option<String>,
+    /// 权限页新增规则写入的层
+    pub rule_scope: loom_config::Scope,
     pub settings_tab: SettingsTab,
     pub memory: Option<MemoryDoc>,
     pub rule_input: Entity<InputState>,
@@ -178,10 +182,9 @@ impl Workbench {
         let ui_state_path = settings_path.with_file_name("state.json");
         let ui_state = UiState::load(&ui_state_path);
         let claude_cfg = if demo {
-            loom_config::claude::parse_settings(loom_demo::workspace::DEMO_CLAUDE_SETTINGS)
+            loom_config::claude::parse_settings(loom_demo::workspace::DEMO_CLAUDE_SETTINGS, loom_config::Scope::User)
         } else {
-            let home = std::env::var_os("HOME").map(PathBuf::from).unwrap_or_default();
-            loom_config::claude::load(&home, None)
+            loom_config::claude::load(&settings::claude_home(), None)
         };
         let rule_input = settings::new_rule_input(window, cx);
         let focus = cx.focus_handle();
@@ -243,6 +246,8 @@ impl Workbench {
             git: HashMap::new(),
             view_order: Vec::new(),
             claude_cfg,
+            claude_cfg_root: None,
+            rule_scope: loom_config::Scope::Local,
             settings_tab: SettingsTab::General,
             memory: None,
             rule_input,
@@ -374,6 +379,10 @@ impl Workbench {
     }
 
     pub fn set_page(&mut self, page: Page, cx: &mut Context<Self>) {
+        if page == Page::Settings && self.page != Page::Settings {
+            // 进入设置时重读 Claude 配置,外部修改(如 claude mcp add)能立刻看到
+            self.reload_claude_cfg();
+        }
         self.page = page;
         cx.notify();
     }
@@ -617,88 +626,6 @@ impl Workbench {
     /// 当前项目路径。
     pub fn active_project_path(&self) -> Option<String> {
         self.active.as_ref().and_then(|id| self.views.get(id)).and_then(|v| self.projects.get(v.project_ix)).map(|p| self.work_root(&p.path))
-    }
-
-    /// 权限规则文件:项目级 `.claude/settings.local.json`。
-    fn rules_file(&self) -> Option<PathBuf> {
-        self.active_project_path().map(|p| PathBuf::from(p).join(".claude/settings.local.json"))
-    }
-
-    /// 添加权限规则(演示模式只改内存)。
-    pub fn add_rule(&mut self, kind: &str, window: &mut Window, cx: &mut Context<Self>) {
-        let rule = self.rule_input.read(cx).value().trim().to_string();
-        if rule.is_empty() {
-            return;
-        }
-        let list = match kind {
-            "allow" => &mut self.claude_cfg.permissions.allow,
-            "deny" => &mut self.claude_cfg.permissions.deny,
-            _ => &mut self.claude_cfg.permissions.ask,
-        };
-        if !list.contains(&rule) {
-            list.push(rule.clone());
-        }
-        if !self.demo {
-            if let Some(path) = self.rules_file() {
-                if let Err(e) = loom_config::claude::add_permission_rule(&path, kind, &rule) {
-                    eprintln!("写入权限规则失败:{e}");
-                }
-            }
-        }
-        self.rule_input.update(cx, |i, cx| i.set_value(String::new(), window, cx));
-        cx.notify();
-    }
-
-    /// 删除权限规则。
-    pub fn remove_rule(&mut self, kind: &str, rule: &str, cx: &mut Context<Self>) {
-        let list = match kind {
-            "allow" => &mut self.claude_cfg.permissions.allow,
-            "deny" => &mut self.claude_cfg.permissions.deny,
-            _ => &mut self.claude_cfg.permissions.ask,
-        };
-        list.retain(|r| r != rule);
-        if !self.demo {
-            if let Some(path) = self.rules_file() {
-                if let Err(e) = loom_config::claude::remove_permission_rule(&path, kind, rule) {
-                    eprintln!("删除权限规则失败:{e}");
-                }
-            }
-        }
-        cx.notify();
-    }
-
-    /// 确保记忆页的编辑器对应当前项目的 CLAUDE.md。
-    pub fn ensure_memory(&mut self, window: &mut Window, cx: &mut Context<Self>) {
-        let Some(project) = self.active_project_path() else { return };
-        let path = PathBuf::from(project).join("CLAUDE.md");
-        if self.memory.as_ref().is_some_and(|m| m.path == path) {
-            return;
-        }
-        let text = std::fs::read_to_string(&path).unwrap_or_default();
-        let editor = cx.new(|cx| EditorState::new(window, cx).language("markdown").default_value(text));
-        // 编辑后标记为未保存
-        cx.subscribe(&editor, |this, _, ev: &gpui_kit::component::input::InputEvent, cx| {
-            if matches!(ev, gpui_kit::component::input::InputEvent::Change) {
-                if let Some(m) = this.memory.as_mut() {
-                    m.saved = false;
-                    cx.notify();
-                }
-            }
-        })
-        .detach();
-        self.memory = Some(MemoryDoc { path, editor, saved: true });
-    }
-
-    /// 保存记忆文件。
-    pub fn save_memory(&mut self, cx: &mut Context<Self>) {
-        if let Some(doc) = self.memory.as_mut() {
-            let text = doc.editor.read(cx).value().to_string();
-            match std::fs::write(&doc.path, text) {
-                Ok(()) => doc.saved = true,
-                Err(e) => eprintln!("保存 CLAUDE.md 失败:{e}"),
-            }
-            cx.notify();
-        }
     }
 
     /// 后台检测本机 claude 版本。
