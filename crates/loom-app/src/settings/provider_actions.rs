@@ -106,6 +106,20 @@ impl Workbench {
         self.set_field("p_key", String::new(), window, cx);
     }
 
+    /// 请求删除当前服务商:先弹确认横幅,确认后才真正删除。
+    pub fn ask_delete_provider(&mut self, cx: &mut Context<Self>) {
+        let ui = &self.forms().providers;
+        let Some(name) = ui.selected.as_ref().and_then(|id| ui.store.get(id)).map(|p| p.name.clone()) else { return };
+        self.ask(super::confirm::Confirm::DeleteProvider(name), cx);
+    }
+
+    /// 把当前服务商的某个模型设为映射的默认模型(同时让映射指向该服务商)。
+    pub fn set_default_model(&mut self, model: &str, cx: &mut Context<Self>) {
+        let Some(id) = self.forms().providers.selected.clone() else { return };
+        let model = model.to_string();
+        self.edit_mapping(cx, |m| { m.provider = id; m.default = model; });
+    }
+
     /// 删除当前服务商及其密钥;映射指向它时清空映射。
     pub fn delete_provider(&mut self, cx: &mut Context<Self>) {
         let Some(id) = self.forms().providers.selected.clone() else { return };

@@ -24,13 +24,20 @@ fn detail(wb: &Workbench, cx: &mut Context<Workbench>) -> Option<Div> {
     let has_key = wb.provider_has_key(&p.id);
     let busy = ui.busy;
     let status = ui.status.clone();
-    let models = h_flex().w_full().flex_wrap().gap_1().children(p.models.iter().enumerate().map(|(i, m)| {
-        let m2 = m.clone();
-        h_flex().id(SharedString::from(format!("pm-{i}"))).h(px(24.)).pl_2().pr_1().gap_1().items_center().rounded(px(R_SM)).bg(t.muted)
-            .child(div().font_family(MONO).text_size(px(12.)).child(m.clone()))
-            .child(div().id(SharedString::from(format!("pm-del-{i}"))).p_0p5().rounded(px(4.)).cursor_pointer().hover(|d| d.bg(t.list_hover))
-                .on_click(cx.listener(move |this, _, _, cx| this.remove_provider_model(&m2, cx)))
-                .child(icon(IconName::X, 11., t.muted_foreground)))
+    let default_model = (wb.forms().providers.store.mapping.provider == p.id).then(|| wb.forms().providers.store.mapping.default.clone());
+    let models = v_flex().w_full().gap_0p5().children(p.models.iter().enumerate().map(|(i, m)| {
+        let (m_del, m_copy, m_star) = (m.clone(), m.clone(), m.clone());
+        let is_default = default_model.as_deref() == Some(m.as_str());
+        let tool = |id: String, ic: IconName, color: Hsla| div().id(SharedString::from(id)).size(px(22.)).flex().items_center().justify_center().rounded(px(4.)).cursor_pointer()
+            .hover(|d| d.bg(t.list_hover)).child(icon(ic, 13., color));
+        h_flex().id(SharedString::from(format!("pm-{i}"))).w_full().h(px(28.)).px_2().gap_1().items_center().rounded(px(R_SM)).hover(|d| d.bg(t.muted))
+            .child(div().flex_1().min_w_0().font_family(MONO).text_size(px(12.)).truncate().child(m.clone()))
+            .child(tool(format!("pm-copy-{i}"), IconName::Copy, t.muted_foreground)
+                .on_click(cx.listener(move |_, _, _, cx| cx.write_to_clipboard(ClipboardItem::new_string(m_copy.clone())))))
+            .child(tool(format!("pm-star-{i}"), IconName::Star, if is_default { t.warning } else { t.muted_foreground })
+                .on_click(cx.listener(move |this, _, _, cx| this.set_default_model(&m_star, cx))))
+            .child(tool(format!("pm-del-{i}"), IconName::Trash, t.muted_foreground)
+                .on_click(cx.listener(move |this, _, _, cx| this.remove_provider_model(&m_del, cx))))
     }));
     Some(group(&p.name, rows![
         row("名称", "", div().w(px(300.)).child(Input::new(wb.field("p_name")).small()), cx),
@@ -40,7 +47,7 @@ fn detail(wb: &Workbench, cx: &mut Context<Workbench>) -> Option<Div> {
             .child(if has_key { pill("已保存", t.success, t.muted) } else { pill("未填写", t.warning, t.muted) }), cx),
         row("鉴权方式", "", segmented("p-auth", vec![(AuthHeader::Bearer, "Bearer"), (AuthHeader::XApiKey, "x-api-key")], p.auth, cx,
             |this, v, cx| this.set_provider_auth(v, cx)), cx),
-        block_row(&format!("模型清单({})", p.models.len()), "点 × 移除;下面输入模型 ID 后回车或点「添加」", v_flex().w_full().gap_2()
+        block_row(&format!("模型清单({})", p.models.len()), "星标设为映射默认模型;复制 ID、删除在行尾;下面输入模型 ID 后回车或点「添加」", v_flex().w_full().gap_2()
             .child(models)
             .child(h_flex().w_full().gap_2()
                 .child(div().flex_1().child(Input::new(wb.field("p_model")).small()))
@@ -51,7 +58,7 @@ fn detail(wb: &Workbench, cx: &mut Context<Workbench>) -> Option<Div> {
                 .child(Button::new("p-test").small().outline().label(if busy { "请求中…" } else { "测试连接" }).disabled(busy).on_click(cx.listener(|this, _, _, cx| this.probe_provider(false, cx))))
                 .child(Button::new("p-fetch").small().outline().label("获取模型列表").disabled(busy).on_click(cx.listener(|this, _, _, cx| this.probe_provider(true, cx))))
                 .child(div().flex_1())
-                .child(Button::new("p-del").small().ghost().icon(IconName::Trash).label("删除").on_click(cx.listener(|this, _, _, cx| this.delete_provider(cx)))))
+                .child(Button::new("p-del").small().ghost().icon(IconName::Trash).label("删除").on_click(cx.listener(|this, _, _, cx| this.ask_delete_provider(cx)))))
             .when_some(status, |d, (ok, msg)| d.child(div().text_size(px(12.)).text_color(if ok { t.success } else { t.danger }).child(msg))), cx),
     ], cx))
 }
@@ -69,6 +76,7 @@ pub fn render(wb: &Workbench, cx: &mut Context<Workbench>) -> AnyElement {
             Err(e) => pill(e.clone(), t.muted_foreground, t.muted),
         }, cx))
         .children(error_banner(wb, cx))
+        .children(super::confirm::confirm_banner(wb, cx))
         .child(group("服务商", rows![
             block_row("已添加", "", h_flex().w_full().flex_wrap().gap_1().children(list.into_iter().map(|(id, name, has_key)| {
                 let on = selected.as_deref() == Some(id.as_str());

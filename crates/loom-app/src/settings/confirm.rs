@@ -19,6 +19,8 @@ pub enum Confirm {
     DeleteHook(HookEntry),
     TrashItem(Item),
     Uninstall(PluginEntry),
+    /// 删除模型服务商(显示名)
+    DeleteProvider(String),
     /// 安装插件(`名称@市场`)到某一层
     Install(String, Scope),
 }
@@ -30,6 +32,7 @@ impl Confirm {
             Self::DeleteMcp(s) => format!("删除 MCP 服务器「{}」?会从{}配置中移除,原文件先备份为 .loom-backup。", s.name, s.scope.label()),
             Self::DeleteHook(h) => format!("删除 {} 钩子?会从{}配置中移除。", h.event, h.scope.label()),
             Self::TrashItem(i) => format!("「{}」会被移到废纸篓,确定吗?", i.name),
+            Self::DeleteProvider(n) => format!("删除服务商「{n}」?服务商配置与已保存的密钥都会被删除。"),
             Self::Uninstall(p) => format!("卸载插件 {}?(范围:{})", p.id, p.scope.label()),
             Self::Install(id, scope) => format!("安装 {id}({}范围)?插件可以在你的电脑上运行代码(命令、MCP 服务器、Hooks),请只安装信任来源的插件。", scope.label()),
         }
@@ -71,6 +74,7 @@ impl Workbench {
             Confirm::DeleteMcp(s) => self.delete_mcp(&s, cx),
             Confirm::DeleteHook(h) => self.delete_hook(&h, cx),
             Confirm::TrashItem(i) => self.trash_item(&i, cx),
+            Confirm::DeleteProvider(_) => self.delete_provider(cx),
             Confirm::Uninstall(p) => self.plugin_action("uninstall", &p, cx),
             Confirm::Install(id, scope) => self.do_install(&id, scope, cx),
         }
