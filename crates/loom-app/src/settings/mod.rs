@@ -96,9 +96,9 @@ impl SettingsTab {
     /// 导航分组。
     pub const GROUPS: [(&'static str, &'static [SettingsTab]); 4] = [
         ("客户端", &[Self::General, Self::Appearance, Self::Chat, Self::Shortcuts]),
-        ("Claude Code", &[Self::Customize, Self::Model, Self::Providers, Self::Prompts, Self::Network, Self::Permissions, Self::Trust, Self::Env]),
+        ("Claude Code", &[Self::Customize, Self::Model, Self::Providers, Self::Prompts, Self::Permissions, Self::Trust, Self::Env]),
         ("工作台", &[Self::Editor, Self::Terminal, Self::Browser, Self::Scm, Self::Intel]),
-        ("其他", &[Self::Usage, Self::Privacy, Self::Diagnostics, Self::Advanced, Self::About]),
+        ("其他", &[Self::Network, Self::Usage, Self::Privacy, Self::Diagnostics, Self::Advanced, Self::About]),
     ];
 
     /// 全部分类(`LOOM_SETTINGS` 按小写名查找)。
