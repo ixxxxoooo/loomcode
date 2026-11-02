@@ -9,6 +9,7 @@ use crate::ide::{ChangeAllOccurrences, CloseTab, FindReferences, FormatDocument,
 use crate::right_panel::{PanelEvent, RightPanel};
 use crate::ui::{icon, no_drag};
 use gpui_kit::component::Disableable as _;
+use gpui_kit::component::Selectable as _;
 use crate::workbench::{NewSession, RightTab, SaveFile, ToggleIde, ToggleLeft, ToggleRight, Workbench, chat_panel};
 use gpui_kit::assets::IconName;
 use gpui_kit::component::TitleBar;
