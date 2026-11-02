@@ -4,45 +4,87 @@
 
 use crate::UiPrefs;
 use gpui_kit::component::shimmer::ShimmerText;
-use gpui_kit::component::ActiveTheme as _;
+use gpui_kit::component::{ActiveTheme as _, Colorize as _};
 use gpui_kit::*;
 use loom_config::ShimmerKind;
 use std::time::Duration;
 
-/// 流光溢彩一个循环的时长(毫秒)。
-const AURORA_CYCLE_MS: u64 = 5000;
-/// 流光溢彩的刷新帧率上限(逐字重排文字,限频以免空闲时频繁重建)。
-const AURORA_FPS: f32 = 20.;
-/// 一行文字在调色板上跨越的圈数:越小整行越接近同一种颜色,过渡越柔和。
-const AURORA_TURNS_PER_LINE: f32 = 0.45;
-/// 极光调色板(色相 °):青 → 蓝 → 紫 → 粉 → 紫 → 蓝,首尾相接可无缝循环,避开黄绿红这类刺眼色。
-const AURORA_HUES: [f32; 6] = [178., 212., 262., 318., 262., 212.];
+/// 流光溢彩一次扫过的时长(毫秒),含光带扫出画面后的短暂停顿。
+const AURORA_CYCLE_MS: u64 = 2800;
+/// 刷新帧率上限(逐字重排文字,限频以免空闲时频繁重建)。
+const AURORA_FPS: f32 = 30.;
+/// 光带半宽(占文字宽度的比例)。
+const BAND_HALF: f32 = 0.22;
+/// 光带中心最浓处与原文字色的混合比例(留一点原色,质感更含蓄)。
+const BAND_PEAK: f32 = 0.92;
+/// 珠光色标(色相 °):天蓝 → 靛蓝 → 紫罗兰 → 玫瑰粉,沿光带从前到后排列。
+const PEARL_HUES: [f32; 4] = [196., 232., 272., 330.];
 
-/// 调色板上的一点:`pos` 取 0..1 循环,在相邻色标间做余弦平滑插值,返回低饱和的柔和色。
+/// 光带内位置 `u`(0 = 前沿,1 = 尾部)的珠光颜色,色标之间余弦平滑过渡。
 ///
-/// 参数:`pos` 位置(自动取小数部分);`dark` 是否深色主题。
+/// 参数:`u` 位置(会被截到 0..1);`dark` 是否深色主题。
 /// 返回:对应颜色。
-pub fn aurora_color(pos: f32, dark: bool) -> Hsla {
-    let n = AURORA_HUES.len();
-    let x = pos.rem_euclid(1.) * n as f32;
-    let (i, f) = (x as usize % n, x.fract());
-    let k = (1. - (f * std::f32::consts::PI).cos()) / 2.;
-    let (h0, h1) = (AURORA_HUES[i], AURORA_HUES[(i + 1) % n]);
-    let hue = (h0 + (h1 - h0) * k) / 360.;
-    hsla(hue, if dark { 0.62 } else { 0.55 }, if dark { 0.74 } else { 0.52 }, 1.)
+pub fn pearl_color(u: f32, dark: bool) -> Hsla {
+    let n = PEARL_HUES.len() - 1;
+    let x = u.clamp(0., 1.) * n as f32;
+    let i = (x as usize).min(n - 1);
+    let k = (1. - ((x - i as f32) * std::f32::consts::PI).cos()) / 2.;
+    let hue = (PEARL_HUES[i] + (PEARL_HUES[i + 1] - PEARL_HUES[i]) * k) / 360.;
+    hsla(hue, if dark { 0.85 } else { 0.78 }, if dark { 0.76 } else { 0.5 }, 1.)
 }
 
-/// 给每个字符分配流光溢彩的高亮区间。
+/// 光带强度:离中心越远越弱,边缘平滑归零(余弦窗)。
 ///
-/// 参数:`text` 文本;`phase` 动画进度 0..1;`dark` 是否深色主题。
-/// 返回:`(字节区间, 高亮样式)` 列表,每个字符一项。
-pub fn aurora_highlights(text: &str, phase: f32, dark: bool) -> Vec<(std::ops::Range<usize>, HighlightStyle)> {
+/// 参数:`d` 到中心的距离(与 `BAND_HALF` 同单位)。
+/// 返回:0..1。
+fn band_weight(d: f32) -> f32 {
+    let x = (d.abs() / BAND_HALF).min(1.);
+    (1. + (x * std::f32::consts::PI).cos()) / 2.
+}
+
+/// 给每个字符算光带高亮:只有落在光带内的字符改色(原色向珠光渐变混合),其余保持原样。
+///
+/// 参数:`text` 文本;`phase` 动画进度 0..1;`base` 文字原色;`dark` 是否深色主题。
+/// 返回:`(字节区间, 高亮样式)` 列表,仅含被光带照到的字符。
+pub fn aurora_highlights(text: &str, phase: f32, base: Hsla, dark: bool) -> Vec<(std::ops::Range<usize>, HighlightStyle)> {
     let n = text.chars().count().max(1) as f32;
-    text.char_indices().enumerate().map(|(i, (at, ch))| {
-        let hue = phase - AURORA_TURNS_PER_LINE * (i as f32 / n);
-        let style = HighlightStyle { color: Some(aurora_color(hue, dark)), ..Default::default() };
-        (at..at + ch.len_utf8(), style)
+    // 先缓入缓出,再把光带中心从文字左侧外一路带到右侧外
+    let eased = (1. - (phase.clamp(0., 1.) * std::f32::consts::PI).cos()) / 2.;
+    let center = eased * (1. + BAND_HALF * 2.) - BAND_HALF;
+    text.char_indices().enumerate().filter_map(|(i, (at, ch))| {
+        let pos = (i as f32 + 0.5) / n;
+        let w = band_weight(pos - center) * BAND_PEAK;
+        if w < 0.02 {
+            return None;
+        }
+        let u = (pos - center) / (BAND_HALF * 2.) + 0.5;
+        let color = base.mix_oklab(pearl_color(1. - u, dark), w);
+        Some((at..at + ch.len_utf8(), HighlightStyle { color: Some(color), ..Default::default() }))
     }).collect()
+}
+
+/// 流光溢彩文字:读取继承来的文字颜色作为底色,光带从它渐变到珠光色。
+#[derive(IntoElement)]
+struct AuroraText {
+    text: SharedString,
+    id: SharedString,
+}
+
+impl RenderOnce for AuroraText {
+    fn render(self, window: &mut Window, cx: &mut App) -> impl IntoElement {
+        let base = window.text_style().color;
+        let dark = cx.theme().is_dark();
+        let text = self.text;
+        div().min_w_0().with_animation(
+            self.id,
+            Animation::new(Duration::from_millis(AURORA_CYCLE_MS)).repeat_synced().with_max_fps(AURORA_FPS),
+            move |d, t| {
+                // 后 20% 时间光带已离开画面,文字静止一小会儿再开始下一次
+                let phase = (t / 0.8).min(1.);
+                d.child(StyledText::new(text.clone()).with_highlights(aurora_highlights(&text, phase, base, dark)))
+            },
+        )
+    }
 }
 
 /// 带流光的文字,样式取自外观偏好。
@@ -54,17 +96,8 @@ pub fn shimmer_label(text: impl Into<SharedString>, id: impl Into<SharedString>,
     let kind = cx.try_global::<UiPrefs>().map_or(ShimmerKind::Classic, |p| p.shimmer);
     match kind {
         ShimmerKind::Classic => ShimmerText::new(text).id(id).into_any_element(),
-        ShimmerKind::Aurora => {
-            if cx.reduce_motion() {
-                return div().child(text).into_any_element();
-            }
-            let dark = cx.theme().is_dark();
-            div().min_w_0().with_animation(
-                id,
-                Animation::new(Duration::from_millis(AURORA_CYCLE_MS)).repeat_synced().with_max_fps(AURORA_FPS),
-                move |d, t| d.child(StyledText::new(text.clone()).with_highlights(aurora_highlights(&text, t, dark))),
-            ).into_any_element()
-        }
+        ShimmerKind::Aurora if cx.reduce_motion() => div().child(text).into_any_element(),
+        ShimmerKind::Aurora => AuroraText { text, id }.into_any_element(),
     }
 }
 
@@ -72,26 +105,32 @@ pub fn shimmer_label(text: impl Into<SharedString>, id: impl Into<SharedString>,
 mod tests {
     use super::*;
 
+    const BASE: Hsla = Hsla { h: 0., s: 0., l: 0.5, a: 1. };
+
     #[::core::prelude::v1::test]
-    fn 每个字符一个区间且覆盖全文() {
-        let text = "思考中… ok";
-        let hl = aurora_highlights(text, 0.3, false);
-        assert_eq!(hl.len(), text.chars().count());
-        assert_eq!(hl.first().unwrap().0.start, 0);
-        assert_eq!(hl.last().unwrap().0.end, text.len());
-        assert!(hl.windows(2).all(|w| w[0].0.end == w[1].0.start));
+    fn 光带只照亮一部分字符() {
+        let text = "思考中… (12s · 按 Esc 中断)";
+        let hl = aurora_highlights(text, 0.5, BASE, false);
+        assert!(!hl.is_empty() && hl.len() < text.chars().count());
+        assert!(hl.windows(2).all(|w| w[0].0.end <= w[1].0.start), "区间有序不重叠");
     }
 
     #[::core::prelude::v1::test]
-    fn 相邻字符颜色不同且随进度流转() {
-        let a = aurora_highlights("abcd", 0.0, true);
-        assert_ne!(a[0].1.color, a[1].1.color);
-        let b = aurora_highlights("abcd", 0.5, true);
-        assert_ne!(a[0].1.color, b[0].1.color);
+    fn 光带随进度从左移到右() {
+        let text = "abcdefghijklmnopqrst";
+        let first = |p| aurora_highlights(text, p, BASE, true).first().map(|h| h.0.start).unwrap();
+        assert!(first(0.3) < first(0.7));
+        assert!(aurora_highlights(text, 0.0, BASE, true).is_empty(), "起点光带在画面外");
+        assert!(aurora_highlights(text, 1.0, BASE, true).is_empty(), "终点光带已离开");
+    }
+
+    #[::core::prelude::v1::test]
+    fn 珠光渐变前后色相不同() {
+        assert_ne!(pearl_color(0., false).h, pearl_color(1., false).h);
     }
 
     #[::core::prelude::v1::test]
     fn 空串不panic() {
-        assert!(aurora_highlights("", 0.5, false).is_empty());
+        assert!(aurora_highlights("", 0.5, BASE, false).is_empty());
     }
 }
