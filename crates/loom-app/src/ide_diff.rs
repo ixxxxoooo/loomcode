@@ -14,7 +14,7 @@ use gpui_kit::assets::IconName;
 use gpui_kit::component::{ActiveTheme, h_flex, v_flex};
 use gpui_kit::prelude::FluentBuilder as _;
 use gpui_kit::*;
-use loom_core::{git, git_scm};
+use loom_core::{git, git_log, git_scm};
 use similar::ChangeTag;
 use std::path::{Path, PathBuf};
 
@@ -32,6 +32,8 @@ pub struct DiffSource {
     pub orig: Option<String>,
     pub group: Group,
     pub untracked: bool,
+    /// 看的是某次提交里的改动(Git 图谱点文件):`(提交哈希, 第一个父提交)`,此时 `group` 无意义
+    pub rev: Option<(String, Option<String>)>,
 }
 
 impl DiffSource {
@@ -41,7 +43,11 @@ impl DiffSource {
 
     /// 标签的伪路径。
     pub fn pseudo_path(&self) -> PathBuf {
-        PathBuf::from(format!("diff:{}:{}", group_key(self.group), self.abs().to_string_lossy()))
+        let key = match &self.rev {
+            Some((hash, _)) => format!("rev-{hash}"),
+            None => group_key(self.group).to_string(),
+        };
+        PathBuf::from(format!("diff:{key}:{}", self.abs().to_string_lossy()))
     }
 }
 
@@ -68,9 +74,10 @@ pub fn real_path(path: &Path) -> PathBuf {
 pub fn tab_title(path: &Path) -> String {
     let name = real_path(path).file_name().map(|n| n.to_string_lossy().to_string()).unwrap_or_default();
     let tag = match path.to_str().and_then(|s| s.strip_prefix("diff:")).and_then(|s| s.split_once(':')).map(|(g, _)| g) {
-        Some("staged") => "暂存",
-        Some("conflicts") => "冲突",
-        _ => "更改",
+        Some("staged") => "暂存".to_string(),
+        Some("conflicts") => "冲突".to_string(),
+        Some(g) if g.starts_with("rev-") => g["rev-".len()..].chars().take(7).collect(),
+        _ => "更改".to_string(),
     };
     format!("{name} ({tag})")
 }
@@ -127,6 +134,11 @@ pub struct DiffBody {
 /// 读出旧 / 新两份内容(与 SCM 面板里的行内 Diff 同一套口径):
 /// 暂存组 = HEAD → 暂存区;更改组 = 暂存区 → 工作区(未跟踪相对空文件)。
 fn load_sides(src: &DiffSource) -> (String, String) {
+    if let Some((hash, parent)) = &src.rev {
+        let old_path = src.orig.as_deref().unwrap_or(&src.rel);
+        let old = parent.as_deref().and_then(|p| git_log::file_at_rev(&src.top, p, old_path)).unwrap_or_default();
+        return (old, git_log::file_at_rev(&src.top, hash, &src.rel).unwrap_or_default());
+    }
     let abs = src.abs();
     let head_path = src.orig.as_deref().unwrap_or(&src.rel);
     match src.group {
@@ -172,10 +184,14 @@ impl IdeView {
         cx.spawn(async move |this, cx| {
             let body = cx
                 .background_spawn(async move {
-                    if std::fs::metadata(src.abs()).is_ok_and(|m| m.len() > max_bytes) {
-                        return DiffBody { hunks: Vec::new(), hidden_tail: 0, added: 0, removed: 0, note: Some("文件太大,没有显示差异(可在设置 → 源代码管理里调大上限)".into()) };
+                    let too_big = || DiffBody { hunks: Vec::new(), hidden_tail: 0, added: 0, removed: 0, note: Some("文件太大,没有显示差异(可在设置 → 源代码管理里调大上限)".into()) };
+                    if src.rev.is_none() && std::fs::metadata(src.abs()).is_ok_and(|m| m.len() > max_bytes) {
+                        return too_big();
                     }
                     let (old, new) = load_sides(&src);
+                    if src.rev.is_some() && (old.len() as u64 > max_bytes || new.len() as u64 > max_bytes) {
+                        return too_big();
+                    }
                     let (lines, added, removed) = compute(&old, &new);
                     let (hunks, hidden_tail) = hunks(&lines, CONTEXT);
                     let note = hunks.is_empty().then(|| "没有可显示的文本差异(二进制、空文件,或内容相同)".to_string());
@@ -198,10 +214,11 @@ impl IdeView {
         let Some(tab) = self.diffs.get(path) else { return div().into_any_element() };
         let split = crate::prefs(cx).scm.diff_split;
         let lang = crate::file_tree::language_for(&tab.src.abs());
-        let group_label = match tab.src.group {
-            Group::Staged => "暂存的更改",
-            Group::Changes => "更改",
-            Group::Conflicts => "合并更改",
+        let group_label = match (&tab.src.rev, tab.src.group) {
+            (Some((hash, _)), _) => format!("提交 {}", hash.chars().take(7).collect::<String>()),
+            (None, Group::Staged) => "暂存的更改".to_string(),
+            (None, Group::Changes) => "更改".to_string(),
+            (None, Group::Conflicts) => "合并更改".to_string(),
         };
         let stats = tab.body.as_ref().map(|b| (b.added, b.removed));
         let header = h_flex().h(px(30.)).w_full().flex_none().px_3().gap_2().items_center().border_b_1().border_color(t.border)
@@ -248,12 +265,16 @@ mod tests {
 
     #[::core::prelude::v1::test]
     fn 伪路径往返与标题() {
-        let src = DiffSource { top: "/r".into(), rel: "src/a.rs".into(), orig: None, group: Group::Staged, untracked: false };
+        let src = DiffSource { top: "/r".into(), rel: "src/a.rs".into(), orig: None, group: Group::Staged, untracked: false, rev: None };
         let p = src.pseudo_path();
         assert!(is_diff(&p));
         assert_eq!(real_path(&p), PathBuf::from("/r/src/a.rs"));
         assert_eq!(p.file_name().unwrap(), "a.rs");
         assert_eq!(tab_title(&p), "a.rs (暂存)");
+        let c = DiffSource { rev: Some(("abcdef1234567".into(), None)), ..src };
+        assert_eq!(tab_title(&c.pseudo_path()), "a.rs (abcdef1)");
+        assert_eq!(real_path(&c.pseudo_path()), PathBuf::from("/r/src/a.rs"));
+        assert_ne!(c.pseudo_path(), p);
         assert!(!is_diff(Path::new("/r/src/a.rs")));
         assert_eq!(real_path(Path::new("/r/src/a.rs")), PathBuf::from("/r/src/a.rs"));
     }

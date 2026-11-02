@@ -324,7 +324,15 @@ impl ScmView {
     /// 在编辑区打开某一行的差异标签(IDE 里单击 = 预览标签,双击 = 固定)。
     pub(crate) fn open_diff_tab(&self, key: &str, pinned: bool, cx: &mut Context<Self>) {
         let (Some(top), Some(item)) = (self.top.clone(), self.item(key)) else { return };
-        let src = crate::ide_diff::DiffSource { top, rel: item.path().to_string(), orig: item.entry.orig.clone(), group: item.group, untracked: item.entry.untracked() };
+        let src = crate::ide_diff::DiffSource { top, rel: item.path().to_string(), orig: item.entry.orig.clone(), group: item.group, untracked: item.entry.untracked(), rev: None };
+        cx.emit(ScmEvent::OpenDiff(src, pinned));
+    }
+
+    /// 在编辑区打开某次提交里某文件的差异标签(Git 图谱点文件:该文件在提交前 → 提交后)。
+    pub(crate) fn open_commit_diff(&self, hash: &str, file: &loom_core::git_log::CommitFile, pinned: bool, cx: &mut Context<Self>) {
+        let Some(top) = self.top.clone() else { return };
+        let parent = self.graph.rows.iter().find(|r| r.commit.hash == hash).and_then(|r| r.commit.parents.first().cloned());
+        let src = crate::ide_diff::DiffSource { top, rel: file.path.clone(), orig: file.orig.clone(), group: crate::scm_model::Group::Changes, untracked: false, rev: Some((hash.to_string(), parent)) };
         cx.emit(ScmEvent::OpenDiff(src, pinned));
     }
 

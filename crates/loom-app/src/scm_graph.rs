@@ -1,13 +1,12 @@
 //! 源代码管理视图里的「图形」区(对标 VS Code 的 Source Control Graph / Git Graph 扩展):
-//! 提交历史 + 分支泳道图,点提交展开详情(完整消息、作者、改动的文件),点文件看该次提交里的 diff。
+//! 提交历史 + 分支泳道图,点提交展开详情(完整消息、作者、改动的文件),点文件在编辑区开该次提交的左右对比标签。
 //!
 //! 状态挂在 `ScmView.graph` 上(全工作台唯一),渲染在 `scm_graph_view.rs`。读取日志与计算 diff 都在后台线程;
 //! 只在区块展开时才读取,历史没变(引用签名相同)时不重读。
 //!
 //! @author ixxxxoooo
 
-use crate::diff;
-use crate::scm::{FileDiff, ScmView};
+use crate::scm::ScmView;
 use gpui_kit::*;
 use loom_core::git_log::{self, CommitFile, GraphRow, Stash};
 use std::collections::HashMap;
@@ -37,8 +36,6 @@ pub struct GraphState {
     pub expanded: Option<String>,
     /// 提交 → 改动的文件(`None` 表示还在读)
     pub files: HashMap<String, Option<Vec<CommitFile>>>,
-    /// `<哈希>:<路径>` → 该文件在这次提交里的 diff(`None` 表示还在算)
-    pub diffs: HashMap<String, Option<FileDiff>>,
     /// 储藏列表(「更多」菜单用)
     pub stashes: Vec<Stash>,
     /// 只看这个文件的历史(仓库内相对路径);`None` 看整个仓库
@@ -47,7 +44,7 @@ pub struct GraphState {
 
 impl Default for GraphState {
     fn default() -> Self {
-        Self { open: true, all: true, rows: Vec::new(), limit: PAGE, has_more: false, loading: false, loaded: false, error: None, sig: None, expanded: None, files: HashMap::new(), diffs: HashMap::new(), stashes: Vec::new(), file: None }
+        Self { open: true, all: true, rows: Vec::new(), limit: PAGE, has_more: false, loading: false, loaded: false, error: None, sig: None, expanded: None, files: HashMap::new(), stashes: Vec::new(), file: None }
     }
 }
 
@@ -171,41 +168,6 @@ impl ScmView {
             }
         }
         cx.notify();
-    }
-
-    /// 展开 / 收起某次提交里某个文件的 diff(该文件在提交前 → 提交后的内容)。
-    pub(crate) fn toggle_commit_diff(&mut self, hash: &str, file: &CommitFile, cx: &mut Context<Self>) {
-        let key = format!("{hash}:{}", file.path);
-        if self.graph.diffs.remove(&key).is_some() {
-            cx.notify();
-            return;
-        }
-        let Some(top) = self.top.clone() else { return };
-        let parent = self.graph.rows.iter().find(|r| r.commit.hash == hash).and_then(|r| r.commit.parents.first().cloned());
-        let max_bytes = u64::from(crate::prefs(cx).scm.diff_max_kb) * 1024;
-        self.graph.diffs.insert(key.clone(), None);
-        let (hash, file) = (hash.to_string(), file.clone());
-        cx.spawn(async move |this, cx| {
-            let k = key.clone();
-            let d = cx
-                .background_spawn(async move {
-                    let old_path = file.orig.as_deref().unwrap_or(&file.path);
-                    let old = parent.as_deref().and_then(|p| git_log::file_at_rev(&top, p, old_path)).unwrap_or_default();
-                    let new = git_log::file_at_rev(&top, &hash, &file.path).unwrap_or_default();
-                    if (old.len() as u64) > max_bytes || (new.len() as u64) > max_bytes {
-                        return (Vec::new(), 0, 0);
-                    }
-                    diff::compute(&old, &new)
-                })
-                .await;
-            let _ = this.update(cx, |this, cx| {
-                if let Some(slot) = this.graph.diffs.get_mut(&k) {
-                    *slot = Some(d);
-                    cx.notify();
-                }
-            });
-        })
-        .detach();
     }
 
     /// 复制提交哈希到剪贴板。
