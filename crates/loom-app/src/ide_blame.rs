@@ -107,41 +107,58 @@ impl IdeView {
     }
 }
 
-/// 光标所在行的行内追溯元素。条件不满足(没有追溯、正在选择、行不在视口里…)返回 `None`。
+/// 光标所在行的行内追溯元素:一个盖住编辑区的画布,**在绘制阶段**按编辑器刚画完的布局定位并画字。
+/// 开关关闭或追溯还没算出来时返回 `None`;光标行不在视口里、正在选择文字、右侧空间太窄时画布什么都不画。
+///
+/// 不能在渲染阶段算位置:编辑器的布局在它自己的绘制里才更新,渲染里读到的是上一帧的,
+/// 滚动停下后追溯会停在原地,光标行滚出视口后还会叠在别的行上。
 pub fn inline_blame(doc: &IdeDoc, cx: &App) -> Option<AnyElement> {
     if !crate::prefs(cx).editor.blame_inline || !doc.blame_fresh {
         return None;
     }
-    let ed = doc.editor.read(cx);
-    let sel = ed.selected_range();
-    if sel.start != sel.end {
-        return None;
-    }
-    let text = ed.text();
-    let line = text.offset_to_position(sel.start).line as usize;
-    let commit = doc.blame.get(line)?.commit.clone();
-    let end = text.line_end_offset(line);
-    // 行尾那个位置的窗口坐标(行不在视口里时为 None);自动换行时取最后一段的末尾
-    let at = ed.range_to_bounds(&(end..end))?;
-    let t = cx.theme();
-    let label = inline_label(&commit, now());
-    let color = if commit.uncommitted() { t.warning } else { t.muted_foreground };
-    let lh = at.size.height;
-    // 不越过编辑区右缘(否则会盖到迷你地图上);剩余空间太窄就不显示
-    let left = at.origin.x + px(28.);
-    let room = ed.text_bounds().map_or(px(560.), |b| b.right() - left - px(8.));
-    if room < px(80.) {
-        return None;
-    }
+    let (editor, blame) = (doc.editor.clone(), doc.blame.clone());
     Some(
-        deferred(
-            anchored().position(point(left, at.origin.y)).anchor(Anchor::TopLeft).child(
-                // 纯展示:浅灰文字,不响应悬停与点击(不挡住下面的编辑器操作)
-                div().h(lh).max_w(room.min(px(560.))).flex().items_center().px_1().text_size(px(12.)).text_color(color.opacity(0.55))
-                    .whitespace_nowrap().overflow_hidden()
-                    .child(label),
-            ),
+        canvas(
+            |_, _, _| (),
+            move |canvas, _, window, cx| {
+                let ed = editor.read(cx);
+                let sel = ed.selected_range();
+                if sel.start != sel.end {
+                    return;
+                }
+                let text = ed.text();
+                let line = text.offset_to_position(sel.start).line as usize;
+                let (Some(vis), Some(tb), Some(entry)) = (ed.visible_row_range(), crate::ide_guides::text_view(ed, canvas), blame.get(line)) else { return };
+                if !vis.contains(&line) {
+                    return;
+                }
+                let end = text.line_end_offset(line);
+                // 行尾那个位置的窗口坐标;自动换行时取最后一段的末尾
+                let Some(at) = ed.range_to_bounds(&(end..end)) else { return };
+                if at.origin.y < tb.top() || at.bottom() > tb.bottom() + at.size.height / 2. {
+                    return;
+                }
+                let t = cx.theme();
+                let commit = &entry.commit;
+                let color = if commit.uncommitted() { t.warning } else { t.muted_foreground }.opacity(0.55);
+                // 不越过编辑区右缘(否则会盖到迷你地图上);剩余空间太窄就不显示
+                let left = at.origin.x + px(28.);
+                let room = (tb.right() - left - px(8.)).min(px(560.));
+                if room < px(80.) {
+                    return;
+                }
+                let label: SharedString = inline_label(commit, now()).into();
+                let run = TextRun { len: label.len(), font: window.text_style().font(), color, background_color: None, underline: None, strikethrough: None };
+                let shaped = window.text_system().shape_line(label, px(12.), &[run], None);
+                let origin = point(left, at.origin.y + (at.size.height - px(12.) * 1.2) / 2.);
+                // 纯展示:超出可用宽度的部分裁掉
+                window.with_content_mask(Some(ContentMask { bounds: Bounds::new(point(left, at.origin.y), size(room, at.size.height)) }), |window| {
+                    let _ = shaped.paint(origin, px(12.) * 1.2, TextAlign::Left, None, window, cx);
+                });
+            },
         )
+        .absolute()
+        .size_full()
         .into_any_element(),
     )
 }

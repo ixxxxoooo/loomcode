@@ -9,148 +9,38 @@
 //!
 //! @author ixxxxoooo
 
-/// 超过这个字节数的文件不做配对(扫描会变慢)。
-pub const MAX_BYTES: usize = 512 * 1024;
 
 use crate::ide::IdeDoc;
+use crate::pair_scan::{rules_for, scan, Pair, Rules, MAX_BYTES};
 use gpui_kit::component::input::EditorState;
 use gpui_kit::component::{ActiveTheme as _, RopeExt as _};
 use gpui_kit::*;
-use std::cell::RefCell;
+use std::cell::{Cell, RefCell};
+use std::rc::Rc;
 use std::sync::Arc;
 
 /// 一帧最多画的竖线数,嵌套极深时兜底。
 const MAX_GUIDES: usize = 120;
 
 
-/// 一对括号:开括号与闭括号的字节偏移,以及嵌套深度(最外层为 0)。
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub struct Pair {
-    pub open: usize,
-    pub close: usize,
-    pub depth: usize,
-}
-
-/// 语言的词法规则:哪些内容里的括号不算数。
-#[derive(Debug, Clone, Copy)]
-pub struct Rules {
-    line_comments: &'static [&'static str],
-    block_comment: Option<(&'static str, &'static str)>,
-    /// 字符串引号;默认到行尾为止,`multiline` 里的引号可以跨行
-    quotes: &'static [u8],
-    multiline: &'static [u8],
-    /// 是否支持三引号(Python)
-    triple: bool,
-}
-
-const C_LIKE: Rules = Rules { line_comments: &["//"], block_comment: Some(("/*", "*/")), quotes: b"\"'", multiline: b"", triple: false };
-const HASH: Rules = Rules { line_comments: &["#"], block_comment: None, quotes: b"\"'", multiline: b"", triple: false };
-
-/// 按 `file_lang::language_for` 的语言名取规则;不认识的语言(Markdown、纯文本、HTML…)返回 `None`,不做配对。
-pub fn rules_for(lang: &str) -> Option<Rules> {
-    Some(match lang {
-        // Rust 的 `'` 常是生命周期,不当引号
-        "rust" => Rules { quotes: b"\"", ..C_LIKE },
-        "python" => Rules { triple: true, ..HASH },
-        "javascript" | "typescript" | "tsx" | "go" => Rules { multiline: b"`", quotes: b"\"'`", ..C_LIKE },
-        "c" | "cpp" | "csharp" | "java" | "kotlin" | "swift" | "scala" | "php" | "zig" => C_LIKE,
-        "bash" | "yaml" | "toml" | "ruby" | "make" | "cmake" => HASH,
-        "sql" => Rules { line_comments: &["--"], ..C_LIKE },
-        "lua" => Rules { line_comments: &["--"], block_comment: None, ..C_LIKE },
-        "css" => Rules { line_comments: &[], block_comment: Some(("/*", "*/")), ..C_LIKE },
-        "json" => Rules { line_comments: &[], block_comment: None, quotes: b"\"", ..C_LIKE },
-        "graphql" => HASH,
-        "proto" => C_LIKE,
-        _ => return None,
-    })
-}
-
-fn kind_of(b: u8) -> Option<(u8, bool)> {
-    Some(match b {
-        b'(' => (0, true),
-        b')' => (0, false),
-        b'[' => (1, true),
-        b']' => (1, false),
-        b'{' => (2, true),
-        b'}' => (2, false),
-        _ => return None,
-    })
-}
-
-/// 扫描全文,返回按开括号位置排序的配对。注释与字符串里的括号、没有配上的括号都忽略。
-pub fn scan(text: &str, rules: &Rules) -> Vec<Pair> {
-    let bytes = text.as_bytes();
-    let n = bytes.len();
-    let mut pairs = Vec::new();
-    // (括号种类, 开括号位置)
-    let mut stack: Vec<(u8, usize)> = Vec::new();
-    let mut i = 0;
-    while i < n {
-        let rest = &bytes[i..];
-        if rules.line_comments.iter().any(|p| rest.starts_with(p.as_bytes())) {
-            i += rest.iter().position(|&c| c == b'\n').unwrap_or(rest.len());
-            continue;
-        }
-        if let Some((open, close)) = rules.block_comment {
-            if rest.starts_with(open.as_bytes()) {
-                let from = open.len();
-                i += rest[from..].windows(close.len()).position(|w| w == close.as_bytes()).map_or(rest.len(), |p| from + p + close.len());
-                continue;
-            }
-        }
-        let b = bytes[i];
-        if rules.quotes.contains(&b) {
-            if rules.triple && rest.len() >= 3 && rest[1] == b && rest[2] == b {
-                let tri = [b; 3];
-                i += rest[3..].windows(3).position(|w| w == tri).map_or(rest.len(), |p| 3 + p + 3);
-                continue;
-            }
-            let multi = rules.multiline.contains(&b);
-            i += 1;
-            while i < n {
-                match bytes[i] {
-                    b'\\' => i += 2,
-                    c if c == b => {
-                        i += 1;
-                        break;
-                    }
-                    b'\n' if !multi => break,
-                    _ => i += 1,
-                }
-            }
-            continue;
-        }
-        if let Some((kind, is_open)) = kind_of(b) {
-            if is_open {
-                stack.push((kind, i));
-            } else if stack.last().is_some_and(|&(k, _)| k == kind) {
-                let (_, open) = stack.pop().unwrap();
-                pairs.push(Pair { open, close: i, depth: stack.len() });
-            }
-        }
-        i += 1;
-    }
-    pairs.sort_by_key(|p| p.open);
-    pairs
-}
-
-/// 文档的括号配对状态:扫描缓存。
+/// 文档的括号配对状态:扫描缓存。可克隆(内部共享),绘制阶段的画布闭包持有一份。
+#[derive(Clone)]
 pub struct PairState {
     rules: Option<Rules>,
     /// 编辑序号,每次内容变化加一(和文本长度一起作缓存键)
-    rev: u64,
-    cache: RefCell<Option<((usize, u64), Arc<Vec<Pair>>)>>,
+    rev: Rc<Cell<u64>>,
+    cache: Rc<RefCell<Option<((usize, u64), Arc<Vec<Pair>>)>>>,
 }
 
 impl PairState {
     /// 新建;`lang` 是 `language_for` 给的语言名。
     pub fn new(lang: &str) -> Self {
-        Self { rules: rules_for(lang), rev: 0, cache: RefCell::new(None) }
+        Self { rules: rules_for(lang), rev: Rc::new(Cell::new(0)), cache: Rc::new(RefCell::new(None)) }
     }
 
     /// 内容变了:让缓存失效。
-    pub fn bump(&mut self) {
-        self.rev += 1;
+    pub fn bump(&self) {
+        self.rev.set(self.rev.get() + 1);
     }
 
     /// 当前内容的配对(带缓存);语言不支持或文件过大时为 `None`。
@@ -160,7 +50,7 @@ impl PairState {
         if len > MAX_BYTES {
             return None;
         }
-        let key = (len, self.rev);
+        let key = (len, self.rev.get());
         if let Some((k, p)) = self.cache.borrow().as_ref() {
             if *k == key {
                 return Some(p.clone());
@@ -172,24 +62,22 @@ impl PairState {
     }
 }
 
-/// 配对竖线叠层(一个盖住编辑区的透明容器,里面每条线一个绝对定位的 1px 元素)。
-/// 光标行不在视口、没有跨行配对或功能关闭时返回 `None`。
-pub fn guides(doc: &IdeDoc, cx: &App) -> Option<AnyElement> {
-    let ed = doc.editor.read(cx);
-    let pairs = doc.pairs.pairs(ed)?;
-    let vis = ed.visible_row_range()?;
-    let tb = ed.text_bounds()?;
+/// 所有配对竖线的矩形与颜色(窗口坐标)。
+/// 位置取自编辑器**最近一次绘制**的布局,必须在绘制阶段调用(见 `guides`)。
+/// 参数:`ed` 编辑器状态;`st` 配对状态;`dark` 是否深色主题;`canvas` 画布范围。返回:没有跨行配对或不在视口时为空。
+fn guide_rects(ed: &EditorState, st: &PairState, dark: bool, canvas: Bounds<Pixels>) -> Vec<(Bounds<Pixels>, Hsla)> {
+    let Some(pairs) = st.pairs(ed) else { return Vec::new() };
+    let (Some(vis), Some(tb)) = (ed.visible_row_range(), crate::ide_guides::text_view(ed, canvas)) else { return Vec::new() };
     let text = ed.text();
     let lines = text.lines_len();
     let (from, to) = (text.line_start_offset(vis.start), if vis.end >= lines { text.len() } else { text.line_start_offset(vis.end) });
-    let dark = cx.theme().is_dark();
     let cursor = ed.cursor();
     // 包住光标的最内层一对
     let active = pairs.iter().filter(|p| p.open < cursor && cursor <= p.close).max_by_key(|p| p.open).copied();
     let line_of = |o: usize| text.offset_to_position(o).line as usize;
-    let mut lines_out: Vec<AnyElement> = Vec::new();
+    let mut out: Vec<(Bounds<Pixels>, Hsla)> = Vec::new();
     for p in pairs.iter().filter(|p| p.open < to && p.close >= from) {
-        if lines_out.len() >= MAX_GUIDES {
+        if out.len() >= MAX_GUIDES {
             break;
         }
         let (ol, cl) = (line_of(p.open), line_of(p.close));
@@ -223,61 +111,25 @@ pub fn guides(doc: &IdeDoc, cx: &App) -> Option<AnyElement> {
             continue;
         }
         let alpha = if active == Some(*p) { 0.95 } else { 0.4 };
-        lines_out.push(div().absolute().left(x - tb.left() - px(0.5)).top(y0 - tb.top()).w(px(1.)).h(y1 - y0).bg(crate::ide_rainbow::depth_color(p.depth, dark).opacity(alpha)).into_any_element());
+        out.push((Bounds::new(point(x - px(0.5), y0), size(px(1.), y1 - y0)), crate::ide_rainbow::depth_color(p.depth, dark).opacity(alpha)));
     }
-    if lines_out.is_empty() {
-        return None;
-    }
-    Some(deferred(anchored().position(tb.origin).anchor(Anchor::TopLeft).child(div().relative().w(tb.size.width).h(tb.size.height).overflow_hidden().children(lines_out))).into_any_element())
+    out
 }
 
-#[cfg(test)]
-mod tests {
-    use super::*;
-
-    fn pairs(lang: &str, src: &str) -> Vec<(usize, usize, usize)> {
-        scan(src, &rules_for(lang).unwrap()).iter().map(|p| (p.open, p.close, p.depth)).collect()
-    }
-
-    #[::core::prelude::v1::test]
-    fn 嵌套括号带深度() {
-        // f(a[0], {b})
-        assert_eq!(pairs("rust", "f(a[0], {b})"), vec![(1, 11, 0), (3, 5, 1), (8, 10, 1)]);
-    }
-
-    #[::core::prelude::v1::test]
-    fn 字符串与注释里的括号不算() {
-        assert_eq!(pairs("python", "x = f(\")\")  # (\n"), vec![(5, 9, 0)]);
-        assert_eq!(pairs("rust", "a(/* ) */ b) // ("), vec![(1, 11, 0)]);
-        // 三引号可跨行
-        assert_eq!(pairs("python", "f('''\n)\n''')"), vec![(1, 11, 0)]);
-    }
-
-    #[::core::prelude::v1::test]
-    fn 转义引号不提前结束字符串() {
-        assert_eq!(pairs("python", r#"f("a\")b")"#), vec![(1, 9, 0)]);
-    }
-
-    #[::core::prelude::v1::test]
-    fn 未闭合的单行字符串到行尾为止() {
-        // 第一行引号没闭合,不能吞掉后面的括号
-        assert_eq!(pairs("javascript", "a = \"x\n(b)"), vec![(7, 9, 0)]);
-    }
-
-    #[::core::prelude::v1::test]
-    fn 错配与未配的括号被忽略() {
-        assert_eq!(pairs("rust", "(]"), vec![]);
-        assert_eq!(pairs("rust", "((a)"), vec![(1, 3, 1)]);
-    }
-
-    #[::core::prelude::v1::test]
-    fn 生命周期的单引号不当引号() {
-        assert_eq!(pairs("rust", "fn f<'a>(x: &'a str) {}"), vec![(8, 19, 0), (21, 22, 0)]);
-    }
-
-    #[::core::prelude::v1::test]
-    fn 不认识的语言不做配对() {
-        assert!(rules_for("markdown").is_none());
-        assert!(rules_for("text").is_none());
-    }
+/// 配对竖线叠层:一个盖住编辑区的画布,**在绘制阶段**按编辑器刚画完的布局定位。
+/// 不能在渲染阶段算位置:编辑器的布局在它自己的绘制里才更新,渲染里读到的是上一帧的,滚动停下后竖线会停在原地。
+pub fn guides(doc: &IdeDoc) -> AnyElement {
+    let (editor, st) = (doc.editor.clone(), doc.pairs.clone());
+    canvas(
+        |_, _, _| (),
+        move |canvas, _, window, cx| {
+            let dark = cx.theme().is_dark();
+            for (r, c) in guide_rects(editor.read(cx), &st, dark, canvas) {
+                window.paint_quad(fill(r, c));
+            }
+        },
+    )
+    .absolute()
+    .size_full()
+    .into_any_element()
 }

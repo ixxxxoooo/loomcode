@@ -98,6 +98,7 @@ mod ide_prefs;
 mod ide_brackets;
 mod ide_guides;
 mod ide_pairs;
+mod pair_scan;
 mod ide_rainbow;
 mod ide_chrome;
 mod tab_style;

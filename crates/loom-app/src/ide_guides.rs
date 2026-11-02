@@ -7,7 +7,7 @@
 //! @author ixxxxoooo
 
 use crate::ide::IdeDoc;
-use gpui_kit::component::input::TabSize;
+use gpui_kit::component::input::{EditorState, TabSize};
 use gpui_kit::component::{ActiveTheme, RopeExt as _};
 use gpui_kit::*;
 
@@ -79,14 +79,27 @@ pub fn active_guide(lines: usize, cursor: usize, tab: usize, indent: impl Fn(usi
     Some(Guide { col, start, end })
 }
 
-/// 光标所在块的高亮线元素。光标行不在视口、没有可高亮的块或横向滚动让该列移出可视区时返回 `None`。
-pub fn overlay(doc: &IdeDoc, cx: &App) -> Option<AnyElement> {
-    let tab = usize::from(crate::prefs(cx).editor.tab_size.clamp(1, 16));
+/// 编辑器文字区的可视范围(窗口坐标),供叠层裁剪。
+///
+/// 注意 `text_bounds()` 不是可视区:它是随滚动平移的内容区域(滚到下面时 y 为很大的负数),直接拿来裁剪会把叠层全裁掉。
+/// 这里左边取内容原点减去横向滚动量,上下取叠层画布自己的范围(画布与编辑器同高)。
+///
+/// 参数:`ed` 编辑器状态;`canvas` 叠层画布的范围。
+pub fn text_view(ed: &EditorState, canvas: Bounds<Pixels>) -> Option<Bounds<Pixels>> {
+    let tb = ed.text_bounds()?;
+    Some(Bounds::new(point(tb.origin.x - ed.scroll_offset().x, canvas.top()), size(tb.size.width, canvas.size.height)))
+}
+
+/// 当前块高亮线的矩形(窗口坐标);光标在顶层、块不在视口里时为 `None`。
+///
+/// 位置取自编辑器**最近一次绘制**的布局,所以必须在绘制阶段调用(见 `overlay`)。
+///
+/// 参数:`ed` 编辑器状态;`tab` 缩进宽度;`canvas` 画布范围。
+fn guide_rect(ed: &EditorState, tab: usize, canvas: Bounds<Pixels>) -> Option<Bounds<Pixels>> {
     let ts = TabSize { tab_size: tab, hard_tabs: false };
-    let ed = doc.editor.read(cx);
     let text = ed.text();
     let visible = ed.visible_row_range()?;
-    let tb = ed.text_bounds()?;
+    let tb = text_view(ed, canvas)?;
     let cursor = text.offset_to_position(ed.cursor()).line as usize;
     let line_indent = |l: usize| {
         let line = text.slice_line(l);
@@ -124,8 +137,27 @@ pub fn overlay(doc: &IdeDoc, cx: &App) -> Option<AnyElement> {
     if x < tb.left() || bottom_y <= top_y {
         return None;
     }
-    let color = cx.theme().muted_foreground.opacity(0.7);
-    Some(deferred(anchored().position(point(x - px(0.5), top_y)).anchor(Anchor::TopLeft).child(div().w(px(1.)).h(bottom_y - top_y).bg(color))).into_any_element())
+    Some(Bounds::new(point(x - px(0.5), top_y), size(px(1.), bottom_y - top_y)))
+}
+
+/// 当前块高亮线叠层:一个盖住编辑区的画布,**在绘制阶段**按编辑器刚画完的布局定位。
+///
+/// 不能在渲染阶段算位置:编辑器的布局在它自己的绘制里才更新,渲染里读到的是上一帧的,
+/// 滚动停下后最后一次渲染用的是倒数第二帧的布局,线就会停在原地。
+pub fn overlay(doc: &IdeDoc, cx: &App) -> AnyElement {
+    let tab = usize::from(crate::prefs(cx).editor.tab_size.clamp(1, 16));
+    let editor = doc.editor.clone();
+    canvas(
+        |_, _, _| (),
+        move |canvas, _, window, cx| {
+            if let Some(r) = guide_rect(editor.read(cx), tab, canvas) {
+                window.paint_quad(fill(r, cx.theme().muted_foreground.opacity(0.7)));
+            }
+        },
+    )
+    .absolute()
+    .size_full()
+    .into_any_element()
 }
 
 #[cfg(test)]

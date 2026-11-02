@@ -2,13 +2,13 @@
 //!
 //! 做法与业界一致:只改括号**字符本身**的字色,不铺底色。包在 tree-sitter 语法高亮外面(`RainbowHighlighter`),
 //! 高亮器给出的样式段在括号处被切开,括号字符按嵌套深度循环取色;其余样式原样保留。
-//! 括号位置由 `ide_pairs::scan` 配对得到(跳过注释与字符串),按「编辑序号」缓存,滚动不重扫。
+//! 括号位置由 `pair_scan::scan` 配对得到(跳过注释与字符串),按「编辑序号」缓存,滚动不重扫。
 //!
 //! 开关与深浅色存在线程局部状态里(界面线程独占),变化时由 `sync` 报告,调用方据此重装高亮工厂以重新排版。
 //!
 //! @author ixxxxoooo
 
-use crate::ide_pairs::{rules_for, scan, Rules, MAX_BYTES};
+use crate::pair_scan::{rules_for, scan, Rules, MAX_BYTES};
 use gpui_kit::component::input::{EditorState, FoldRange, HighlightStyleResolver, InputEdit, InputHighlighter, InputHighlighterFactory};
 use gpui_kit::*;
 use std::cell::{Cell, RefCell};
