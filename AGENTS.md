@@ -40,9 +40,10 @@ scripts/publish.sh                  # 发布:先在根 Cargo.toml 提升版本�
 
 1. **改完即提交并推送 main**:每完成一处修改,先 `cargo test --workspace` 通过,再把全部改动(含文档、脚本)`git add` 并提交,随后必须 `git push origin main` 推送到远端 main,不留未提交、未推送的改动。一个功能一个提交,提交信息用中文 Conventional Commits。
 2. **改完即重启开发版**:提交后运行 `scripts/dev.sh`(演示模式加 `--demo`),让用户立刻看到效果。
-3. **始终只保留一个开发版实例**:脚本先编译,成功后杀掉所有旧的开发版(pid 文件 `target/dev.pid` + 按 `target/debug/loomcode` 路径兜底),再启动新实例;不要用 `cargo run` 另起实例,也不要动 `dist/LoomCode.app` 的打包版。
-4. **开发版有标识**:开发版以 `LOOM_DEV=1` 启动,左下角设置按钮右侧(IDE 窗口在底部状态栏最左)显示主题色徽章:演示模式显示「演示模式」,真实模式的开发版显示「开发版」,一次只显示一个;正式版 / 打包版的真实模式不显示。日志在 `target/dev.log`。
-5. 编译失败时旧开发版保持运行,先修好再重试,不要留下半成品状态。
+3. **始终只保留一个开发版实例**:脚本先编译,成功后杀掉所有旧的开发版(pid 文件 `target/dev.pid` + 按 `target/debug/loomcode`、`LoomCode Dev.app/Contents/MacOS/loomcode` 路径兜底),再启动新实例;不要用 `cargo run` 另起实例,也不要动 `dist/LoomCode.app` 的打包版。
+4. **开发版跑在最小 `.app` 包里**(`target/dev/LoomCode Dev.app`,bundle id `dev.loomcode.app.dev`,由 `scripts/dev.sh` 每次组装):裸二进制没有包,程序坞退出时图标会退回终端 / exec 图标、系统通知拿不到应用图标;开发版里 `updater::current_bundle()` 恒为 `None`(不会被更新替换)。
+5. **开发版有标识**:开发版以 `LOOM_DEV=1` 启动,左下角设置按钮右侧(IDE 窗口在底部状态栏最左)显示主题色徽章:演示模式显示「演示模式」,真实模式的开发版显示「开发版」,一次只显示一个;正式版 / 打包版的真实模式不显示。日志在 `target/dev.log`。
+6. 编译失败时旧开发版保持运行,先修好再重试,不要留下半成品状态。
 
 ## 约定
 

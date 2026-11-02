@@ -63,12 +63,20 @@ pub fn relaunch_args(args: &[String], to_demo: bool) -> Vec<String> {
     out
 }
 
-/// 由可执行文件路径推出开发版的 pid 文件:`<工程>/target/debug/loomcode` → `<工程>/target/dev.pid`。
-/// 不是这种布局(例如打包版)返回 `None`。
+/// 由可执行文件路径推出开发版的 pid 文件:
+/// `<工程>/target/debug/loomcode`、`<工程>/target/dev/LoomCode Dev.app/Contents/MacOS/loomcode` → `<工程>/target/dev.pid`。
+/// 不是这两种布局(例如打包版)返回 `None`。
 pub fn pid_file_for(exe: &Path) -> Option<PathBuf> {
-    let debug = exe.parent()?;
-    let target = debug.parent()?;
-    (debug.file_name()? == "debug" && target.file_name()? == "target").then(|| target.join("dev.pid"))
+    let dir = exe.parent()?;
+    let target = dir.parent()?;
+    if dir.file_name()? == "debug" && target.file_name()? == "target" {
+        return Some(target.join("dev.pid"));
+    }
+    // 开发版的 .app 包:…/target/dev/LoomCode Dev.app/Contents/MacOS/<exe>
+    let dev_dir = dir.parent()?.parent()?.parent()?;
+    let target = dev_dir.parent()?;
+    let in_dev_app = dir.ends_with("Contents/MacOS") && dev_dir.file_name()? == "dev" && target.file_name()? == "target";
+    in_dev_app.then(|| target.join("dev.pid"))
 }
 
 /// 重启脚本:等旧进程退出 → 可选写 pid → `exec` 新实例(日志追加到 `LOOM_RELAUNCH_LOG`)。
@@ -188,6 +196,7 @@ mod tests {
     #[::core::prelude::v1::test]
     fn pid_文件只认开发版布局() {
         assert_eq!(pid_file_for(Path::new("/w/UCode/target/debug/loomcode")), Some(PathBuf::from("/w/UCode/target/dev.pid")));
+        assert_eq!(pid_file_for(Path::new("/w/UCode/target/dev/LoomCode Dev.app/Contents/MacOS/loomcode")), Some(PathBuf::from("/w/UCode/target/dev.pid")));
         assert_eq!(pid_file_for(Path::new("/Applications/LoomCode.app/Contents/MacOS/loomcode")), None);
         assert_eq!(pid_file_for(Path::new("/w/target/release/loomcode")), None);
     }

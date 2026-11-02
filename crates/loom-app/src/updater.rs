@@ -27,6 +27,10 @@ pub enum UpdateState {
 
 /// 当前运行的 `.app` 包路径;不是从应用包启动(开发版、`cargo run`)时为 `None`。
 pub fn current_bundle() -> Option<PathBuf> {
+    // 开发版也在 .app 包里(target/dev/LoomCode Dev.app),但那不是可被更新替换的正式安装
+    if std::env::var_os("LOOM_DEV").is_some() {
+        return None;
+    }
     let exe = std::env::current_exe().ok()?;
     exe.ancestors().find(|p| p.extension().is_some_and(|e| e == "app")).map(PathBuf::from)
 }
