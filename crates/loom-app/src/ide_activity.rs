@@ -1,4 +1,4 @@
-//! IDE 窗口的活动栏(文件 / 搜索 / 改动 / 终端 / 计划 + 设置)。
+//! IDE 窗口的活动栏(文件 / 搜索 / 改动 + 设置)。
 //!
 //! @author ixxxxoooo
 
@@ -11,11 +11,10 @@ use gpui_kit::prelude::FluentBuilder as _;
 use gpui_kit::*;
 
 /// 活动栏条目:(图标, 提示, 对应的面板分段)。
-const ACTIVITIES: [(IconName, &str, RightTab); 4] = [
+/// 终端开关在标题栏右上角(PanelBottom),计划 / 待办跟随对话栏的时间线(业界做法:Cursor、VS Code Copilot、Claude Code 扩展),都不放活动栏。
+const ACTIVITIES: [(IconName, &str, RightTab); 2] = [
     (IconName::Folder, "文件", RightTab::Files),
     (IconName::GitBranch, "源代码管理(⌃⇧G)", RightTab::Changes),
-    (IconName::Terminal, "终端", RightTab::Terminal),
-    (IconName::ListTodo, "计划", RightTab::Plan),
 ];
 
 impl IdeWindow {
@@ -36,7 +35,7 @@ impl IdeWindow {
         cx.notify();
     }
 
-    /// 最左侧的窄活动栏:文件 / 搜索 / 改动 / 终端 / 计划,选中项左侧有竖条(与 VSCode 一致),底部是设置。
+    /// 最左侧的窄活动栏:文件 / 搜索 / 改动,选中项左侧有竖条(与 VSCode 一致),底部是设置。
     pub(crate) fn activity_bar(&self, cx: &mut Context<Self>) -> impl IntoElement {
         let t = cx.theme().clone();
         let cur = self.panel.read(cx).tab;
@@ -72,13 +71,6 @@ impl IdeWindow {
             cx.notify();
         })).child(item("act-search".into(), IconName::Search, "搜索(⇧⌘F)", left_open && search_open)));
         for (ic, tip, tab) in ACTIVITIES.into_iter().skip(1) {
-            // 「终端」不在左栏显示,而是开关底部终端面板(和 VS Code 一致)
-            if tab == RightTab::Terminal {
-                let active = self.term_open;
-                col = col.child(div().w_full().on_mouse_down(MouseButton::Left, cx.listener(|this, _, window, cx| this.toggle_term(window, cx)))
-                    .child(item("act-terminal".into(), ic, "终端(⌃`)", active)));
-                continue;
-            }
             let active = left_open && !search_open && cur == tab;
             col = col.child(div().w_full().on_mouse_down(MouseButton::Left, cx.listener(move |this, _, _, cx| {
                 this.left_open = !(this.left_open && !this.search_open && this.panel.read(cx).tab == tab);

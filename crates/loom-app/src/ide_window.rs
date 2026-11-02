@@ -308,6 +308,8 @@ impl IdeWindow {
                         .child(icon(IconName::Search, 13., t.muted_foreground))
                         .child(project),
                 )))
+                .child(no_drag(Button::new("iw-term").small().ghost().icon(IconName::PanelBottom).tooltip("终端(⌃`)").selected(self.term_open)
+                    .on_click(cx.listener(|this, _, window, cx| this.toggle_term(window, cx)))))
                 .child(no_drag(Button::new("iw-chat").small().ghost().icon(IconName::PanelRight).tooltip("对话栏(⌥⌘B)")
                     .on_click(cx.listener(|this, _, _, cx| { this.chat_open = !this.chat_open; cx.notify(); }))))
                 .child(no_drag(crate::ui::mode_switch("iw-agent", "Agent", if fused { IconName::MessageSquare } else { IconName::ExternalLink }, true).tooltip("切换到 Agent(⇧⌘E)")
