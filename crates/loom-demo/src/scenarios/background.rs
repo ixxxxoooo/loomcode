@@ -10,6 +10,7 @@ use loom_core::*;
 pub fn scenarios() -> Vec<Scenario> {
     vec![
         Scenario { id: "showcase-all", title: "全场景:会话流里的所有展示一次看完", group: "全景", kind: Kind::Auto, prompt: "把会话流里的所有展示都演示一遍", build: showcase_all },
+        Scenario { id: "bg-ticker", title: "折叠分组的「最新一步」:连续工具运行中滚动展示", group: "后台任务", kind: Kind::Auto, prompt: "把设置页相关的代码都梳理一遍", build: ticker },
         Scenario { id: "bg-dock", title: "任务坞:按类别分组的悬浮列表(全部类型、终态、停滞与滚动)", group: "后台任务", kind: Kind::Auto, prompt: "同时开一堆后台任务,检验任务坞的分组与悬浮列表", build: dock },
         Scenario { id: "bg-shell", title: "后台命令:开发服务器、构建与失败的 lint", group: "后台任务", kind: Kind::Auto, prompt: "把开发服务器、release 构建和 clippy 都放到后台跑", build: shell },
         Scenario { id: "bg-monitor", title: "Monitor:持续监听日志与结束", group: "后台任务", kind: Kind::Auto, prompt: "监听服务日志,出现错误就告诉我", build: monitor },
@@ -21,6 +22,28 @@ pub fn scenarios() -> Vec<Scenario> {
         Scenario { id: "tools-status", title: "工具状态:成功、失败、被拒绝与被中断", group: "工具卡", kind: Kind::Auto, prompt: "展示工具调用的各种结果状态", build: status },
         Scenario { id: "notices-system", title: "系统提示:钩子失败、模型回退与 MCP 输入请求", group: "状态与错误", kind: Kind::Auto, prompt: "展示各类系统提示", build: system_notices },
     ]
+}
+
+/// 连续多个工具按真实节奏依次运行:分组折叠时标题下方只滚动显示最新一步。
+fn ticker() -> Script {
+    let mut b = ScriptBuilder::new();
+    b.say("我先把设置页相关的代码梳理一遍。");
+    let steps: [(&str, &str, &str); 6] = [
+        ("Read", "读取 crates/loom-app/src/settings/mod.rs", "settings/mod.rs"),
+        ("Grep", "搜索 SettingsTab", "SettingsTab"),
+        ("Read", "读取 crates/loom-app/src/settings/nav.rs", "settings/nav.rs"),
+        ("Bash", "运行 cargo check -p loom-app", "cargo check -p loom-app"),
+        ("Read", "读取 crates/loom-app/src/prefs.rs", "prefs.rs"),
+        ("Grep", "搜索 AppSettings", "AppSettings"),
+    ];
+    for (i, (name, title, input)) in steps.iter().enumerate() {
+        let id = b.tool_start(ToolCall::new(&format!("ticker-{i}"), name, title).with_input(json!({ "file_path": input, "pattern": input, "command": input })));
+        b.sleep(if i == 3 { 2600 } else { 1400 });
+        b.tool_end(&id, ToolStatus::Completed, vec![], 1400);
+        b.sleep(if i == 1 { 700 } else { 120 });
+    }
+    b.say("梳理完毕:设置页的分类枚举在 `settings/mod.rs`,导航在 `settings/nav.rs`。");
+    b.build()
 }
 
 fn dock() -> Script {

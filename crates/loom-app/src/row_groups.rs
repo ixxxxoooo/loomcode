@@ -201,12 +201,12 @@ pub fn item_to_row(rows: &[Row], item_count: usize) -> Vec<usize> {
     map
 }
 
-/// 一段工具调用是否需要默认展开:还有没结束的,或有失败的。
+/// 一段工具调用是否需要默认展开:有失败的(运行中默认折叠,由「最新一步」行滚动展示进度)。
 ///
 /// 参数:`tools` 这一段里的工具。
 pub fn needs_attention(tools: &[&ToolCall]) -> bool {
     // 失败要看到;被拒绝 / 被中断是用户自己的决定,不强行展开
-    tools.iter().any(|t| !t.status.is_finished() || t.status == ToolStatus::Failed)
+    tools.iter().any(|t| t.status == ToolStatus::Failed)
 }
 
 /// 摘要文案:按类别计数,如「运行了 2 条命令、读取了 3 个文件」。
@@ -386,7 +386,7 @@ mod tests {
         run.status = ToolStatus::Running;
         assert!(!needs_attention(&[&ok]));
         assert!(needs_attention(&[&ok, &bad]));
-        assert!(needs_attention(&[&run]));
+        assert!(!needs_attention(&[&run]));
     }
 }
 
