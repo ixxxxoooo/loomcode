@@ -74,6 +74,13 @@ fn render_working(session: &Entity<SessionModel>, cx: &App) -> AnyElement {
     // 有进行中的待办时显示它的 activeForm(对标 Claude Code 的状态行),否则随机动词
     let verb = crate::todo_view::current_active(&session.read(cx).state.items).map(|a| format!("{a}…")).unwrap_or_else(|| crate::appearance::verb_text(cx, &seed.to_string()));
     let t = cx.theme();
+    // 并行工具里有请求在等用户时,不再假装「处理中」
+    if session.read(cx).state.awaiting_user() {
+        return h_flex().h(px(26.)).px_2().gap_2().items_center().text_size(px(13.)).text_color(t.warning)
+            .child(crate::ui::icon(gpui_kit::assets::IconName::CirclePause, 12., t.warning))
+            .child("等待你的批准")
+            .into_any_element();
+    }
     h_flex().h(px(26.)).px_2().gap_2().items_center()
         .child(crate::appearance::glyph_spinner("working", t.primary, cx))
         .child(ShimmerText::new(crate::appearance::status_line(verb, started)).id("working-shimmer"))
