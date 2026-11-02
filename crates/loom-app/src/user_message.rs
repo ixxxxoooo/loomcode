@@ -79,24 +79,29 @@ pub fn card_border(cx: &App) -> Hsla {
 
 /// 渲染一条用户消息:编辑中显示编辑卡,否则显示消息卡。
 pub fn render_user(session: &Entity<SessionModel>, id: &str, text: &str, images: &[String], files: &[String], cx: &App) -> AnyElement {
-    let editing = session.read(cx).editing.as_ref().filter(|e| e.id == id && !e.pinned).map(|e| e.input.clone());
+    let editing = session.read(cx).editing.iter().find(|e| e.id == id && !e.pinned).map(|e| e.input.clone());
     match editing {
-        Some(input) => render_editor(session, &input, images, None, cx),
+        Some(input) => render_editor(session, id, &input, images, None, cx),
         None => render_card(session, id, text, images, files, cx),
     }
 }
 
-/// 悬浮在会话流顶部的编辑卡(从吸顶卡发起的编辑);没有这样的编辑时返回 None。
+/// 悬浮编辑卡(从吸顶卡 / 消息卡发起的编辑)的消息 id,按打开顺序(后打开的盖在上面)。
+pub fn pinned_edit_ids(session: &Entity<SessionModel>, cx: &App) -> Vec<String> {
+    session.read(cx).editing.iter().filter(|e| e.pinned).map(|e| e.id.clone()).collect()
+}
+
+/// 某条消息的悬浮编辑卡;不在悬浮编辑中时返回 None。
 ///
-/// 参数:`max_body_h` 正文区(附件 + 文本框)的最大高度,超出在卡内滚动。
-pub fn render_pinned_editor(session: &Entity<SessionModel>, max_body_h: f32, cx: &App) -> Option<AnyElement> {
+/// 参数:`id` 消息 id;`max_body_h` 正文区(附件 + 文本框)的最大高度,超出在卡内滚动。
+pub fn render_pinned_editor(session: &Entity<SessionModel>, id: &str, max_body_h: f32, cx: &App) -> Option<AnyElement> {
     let m = session.read(cx);
-    let e = m.editing.as_ref().filter(|e| e.pinned)?;
+    let e = m.editing.iter().find(|e| e.pinned && e.id == id)?;
     let images = m.state.items.iter().find_map(|i| match i {
         loom_core::TimelineItem::User { id, images, .. } if id == &e.id => Some(images.clone()),
         _ => None,
     }).unwrap_or_default();
-    Some(render_editor(session, &e.input.clone(), &images, Some(max_body_h), cx))
+    Some(render_editor(session, id, &e.input.clone(), &images, Some(max_body_h), cx))
 }
 
 /// 悬停操作条上的小图标按钮:按下有底色反馈,`done` 为真时显示绿色对勾(复制 / 重试后短暂显示)。
@@ -208,18 +213,18 @@ fn text_window(id: &str, text: &str, long: bool, folded: bool, cx: &App) -> AnyE
 }
 
 /// 就地编辑卡:附件(只读)+ 文本框 + 取消 / 重新发送。
-pub(crate) fn render_editor(session: &Entity<SessionModel>, input: &Entity<TextareaState>, images: &[String], max_body_h: Option<f32>, cx: &App) -> AnyElement {
+pub(crate) fn render_editor(session: &Entity<SessionModel>, id: &str, input: &Entity<TextareaState>, images: &[String], max_body_h: Option<f32>, cx: &App) -> AnyElement {
     let t = cx.theme();
     let running = session.read(cx).state.phase == loom_core::Phase::Running;
     let has_text = !input.read(cx).value().trim().is_empty();
-    let (s_cancel, s_send, s_esc, s_out) = (session.clone(), session.clone(), session.clone(), session.clone());
-    v_flex().id("umsg-editor").w_full().gap_2().px(px(14.)).py(px(10.)).rounded(px(12.)).bg(t.popover).border_1().border_color(t.border).shadow_sm()
-        // 点编辑卡以外的任何地方:收起编辑(未发送的修改丢弃)
-        .on_mouse_down_out(move |_, _, cx| { s_out.update(cx, |m, cx| m.end_edit(cx)); })
-        .on_action(move |_: &crate::workbench::Escape, _, cx| { s_esc.update(cx, |m, cx| m.end_edit(cx)); })
+    let (s_cancel, s_send, s_esc) = (session.clone(), session.clone(), session.clone());
+    let (id_cancel, id_send, id_esc) = (id.to_string(), id.to_string(), id.to_string());
+    v_flex().id(SharedString::from(format!("umsg-editor-{id}"))).w_full().gap_2().px(px(14.)).py(px(10.)).rounded(px(12.)).bg(t.popover).border_1().border_color(t.border).shadow_sm()
+        // 多条消息可以同时处于编辑中,点别处不会收起它们;只有取消 / 发送 / Esc(焦点在这张卡里)才关闭这一张
+        .on_action(move |_: &crate::workbench::Escape, _, cx| { s_esc.update(cx, |m, cx| m.end_edit(&id_esc, cx)); })
         // 正文区(附件 + 文本框):悬浮时限制最大高度,超出在框内滚动;横向不外溢
         .child(
-            v_flex().id("umsg-editor-body").w_full().min_w_0().gap_2().overflow_x_hidden()
+            v_flex().id(SharedString::from(format!("umsg-editor-body-{id}"))).w_full().min_w_0().gap_2().overflow_x_hidden()
                 .when_some(max_body_h, |d, h| d.max_h(px(h)).overflow_y_scroll())
                 .when(!images.is_empty(), |d| d.child(h_flex().flex_wrap().gap_1p5().children(images.iter().map(|n| thumb(n, cx)))))
                 .child(Textarea::new(input).appearance(false).bordered(false)),
@@ -227,9 +232,9 @@ pub(crate) fn render_editor(session: &Entity<SessionModel>, input: &Entity<Texta
         .when(running, |d| d.child(div().text_size(px(11.)).text_color(t.muted_foreground).child("回合进行中,将排到本轮结束后发送。")))
         .child(
             h_flex().gap_2().items_center().justify_end()
-                .children(crate::edit_model::picker(session, cx).map(|c| div().flex_1().flex().child(c)))
-                .child(Button::new("umsg-cancel").small().ghost().label("取消").on_click(move |_, _, cx| { s_cancel.update(cx, |m, cx| m.end_edit(cx)); }))
-                .child(send_button(false, has_text, move |window, cx| { s_send.update(cx, |m, cx| m.submit_edit(window, cx)); }, cx)),
+                .children(crate::edit_model::picker(session, id, cx).map(|c| div().flex_1().flex().child(c)))
+                .child(Button::new(SharedString::from(format!("umsg-cancel-{id}"))).small().ghost().label("取消").on_click(move |_, _, cx| { s_cancel.update(cx, |m, cx| m.end_edit(&id_cancel, cx)); }))
+                .child(send_button(false, has_text, move |window, cx| { s_send.update(cx, |m, cx| m.submit_edit(&id_send, window, cx)); }, cx)),
         )
         .into_any_element()
 }
@@ -246,15 +251,14 @@ pub struct UserEdit {
 }
 
 impl SessionModel {
-    /// 开始编辑一条用户消息(同一时刻只编辑一条)。
+    /// 开始编辑一条用户消息。可以同时编辑多条,互不影响;这条已在编辑中就只把焦点给它。
     ///
     /// 参数:`id` 消息 id;`text` 要放进文本框的正文(已去掉占位符);`pinned` 是否从吸顶卡发起(悬浮编辑)。
     pub fn begin_edit(&mut self, id: &str, text: &str, pinned: bool, window: &mut Window, cx: &mut Context<Self>) {
-        if self.editing.as_ref().is_some_and(|e| e.id == id) {
+        if let Some(e) = self.editing.iter().find(|e| e.id == id) {
+            let input = e.input.clone();
+            input.update(cx, |i, cx| i.focus(window, cx));
             return;
-        }
-        if let Some(prev) = self.editing.take() {
-            self.remeasure_id(&prev.id, cx);
         }
         self.scroller.update(cx, |s, _| s.pause_following());
         let input = cx.new(|cx| TextareaState::new(window, cx).auto_grow(1, 10).submit_on_enter(true));
@@ -263,10 +267,10 @@ impl SessionModel {
         let sub = cx.subscribe_in(&input, window, move |this, _, ev: &InputEvent, window, cx| match ev {
             // 文本框随内容增高:重新测量这一行
             InputEvent::Change => { this.remeasure_id(&edit_id, cx); cx.notify(); }
-            InputEvent::PressEnter { shift: false, .. } => this.submit_edit(window, cx),
+            InputEvent::PressEnter { shift: false, .. } => this.submit_edit(&edit_id, window, cx),
             _ => {}
         });
-        self.editing = Some(UserEdit { id: id.to_string(), input, pinned, model_open: false, _sub: sub });
+        self.editing.push(UserEdit { id: id.to_string(), input, pinned, model_open: false, _sub: sub });
         self.remeasure_id(id, cx);
         cx.notify();
     }
@@ -292,24 +296,25 @@ impl SessionModel {
     }
 
     /// 展开 / 收起编辑卡里的模型列表。
-    pub fn toggle_edit_model(&mut self, cx: &mut Context<Self>) {
-        if let Some(e) = self.editing.as_mut() {
+    pub fn toggle_edit_model(&mut self, id: &str, cx: &mut Context<Self>) {
+        if let Some(e) = self.editing.iter_mut().find(|e| e.id == id) {
             e.model_open = !e.model_open;
         }
         cx.notify();
     }
 
     /// 结束编辑(取消或发送后)。
-    pub fn end_edit(&mut self, cx: &mut Context<Self>) {
-        if let Some(e) = self.editing.take() {
+    pub fn end_edit(&mut self, id: &str, cx: &mut Context<Self>) {
+        if let Some(ix) = self.editing.iter().position(|e| e.id == id) {
+            let e = self.editing.remove(ix);
             self.remeasure_id(&e.id, cx);
         }
         cx.notify();
     }
 
     /// 把编辑后的文本作为新消息发送(原消息与回复保留);回合进行中排到本轮结束后。
-    pub fn submit_edit(&mut self, _window: &mut Window, cx: &mut Context<Self>) {
-        let Some(e) = self.editing.as_ref() else { return };
+    pub fn submit_edit(&mut self, id: &str, _window: &mut Window, cx: &mut Context<Self>) {
+        let Some(e) = self.editing.iter().find(|e| e.id == id) else { return };
         let text = e.input.read(cx).value().trim().to_string();
         let (images, files) = match self.state.items.iter().find(|i| matches!(i, loom_core::TimelineItem::User { id, .. } if id == &e.id)) {
             Some(loom_core::TimelineItem::User { images, files, .. }) => (images.clone(), files.clone()),
@@ -319,7 +324,7 @@ impl SessionModel {
             return;
         }
         let running = self.state.phase == loom_core::Phase::Running;
-        self.end_edit(cx);
+        self.end_edit(id, cx);
         if running {
             self.queue_prompt(text, images, files, cx);
         } else {

@@ -91,10 +91,9 @@ fn card_height(text: &str) -> f32 {
     LINE_H * lines as f32 + 20.
 }
 
-/// 正在编辑的用户消息所在的行下标。
-fn editing_row(session: &Entity<SessionModel>, cx: &App) -> Option<usize> {
+/// 某条正在编辑的用户消息所在的行下标。
+fn editing_row(session: &Entity<SessionModel>, eid: &str, cx: &App) -> Option<usize> {
     let m = session.read(cx);
-    let eid = &m.editing.as_ref()?.id;
     let item = m.state.items.iter().position(|i| matches!(i, TimelineItem::User { id, .. } if id == eid))?;
     m.rows.iter().position(|r| matches!(r, Row::Item(i) if *i == item))
 }
@@ -111,14 +110,19 @@ pub fn render(session: &Entity<SessionModel>, scroller: &Entity<ChatScroll>, cx:
             .bg(linear_gradient(0., linear_color_stop(bg.opacity(0.), 0.), linear_color_stop(bg, 1.)))
     };
     let sc = scroller.read(cx);
-    // 悬浮编辑:编辑卡盖在消息原来的位置上向下展开(吸附时盖在顶部),不推挤会话流
-    let y = editing_row(session, cx).and_then(|r| sc.row_top(r)).unwrap_or(INSET).max(INSET);
-    if let Some(editor) = crate::user_message::render_pinned_editor(session, editor_body_max(sc.viewport_height(), y), cx) {
-        return Some(
+    // 悬浮编辑:编辑卡盖在消息原来的位置上向下展开(滚出顶部时盖在顶部),不推挤会话流。
+    // 可以同时有多张,各在各自消息的位置上,互不影响;后打开的盖在上面
+    let pinned: Vec<AnyElement> = crate::user_message::pinned_edit_ids(session, cx).into_iter().filter_map(|eid| {
+        let y = editing_row(session, &eid, cx).and_then(|r| sc.row_top(r)).unwrap_or(INSET).max(INSET);
+        let editor = crate::user_message::render_pinned_editor(session, &eid, editor_body_max(sc.viewport_height(), y), cx)?;
+        Some(
             div().absolute().top(px(y)).left_0().right_0().px_3()
                 .child(div().w_full().px_1().flex().justify_center().child(div().w_full().max_w(max_w).child(editor)))
                 .into_any_element(),
-        );
+        )
+    }).collect();
+    if !pinned.is_empty() {
+        return Some(div().absolute().top_0().left_0().right_0().children(pinned).into_any_element());
     }
     let top = sc.max_painted().unwrap_or(0);
     let target = {
