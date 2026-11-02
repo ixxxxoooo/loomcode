@@ -43,6 +43,8 @@ pub struct IdeDoc {
     /// 括号配对高亮:上次的配对位置与装饰集合
     pub(crate) bracket_pair: Option<(usize, usize)>,
     pub(crate) bracket_marks: Option<gpui_kit::component::input::RangeDecorationCollection>,
+    /// 括号配对着色与竖线:扫描缓存与底色块
+    pub(crate) pairs: crate::ide_pairs::PairState,
     /// Git 追溯:每行最后一次修改的提交(下标 = 行号 - 1);没有仓库 / 未跟踪时为空
     pub(crate) blame: std::sync::Arc<Vec<loom_core::git_blame::BlameLine>>,
     /// 追溯刷新的防抖序号(也用来丢弃过期结果)
@@ -401,6 +403,7 @@ pub(crate) fn load(path: &Path, window: &mut Window, cx: &mut Context<IdeView>) 
                 if let Some(doc) = this.docs.get_mut(&key) {
                     doc.saved = false;
                     doc.hover = None;
+                    doc.pairs.bump();
                 }
                 this.schedule_minimap(&key, cx);
                 this.schedule_blame(&key, cx);
@@ -430,7 +433,7 @@ pub(crate) fn load(path: &Path, window: &mut Window, cx: &mut Context<IdeView>) 
     });
     let marks = None;
     let mtime = meta.modified().ok();
-    Ok(IdeDoc { editor, saved: true, crlf, mtime, stale: false, marks, minimap, mm_key: (theme, prefs.syntax_highlight), mm_gen: 0, hunks: Default::default(), bracket_pair: None, bracket_marks: None, blame: Default::default(), blame_gen: 0, blame_fresh: false, lsp: None, lsp_gen: 0, diag: (0, 0), diag_marks: Default::default(), hover: None, _subs: vec![sub, sub2] })
+    Ok(IdeDoc { editor, saved: true, crlf, mtime, stale: false, marks, minimap, mm_key: (theme, prefs.syntax_highlight), mm_gen: 0, hunks: Default::default(), bracket_pair: None, bracket_marks: None, pairs: crate::ide_pairs::PairState::new(language_for(path)), blame: Default::default(), blame_gen: 0, blame_fresh: false, lsp: None, lsp_gen: 0, diag: (0, 0), diag_marks: Default::default(), hover: None, _subs: vec![sub, sub2] })
 }
 
 impl Render for IdeView {
@@ -482,6 +485,19 @@ impl Render for IdeView {
         let ed0 = self.docs[&path].editor.clone();
         let md_view = is_md.then(|| self.md.entry(path.clone()).or_insert_with(|| cx.new(|cx| crate::ide_markdown::MdDocView::new(ed0, None, window, cx))).clone());
         let md_mode = md_view.as_ref().map_or(crate::ide_markdown::MdMode::Source, |v| v.read(cx).mode);
+        // 括号底色块:开关 / 内容 / 视口变了就在本帧之后刷新(渲染里不能改编辑器)
+        let (colors_on, guides_on) = {
+            let e = crate::prefs(cx).editor;
+            (e.bracket_colors, e.bracket_guides)
+        };
+        if crate::ide_pairs::stale(&self.docs[&path], colors_on, cx) {
+            let p = path.clone();
+            cx.defer_in(window, move |this, _, cx| {
+                if let Some(doc) = this.docs.get_mut(&p) {
+                    crate::ide_pairs::refresh_colors(doc, colors_on, cx);
+                }
+            });
+        }
         let overlay = self.overlay_element(cx);
         let doc = &self.docs[&path];
         let editor = doc.editor.clone();
@@ -493,6 +509,7 @@ impl Render for IdeView {
                 let gutter = self.blame_gutter.then(|| crate::ide_blame::gutter(doc, &self.blame_ui, cx)).flatten();
                 let inline = crate::ide_blame::inline_blame(doc, cx);
                 let guide = crate::ide_guides::overlay(doc, cx);
+                let pair_guides = guides_on.then(|| crate::ide_pairs::guides(doc, cx)).flatten();
                 let hover = crate::ide_hover::hover_card(doc, &path, cx.weak_entity(), window, cx);
                 let cursor_msg = self.cursor_msg.as_ref().and_then(|m| crate::ide_message::message_element(doc, m, cx.weak_entity(), cx));
                 let ctx_menu = crate::ide_menu::editor_menu(&editor, cx.weak_entity());
@@ -512,6 +529,7 @@ impl Render for IdeView {
                     })
                     .children(mm)
                     .children(guide)
+                    .children(pair_guides)
                     .children(inline)
                     .children(hover)
                     .children(cursor_msg);
