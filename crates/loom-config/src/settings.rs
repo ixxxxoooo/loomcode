@@ -116,6 +116,8 @@ pub struct EditorPrefs {
     pub bracket_match: bool,
     /// 括号配对着色:按嵌套深度给括号铺金 / 紫 / 蓝底色
     pub bracket_colors: bool,
+    /// 括号配对竖线:跨行的括号对在缩进列上画竖线(同深度同色),包住光标的一对更亮
+    pub bracket_guides: bool,
     pub auto_save: AutoSave,
     /// 超过这个大小(KB)的文件不在编辑器里打开
     pub max_file_kb: u32,
@@ -137,7 +139,7 @@ pub struct EditorPrefs {
 
 impl Default for EditorPrefs {
     fn default() -> Self {
-        Self { minimap: true, minimap_slider_always: false, minimap_width: 100, minimap_git: true, line_numbers: true, folding: true, soft_wrap: false, tab_size: 4, bracket_match: true, bracket_colors: true, auto_save: AutoSave::Off, max_file_kb: 1024, syntax_highlight: true, blame_inline: true, blame_gutter: false, lsp: true, hover_delay_ms: 300, hover_sticky: true, hover_hiding_delay_ms: 300 }
+        Self { minimap: true, minimap_slider_always: false, minimap_width: 100, minimap_git: true, line_numbers: true, folding: true, soft_wrap: false, tab_size: 4, bracket_match: true, bracket_colors: true, bracket_guides: true, auto_save: AutoSave::Off, max_file_kb: 1024, syntax_highlight: true, blame_inline: true, blame_gutter: false, lsp: true, hover_delay_ms: 300, hover_sticky: true, hover_hiding_delay_ms: 300 }
     }
 }
 

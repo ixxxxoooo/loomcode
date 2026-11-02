@@ -142,6 +142,9 @@ fn highlight_theme(name: &str, dark: bool, s: &Syntax) -> Arc<HighlightTheme> {
         "name": name,
         "appearance": if dark { "dark" } else { "light" },
         "style": {
+            // 光标所在行的背景与行号(对标 Zed One / VS Code lineHighlightBackground:低透明度的中性色,不抢语法色)
+            "editor.active_line.background": if dark { "#FFFFFF0F" } else { "#0000000D" },
+            "editor.active_line_number": if dark { "#D0D4DA" } else { "#44454B" },
             "syntax": {
                 "comment": c(s.comment, Some("italic")), "comment.doc": c(s.comment, Some("italic")),
                 "keyword": c(s.keyword, None), "preproc": c(s.keyword, None), "label": c(s.keyword, None),

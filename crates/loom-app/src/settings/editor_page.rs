@@ -27,6 +27,7 @@ pub fn render(wb: &Workbench, cx: &mut Context<Workbench>) -> AnyElement {
             switch_row("ed-wrap", "自动换行", "长行在视口边缘折行,而不是横向滚动", e.soft_wrap, cx, |this, v, cx| this.update_settings(cx, |s| s.editor.soft_wrap = v)),
             switch_row("ed-bracket", "括号配对高亮", "光标贴近括号时高亮与它配对的括号", e.bracket_match, cx, |this, v, cx| this.update_settings(cx, |s| s.editor.bracket_match = v)),
             switch_row("ed-bracket-colors", "括号配对着色", "按嵌套深度给括号字符着色(金 / 紫 / 蓝 / 青循环,对标 VS Code 与 Zed),一眼看出谁和谁配对;超过 512 KB 的文件不处理", e.bracket_colors, cx, |this, v, cx| this.update_settings(cx, |s| s.editor.bracket_colors = v)),
+            switch_row("ed-bracket-guides", "括号配对竖线", "跨行的括号对在缩进列上画一条竖线(对标 VS Code 的 bracketPairs 参考线),颜色与括号字色同深度同色,包住光标的一对更亮", e.bracket_guides, cx, |this, v, cx| this.update_settings(cx, |s| s.editor.bracket_guides = v)),
             switch_row("ed-syntax", "语法高亮", "之后新打开的文件生效;关闭可以让超大文件更流畅", e.syntax_highlight, cx, |this, v, cx| this.update_settings(cx, |s| s.editor.syntax_highlight = v)),
         ], cx))
         .child(group("Git 追溯", rows![

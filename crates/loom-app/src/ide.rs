@@ -41,6 +41,7 @@ pub struct IdeDoc {
     /// Git 改动行区间(迷你地图刻度用)
     pub hunks: std::rc::Rc<Vec<(std::ops::Range<usize>, crate::git_status::GitMark)>>,
     /// 括号配对高亮:上次的配对位置与装饰集合
+    pub(crate) pairs: crate::ide_pairs::PairState,
     pub(crate) bracket_pair: Option<(usize, usize)>,
     pub(crate) bracket_marks: Option<gpui_kit::component::input::RangeDecorationCollection>,
     /// 括号配对着色与竖线:扫描缓存与底色块
@@ -402,6 +403,7 @@ pub(crate) fn load(path: &Path, window: &mut Window, cx: &mut Context<IdeView>) 
                 if let Some(doc) = this.docs.get_mut(&key) {
                     doc.saved = false;
                     doc.hover = None;
+                    doc.pairs.bump();
                 }
                 this.schedule_minimap(&key, cx);
                 this.schedule_blame(&key, cx);
@@ -431,7 +433,7 @@ pub(crate) fn load(path: &Path, window: &mut Window, cx: &mut Context<IdeView>) 
     });
     let marks = None;
     let mtime = meta.modified().ok();
-    Ok(IdeDoc { editor, saved: true, crlf, mtime, stale: false, marks, minimap, mm_key: (theme, prefs.syntax_highlight), mm_gen: 0, hunks: Default::default(), bracket_pair: None, bracket_marks: None, blame: Default::default(), blame_gen: 0, blame_fresh: false, lsp: None, lsp_gen: 0, diag: (0, 0), diag_marks: Default::default(), hover: None, _subs: vec![sub, sub2] })
+    Ok(IdeDoc { editor, saved: true, crlf, mtime, stale: false, marks, minimap, mm_key: (theme, prefs.syntax_highlight), mm_gen: 0, hunks: Default::default(), pairs: crate::ide_pairs::PairState::new(language_for(path)), bracket_pair: None, bracket_marks: None, blame: Default::default(), blame_gen: 0, blame_fresh: false, lsp: None, lsp_gen: 0, diag: (0, 0), diag_marks: Default::default(), hover: None, _subs: vec![sub, sub2] })
 }
 
 impl Render for IdeView {
@@ -502,6 +504,7 @@ impl Render for IdeView {
                 let gutter = self.blame_gutter.then(|| crate::ide_blame::gutter(doc, &self.blame_ui, cx)).flatten();
                 let inline = crate::ide_blame::inline_blame(doc, cx);
                 let guide = crate::ide_guides::overlay(doc, cx);
+                let pair_guides = crate::prefs(cx).editor.bracket_guides.then(|| crate::ide_pairs::guides(doc, cx)).flatten();
                 let hover = crate::ide_hover::hover_card(doc, &path, cx.weak_entity(), window, cx);
                 let cursor_msg = self.cursor_msg.as_ref().and_then(|m| crate::ide_message::message_element(doc, m, cx.weak_entity(), cx));
                 let ctx_menu = crate::ide_menu::editor_menu(&editor, cx.weak_entity());
@@ -521,6 +524,7 @@ impl Render for IdeView {
                     })
                     .children(mm)
                     .children(guide)
+                    .children(pair_guides)
                     .children(inline)
                     .children(hover)
                     .children(cursor_msg);
