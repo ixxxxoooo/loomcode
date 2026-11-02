@@ -3693,6 +3693,7 @@ name = "loom-automation"
 version = "0.1.2"
 dependencies = [
  "chrono",
+ "loom-diag",
  "serde",
  "serde_json",
  "thiserror 2.0.21",

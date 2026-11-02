@@ -8,7 +8,7 @@ mod runner;
 mod schedule;
 mod store;
 
-pub use runner::run_once;
+pub use runner::{DEFAULT_TIMEOUT, RunOptions, run_once};
 pub use schedule::*;
 pub use store::AutomationStore;
 

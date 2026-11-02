@@ -278,8 +278,7 @@ impl Workbench {
         }
         let canvas = cx.new(|_| CanvasPage::new(CanvasStore::new(canvas_dir)));
         let project_list: Vec<(String, String)> = projects.iter().map(|p| (p.name.clone(), p.path.clone())).collect();
-        let claude_path = settings.claude_path.clone();
-        let automation = cx.new(|cx| AutomationPage::new(AutomationStore::new(auto_dir), demo, claude_path, project_list, window, cx));
+        let automation = cx.new(|cx| AutomationPage::new(AutomationStore::new(auto_dir), demo, settings_path.clone(), project_list, window, cx));
         let browser = cx.new(|cx| BrowserPage::new(window, cx));
         let settings_widths = (settings.left_width, settings.right_width);
         let mut wb = Self {

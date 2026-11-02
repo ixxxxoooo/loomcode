@@ -28,7 +28,8 @@ pub struct AutomationPage {
     runs: Vec<RunRecord>,
     running: HashSet<String>,
     demo: bool,
-    claude_path: Option<String>,
+    /// `settings.json` 路径:每次运行时从磁盘读最新的 claude 路径与环境变量(服务商 / 代理),与交互会话一致
+    settings_path: std::path::PathBuf,
     /// (名称, 路径)
     projects: Vec<(String, String)>,
     name: Entity<InputState>,
@@ -44,10 +45,10 @@ impl AutomationPage {
         cx.notify();
     }
 
-    pub fn new(store: AutomationStore, demo: bool, claude_path: Option<String>, projects: Vec<(String, String)>, window: &mut Window, cx: &mut Context<Self>) -> Self {
+    pub fn new(store: AutomationStore, demo: bool, settings_path: std::path::PathBuf, projects: Vec<(String, String)>, window: &mut Window, cx: &mut Context<Self>) -> Self {
         let name = cx.new(|cx| InputState::new(window, cx).placeholder("例如:每日 TODO 巡检"));
         let prompt = cx.new(|cx| TextareaState::new(window, cx).placeholder("要让 Claude 做什么?例如:检查今天新增的 TODO 并汇总"));
-        let mut page = Self { store, items: Vec::new(), selected: None, draft: None, runs: Vec::new(), running: HashSet::new(), demo, claude_path, projects, name, prompt, message: None };
+        let mut page = Self { store, items: Vec::new(), selected: None, draft: None, runs: Vec::new(), running: HashSet::new(), demo, settings_path, projects, name, prompt, message: None };
         if demo {
             page.seed_demo();
         }
@@ -224,19 +225,21 @@ impl AutomationPage {
             self.refresh_after_run(id, cx);
             return;
         }
-        let Some(claude) = loom_claude::find_claude(self.claude_path.as_deref()) else {
-            let rec = RunRecord { started_at: started, finished_at: Some(started), status: RunStatus::Failed, summary: "找不到 claude 可执行文件,请先安装 Claude Code".into(), cost_usd: 0.0, session_id: None };
-            let _ = self.store.record_run(id, rec);
-            self.refresh_after_run(id, cx);
-            return;
-        };
         let _ = self.store.record_run(id, RunRecord { started_at: started, finished_at: None, status: RunStatus::Running, summary: String::new(), cost_usd: 0.0, session_id: None });
         self.running.insert(id.to_string());
         self.refresh_after_run(id, cx);
 
-        let (store, run_id) = (self.store.clone(), id.to_string());
+        let (store, run_id, settings_path) = (self.store.clone(), id.to_string(), self.settings_path.clone());
         cx.spawn(async move |this, cx| {
-            let rec = cx.background_spawn(async move { run_once(&claude, &auto) }).await;
+            let rec = cx
+                .background_spawn(async move {
+                    let ctx = loom_config::run_env::load_run_context(&settings_path);
+                    match loom_claude::find_claude(ctx.claude_path.as_deref()) {
+                        Some(claude) => run_once(&claude, &auto, &RunOptions { env: ctx.env, ..RunOptions::default() }),
+                        None => RunRecord { started_at: started, finished_at: Some(now_ts()), status: RunStatus::Failed, summary: "找不到 claude 可执行文件,请先安装 Claude Code".into(), cost_usd: 0.0, session_id: None },
+                    }
+                })
+                .await;
             let _ = store.record_run(&run_id, RunRecord { started_at: started, ..rec });
             let _ = this.update(cx, |this, cx| {
                 this.running.remove(&run_id);

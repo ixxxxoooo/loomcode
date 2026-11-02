@@ -10,6 +10,7 @@ pub mod legacy;
 pub mod plugins;
 pub mod update;
 pub mod providers;
+pub mod run_env;
 pub mod settings;
 pub mod ui_state;
 
