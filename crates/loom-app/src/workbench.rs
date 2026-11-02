@@ -1516,7 +1516,7 @@ impl Workbench {
         if let Some((model, _)) = self.chat_parts() {
             crate::wizard_input::ensure(&model, window, cx);
         }
-        chat_panel_with_footer(self.chat_parts(), crate::branch_bar::footer(self, cx), cx)
+        chat_panel_with_footer(self.chat_parts(), crate::branch_bar::footer(self, cx), true, cx)
     }
 
 }
@@ -1529,15 +1529,27 @@ pub fn chat_panel(parts: Option<(Entity<SessionModel>, Entity<Composer>)>, branc
         .child(div().flex_1())
         .child(if demo { "" } else { "Claude Code" })
         .into_any_element();
-    chat_panel_with_footer(parts, footer, cx)
+    chat_panel_with_footer(parts, footer, false, cx)
 }
 
 /// 渲染对话区(时间线 + 输入框),页脚由调用方提供。Agent 窗口用它放可点击的分支菜单。
-pub fn chat_panel_with_footer(parts: Option<(Entity<SessionModel>, Entity<Composer>)>, footer: AnyElement, cx: &App) -> AnyElement {
+///
+/// 参数:`center_empty` 为真且会话还没有任何内容时,输入框与页脚整体垂直居中(Agent 窗口的新对话);IDE 对话栏传假。
+pub fn chat_panel_with_footer(parts: Option<(Entity<SessionModel>, Entity<Composer>)>, footer: AnyElement, center_empty: bool, cx: &App) -> AnyElement {
     let t = cx.theme().clone();
     let Some((model, composer)) = parts else {
         return empty_state(IconName::MessageSquare, "选择或新建一个会话", "左侧选择会话,或点击「新会话」", cx).into_any_element();
     };
+    let footer_row = |footer: AnyElement| div().w_full().flex().justify_center().px_4().child(div().w_full().max_w(px(crate::timeline::content_max_w(cx))).child(footer));
+    if center_empty && model.read(cx).state.items.is_empty() {
+        // 新对话:输入框居中显示(上下各占一半空白),页脚紧贴输入框下方
+        return v_flex().size_full().bg(t.background)
+            .child(div().flex_1())
+            .child(composer)
+            .child(footer_row(footer))
+            .child(div().flex_1())
+            .into_any_element();
+    }
     let timeline = model.read(cx).timeline.clone();
     let model_for_dock = model.clone();
     v_flex().size_full().bg(t.background)
@@ -1547,7 +1559,7 @@ pub fn chat_panel_with_footer(parts: Option<(Entity<SessionModel>, Entity<Compos
         .children(crate::task_dock::dock(&model_for_dock, cx))
         .child(composer)
         // 页脚(分支 / 运行模式)与输入框同宽居中:分支在输入框左下、说明在右下
-        .child(div().w_full().flex().justify_center().px_4().child(div().w_full().max_w(px(crate::timeline::content_max_w(cx))).child(footer)))
+        .child(footer_row(footer))
         .into_any_element()
 }
 
