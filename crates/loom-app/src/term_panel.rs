@@ -105,40 +105,33 @@ impl RightPanel {
 
     /// 标签条:终端 1 ✕ | 终端 2 ✕ | $ 命令 ✕(只读)| +
     fn term_strip(&self, root: &str, active: TermSel, tabs: &[(u64, String, Option<u32>, Entity<crate::terminal_view::TerminalView>)], runs: &[TerminalRun], active_run: Option<&str>, hub: &Entity<ProjectTerminals>, cx: &mut Context<Self>) -> impl IntoElement {
-        let t = cx.theme().clone();
-        let tab_btn = |id: SharedString, label: String, selected: bool| {
-            div().id(id).h(px(26.)).px_2().flex().items_center().gap_1().rounded(px(6.)).cursor_pointer().text_size(px(12.))
-                .when(selected, |d| d.bg(t.list_active).font_weight(FontWeight::MEDIUM))
-                .when(!selected, |d| d.text_color(t.muted_foreground).hover(|d| d.bg(t.list_hover)))
-                .child(label)
-        };
         // 当前没有选中任何终端时(例如只开了命令标签),「选中」只看命令标签
-        h_flex().h(px(34.)).px_2().gap_1().items_center().border_b_1().border_color(t.border)
-            .children(tabs.iter().map(|(id, title, exit, _)| {
-                let id = *id;
-                let (hub_a, root_a) = (hub.clone(), root.to_string());
-                let (hub_c, root_c) = (hub.clone(), root.to_string());
-                let selected = active == TermSel::Term(id) || (active == TermSel::Nothing && active_run.is_none() && tabs.last().map(|x| x.0) == Some(id));
-                let on_select = cx.listener(move |this, _, _, cx| {
-                    this.active_run = None;
-                    hub_a.update(cx, |h, cx| h.activate(&root_a, TermSel::Term(id), cx));
-                });
-                crate::term_tabs::term_tab("term", id, title, selected, exit.is_some(), 26., on_select, move |_, _, cx| hub_c.update(cx, |h, cx| h.close(&root_c, id, cx)), cx)
-            }))
-            .children(self.run_tabs.iter().filter_map(|rid| runs.iter().find(|r| &r.id == rid)).map(|run| {
-                let rid = run.id.clone();
-                let first = run.command.lines().next().unwrap_or("");
-                let label = format!("$ {}", first.chars().take(MAX_TAB_CHARS).collect::<String>());
-                let (sel, close) = (rid.clone(), rid.clone());
-                tab_btn(SharedString::from(format!("run-tab-{rid}")), label, active_run == Some(rid.as_str()))
-                    .on_click(cx.listener(move |this, _, _, cx| { this.active_run = Some(sel.clone()); cx.notify(); }))
-                    .child(
-                        Button::new(SharedString::from(format!("run-close-{rid}"))).xsmall().ghost().icon(IconName::X).tooltip("关闭")
-                            .on_click(cx.listener(move |this, _, _, cx| { cx.stop_propagation(); this.close_run(&close, cx); })),
-                    )
-            }))
-            .child(Button::new("term-new").xsmall().ghost().icon(IconName::Plus).tooltip("新建终端")
-                .on_click(cx.listener(|this, _, window, cx| this.new_terminal(window, cx))))
+        let mut items: Vec<AnyElement> = tabs.iter().map(|(id, title, exit, _)| {
+            let id = *id;
+            let (hub_a, root_a) = (hub.clone(), root.to_string());
+            let (hub_c, root_c) = (hub.clone(), root.to_string());
+            let selected = active == TermSel::Term(id) || (active == TermSel::Nothing && active_run.is_none() && tabs.last().map(|x| x.0) == Some(id));
+            let on_select = cx.listener(move |this, _, _, cx| {
+                this.active_run = None;
+                hub_a.update(cx, |h, cx| h.activate(&root_a, TermSel::Term(id), cx));
+            });
+            crate::term_tabs::term_tab("term", id, title, selected, exit.is_some(), on_select, move |_, cx| hub_c.update(cx, |h, cx| h.close(&root_c, id, cx)), cx).into_any_element()
+        }).collect();
+        items.extend(self.run_tabs.iter().filter_map(|rid| runs.iter().find(|r| &r.id == rid)).map(|run| {
+            let rid = run.id.clone();
+            let first = run.command.lines().next().unwrap_or("");
+            let label = format!("$ {}", first.chars().take(MAX_TAB_CHARS).collect::<String>());
+            let (sel, close) = (rid.clone(), rid.clone());
+            let this = cx.entity();
+            crate::term_tabs::closable_tab(
+                SharedString::from(format!("run-tab-{rid}")), label.into_any_element(), active_run == Some(rid.as_str()), false,
+                cx.listener(move |this, _, _, cx| { this.active_run = Some(sel.clone()); cx.notify(); }),
+                move |_, cx| { this.update(cx, |p, cx| p.close_run(&close, cx)); }, cx,
+            ).into_any_element()
+        }));
+        let new_btn = Button::new("term-new").small().ghost().icon(IconName::Plus).tooltip("新建终端")
+            .on_click(cx.listener(|this, _, window, cx| this.new_terminal(window, cx))).into_any_element();
+        crate::term_tabs::tab_strip("term-strip", Vec::new(), items, new_btn, cx)
     }
 
     /// 一条 Claude 命令的只读视图:命令、状态与输出。

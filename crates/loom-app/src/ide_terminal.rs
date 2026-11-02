@@ -10,7 +10,7 @@ use crate::terminal_view::TerminalView;
 use crate::ui::empty_state;
 use gpui_kit::assets::IconName;
 use gpui_kit::component::button::{Button, ButtonVariants};
-use gpui_kit::component::{ActiveTheme, Sizable, h_flex, v_flex};
+use gpui_kit::component::{ActiveTheme, Sizable, v_flex};
 use gpui_kit::*;
 
 /// 底部终端面板。
@@ -88,17 +88,17 @@ impl Render for BottomTerminal {
             TermSel::Term(id) => Some(id),
             TermSel::Nothing => tabs.last().map(|x| x.0),
         };
-        let strip = h_flex().h(px(30.)).px_2().gap_1().items_center().border_b_1().border_color(t.border).bg(t.sidebar)
-            .child(div().pr_2().text_size(px(11.)).text_color(t.muted_foreground).child("终端"))
-            .children(tabs.iter().map(|(id, title, exit, _)| {
-                let id = *id;
-                let (hub_a, root_a, hub_c, root_c) = (hub.clone(), root.clone(), hub.clone(), root.clone());
-                crate::term_tabs::term_tab("bt", id, title, shown == Some(id), exit.is_some(), 24.,
-                    move |_, _, cx| hub_a.update(cx, |h, cx| h.activate(&root_a, TermSel::Term(id), cx)),
-                    move |_, _, cx| hub_c.update(cx, |h, cx| h.close(&root_c, id, cx)), cx)
-            }))
-            .child(Button::new("bt-new").xsmall().ghost().icon(IconName::Plus).tooltip("新建终端(⌃⇧`)")
-                .on_click(cx.listener(|this, _, window, cx| this.new_terminal(window, cx))));
+        let items: Vec<AnyElement> = tabs.iter().map(|(id, title, exit, _)| {
+            let id = *id;
+            let (hub_a, root_a, hub_c, root_c) = (hub.clone(), root.clone(), hub.clone(), root.clone());
+            crate::term_tabs::term_tab("bt", id, title, shown == Some(id), exit.is_some(),
+                move |_, _, cx| hub_a.update(cx, |h, cx| h.activate(&root_a, TermSel::Term(id), cx)),
+                move |_, cx| hub_c.update(cx, |h, cx| h.close(&root_c, id, cx)), cx).into_any_element()
+        }).collect();
+        let label = div().px_3().text_size(px(12.)).text_color(t.muted_foreground).child("终端").into_any_element();
+        let new_btn = Button::new("bt-new").small().ghost().icon(IconName::Plus).tooltip("新建终端(⌃⇧`)")
+            .on_click(cx.listener(|this, _, window, cx| this.new_terminal(window, cx))).into_any_element();
+        let strip = crate::term_tabs::tab_strip("bt-strip", vec![label], items, new_btn, cx);
         let body = match shown.and_then(|id| tabs.iter().find(|x| x.0 == id)) {
             Some((_, _, _, view)) => div().size_full().child(view.clone()).into_any_element(),
             None => empty_state(IconName::Terminal, "还没有终端", "点上方「+」新建一个", cx).into_any_element(),
