@@ -71,26 +71,39 @@ fn panel(session: &Entity<SessionModel>, sec: &TaskSection<'_>, now: u64, cx: &A
     let limit = if finished { FINISHED_ROWS } else { usize::MAX };
     let rows: Vec<AnyElement> = sec.tasks.iter().take(limit).map(|task| dock_row(session, task, now, cx)).collect();
     let (s_out, s_close, s_stop) = (session.clone(), session.clone(), session.clone());
-    v_flex().id("task-dock-panel").absolute().bottom(px(32.)).left_0().w_full().occlude()
+    // 面板是向上悬浮的层:放进 deferred,最后绘制、命中测试也排在最上面,不会被时间线 / 输入框等其它元素盖住点击
+    let panel = v_flex().id("task-dock-panel").absolute().bottom(px(32.)).left_0().w_full().occlude()
         .rounded(px(10.)).border_1().border_color(t.border).bg(t.popover).shadow_lg().overflow_hidden()
-        .on_mouse_down_out(move |_, _, cx| { s_out.update(cx, |m, cx| m.dismiss_tasks_outside(cx)); })
+        .on_mouse_down_out(move |_, _, cx| {
+            loom_diag::debug!("任务坞:点面板外,收起");
+            s_out.update(cx, |m, cx| m.dismiss_tasks_outside(cx));
+        })
         .child(
             h_flex().h(px(32.)).px_3().gap_2().items_center().flex_none()
                 .child(div().flex_1().text_size(px(12.)).text_color(t.muted_foreground).child(title))
                 .when(!running.is_empty(), |d| d.child(
                     div().id("task-dock-stop-all").cursor_pointer().text_size(px(12.)).text_color(t.muted_foreground).hover(|d| d.text_color(t.foreground)).child("全部停止")
                         .tooltip(move |window, cx| gpui_kit::component::tooltip::Tooltip::new("停止这一类所有运行中的任务").build(window, cx))
-                        .on_click(move |_, _, cx| { let ids = running.clone(); s_stop.update(cx, |m, cx| { for id in &ids { m.stop_task(id, cx); } }); }),
+                        .on_click(move |_, window, cx| {
+                            let ids = running.clone();
+                            loom_diag::info!("任务坞:全部停止 {} 个任务", ids.len());
+                            s_stop.update(cx, |m, cx| { for id in &ids { m.stop_task(id, cx); } });
+                            // 停止要等 Claude 回报「已停止」才会反映到列表里,先给一个即时反馈
+                            crate::notice::info(window, cx, format!("已请求停止 {} 个任务", ids.len()));
+                        }),
                 ))
                 .child(
                     div().id("task-dock-close").size(px(22.)).flex().items_center().justify_center().rounded(px(4.)).cursor_pointer().hover(|d| d.bg(t.list_hover))
                         .tooltip(move |window, cx| gpui_kit::component::tooltip::Tooltip::new("收起").build(window, cx))
-                        .on_click(move |_, _, cx| { s_close.update(cx, |m, cx| { m.close_tasks(cx); }); })
+                        .on_click(move |_, _, cx| {
+                            loom_diag::info!("任务坞:点 ✕ 收起");
+                            s_close.update(cx, |m, cx| { m.close_tasks(cx); });
+                        })
                         .child(icon(IconName::X, 12., t.muted_foreground)),
                 ),
         )
-        .child(v_flex().id("task-dock-list").w_full().max_h(px(PANEL_MAX_H)).overflow_y_scroll().px_1p5().pb_1p5().gap(px(1.)).children(rows))
-        .into_any_element()
+        .child(v_flex().id("task-dock-list").w_full().max_h(px(PANEL_MAX_H)).overflow_y_scroll().px_1p5().pb_1p5().gap(px(1.)).children(rows));
+    deferred(panel).with_priority(10).into_any_element()
 }
 
 /// 面板里的一行(对标 OhMyAgent `DockRowShell`,高 30):类别图标(已结束的用状态图标)+ 标题 + 右侧灰色元信息;
