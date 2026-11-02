@@ -6,6 +6,7 @@ use alacritty_terminal::event::EventListener;
 use alacritty_terminal::grid::Dimensions;
 use alacritty_terminal::term::{Term, TermMode, cell::Flags};
 use alacritty_terminal::vte::ansi::Color;
+use std::sync::Arc;
 
 /// 终端颜色。`Default` 由界面映射成主题的前景 / 背景色,`Indexed` 是 256 色表。
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -34,6 +35,8 @@ pub struct Run {
     pub col: usize,
     /// 占几格(宽字符为 2,普通文字等于字符数)
     pub cells: usize,
+    /// OSC 8 超链接目标;没有则为 `None`
+    pub link: Option<Arc<str>>,
     pub text: String,
     pub fg: TermColor,
     pub bg: TermColor,
@@ -55,6 +58,8 @@ pub struct Snapshot {
     pub exit_code: Option<u32>,
     /// 画面正停在历史记录里(没有在最底部)
     pub scrolled_back: bool,
+    /// 画面顶部比最底部早多少行(0 = 在最底部);搜索结果的行号靠它换算成画面行
+    pub display_offset: usize,
     /// 选区在当前画面里的范围 (起点行列, 终点行列),含两端;超出画面的部分已夹到边缘
     pub selection: Option<((usize, usize), (usize, usize))>,
 }
@@ -80,23 +85,24 @@ pub(crate) fn convert_color(c: Color) -> TermColor {
     }
 }
 
-#[derive(Clone, Copy, PartialEq, Eq)]
+#[derive(Clone, PartialEq, Eq)]
 struct Cell {
     ch: char,
+    link: Option<Arc<str>>,
     wide: bool,
     fg: TermColor,
     bg: TermColor,
     style: Style,
 }
 
-const BLANK: Cell = Cell { ch: ' ', wide: false, fg: TermColor::Default, bg: TermColor::Default, style: Style { bold: false, italic: false, underline: false, inverse: false, dim: false, strike: false } };
+const BLANK: Cell = Cell { ch: ' ', link: None, wide: false, fg: TermColor::Default, bg: TermColor::Default, style: Style { bold: false, italic: false, underline: false, inverse: false, dim: false, strike: false } };
 
 /// 由终端状态生成快照。`'\0'` 用来标记宽字符占位格,合并时跳过。
 pub(crate) fn build<T: EventListener>(term: &Term<T>, title: String, exit_code: Option<u32>) -> Snapshot {
     let (rows, cols) = (term.screen_lines(), term.columns());
     let content = term.renderable_content();
     let offset = content.display_offset as i32;
-    let mut grid = vec![vec![BLANK; cols]; rows];
+    let mut grid = vec![vec![BLANK.clone(); cols]; rows];
     for item in content.display_iter {
         let (row, col) = (item.point.line.0 + offset, item.point.column.0);
         if row < 0 || row as usize >= rows || col >= cols {
@@ -104,10 +110,11 @@ pub(crate) fn build<T: EventListener>(term: &Term<T>, title: String, exit_code: 
         }
         let f = item.cell.flags;
         grid[row as usize][col] = if f.contains(Flags::WIDE_CHAR_SPACER) || f.contains(Flags::LEADING_WIDE_CHAR_SPACER) {
-            Cell { ch: '\0', ..BLANK }
+            Cell { ch: '\0', ..BLANK.clone() }
         } else {
             Cell {
                 wide: f.contains(Flags::WIDE_CHAR),
+                link: item.cell.hyperlink().map(|h| Arc::from(h.uri())),
                 ch: if f.contains(Flags::HIDDEN) { ' ' } else { item.cell.c },
                 fg: convert_color(item.cell.fg),
                 bg: convert_color(item.cell.bg),
@@ -135,7 +142,7 @@ pub(crate) fn build<T: EventListener>(term: &Term<T>, title: String, exit_code: 
         let end = if bottom >= rows as i32 { (rows - 1, cols - 1) } else { (bottom as usize, r.end.column.0.min(cols - 1)) };
         Some((start, end))
     });
-    Snapshot { cols, rows, lines, cursor, title, exit_code, scrolled_back: !at_bottom, selection }
+    Snapshot { cols, rows, lines, cursor, title, exit_code, scrolled_back: !at_bottom, display_offset: content.display_offset, selection }
 }
 
 /// 行尾可以裁掉的格子:宽字符占位,或没有背景色、没有反色的空格。
@@ -152,11 +159,11 @@ fn merge_runs(cells: Vec<Cell>) -> Vec<Run> {
     for (col, c) in cells.into_iter().take(end).enumerate().filter(|(_, c)| c.ch != '\0') {
         let cells = if c.wide { 2 } else { 1 };
         match runs.last_mut() {
-            Some(r) if !c.wide && r.cells == r.text.chars().count() && r.col + r.cells == col && r.fg == c.fg && r.bg == c.bg && r.style == c.style => {
+            Some(r) if !c.wide && r.cells == r.text.chars().count() && r.col + r.cells == col && r.fg == c.fg && r.bg == c.bg && r.style == c.style && r.link == c.link => {
                 r.text.push(c.ch);
                 r.cells += 1;
             }
-            _ => runs.push(Run { col, cells, text: c.ch.to_string(), fg: c.fg, bg: c.bg, style: c.style }),
+            _ => runs.push(Run { col, cells, link: c.link, text: c.ch.to_string(), fg: c.fg, bg: c.bg, style: c.style }),
         }
     }
     runs

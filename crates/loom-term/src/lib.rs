@@ -8,10 +8,16 @@
 pub mod keys;
 pub mod snapshot;
 pub mod label;
+mod events;
+pub mod search;
+pub mod mouse;
 mod terminal;
 pub mod theme;
 
 pub use keys::{Mods, encode_key};
+pub use search::SearchMatch;
+pub use mouse::{MouseButton, MouseKind, MouseMode};
 pub use snapshot::{Run, Snapshot, Style, TermColor};
+pub use events::TermEvent;
 pub use theme::TermTheme;
 pub use terminal::{SelectKind, SpawnOptions, Terminal};

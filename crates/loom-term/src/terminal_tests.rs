@@ -183,3 +183,53 @@ fn 程序查询背景色时按主题应答() {
     assert!(text.contains("fafa/fbfb"), "应答里应有浅色背景,画面:{text:?}");
     assert!(text.contains("fgbg=0;15"), "COLORFGBG 应为浅色,画面:{text:?}");
 }
+
+#[test]
+fn 程序改过的颜色优先于主题() {
+    // 程序先用 OSC 11 把背景设成 11/22/33,再查询:应答必须是它自己设的值,而不是主题色
+    let theme = TermTheme { fg: (30, 30, 30), bg: (250, 251, 252), dark: false, palette: Arc::new(|i| (i, i, i)) };
+    let script = "stty raw -echo; printf '\\033]11;rgb:11/22/33\\007\\033]11;?\\007'; dd bs=1 count=20 2>/dev/null | cat -v; echo done";
+    let t = Terminal::spawn(SpawnOptions { command: Some(vec!["/bin/sh".into(), "-c".into(), script.into()]), cols: 80, rows: 24, theme: Some(theme), ..Default::default() }, || {}).unwrap();
+    let text = wait_for(&t, |s| s.text().contains("done")).text();
+    assert!(text.contains("1111/2222"), "应答应是程序自己设的颜色,画面:{text:?}");
+}
+
+#[test]
+fn 响铃与剪贴板写入变成界面事件() {
+    // OSC 52 写剪贴板("hi" 的 base64 是 aGk=),再响铃
+    let t = sh("printf '\\033]52;c;aGk=\\007\\007'; sleep 0.3");
+    let start = Instant::now();
+    let mut got = Vec::new();
+    while start.elapsed() < Duration::from_secs(5) && got.len() < 2 {
+        got.extend(t.drain_events());
+        std::thread::sleep(Duration::from_millis(20));
+    }
+    assert!(got.contains(&TermEvent::ClipboardStore("hi".into())), "事件:{got:?}");
+    assert!(got.contains(&TermEvent::Bell), "事件:{got:?}");
+}
+
+#[test]
+fn 搜索含历史与宽字符() {
+    // 输出 60 行把前面的内容顶进历史:第 0 行含"目标"(宽字符),最后一行含 TARGET
+    let t = sh("echo 'ab 目标 cd'; i=0; while [ $i -lt 60 ]; do echo line$i; i=$((i+1)); done; echo target-end; sleep 0.5");
+    wait_for(&t, |s| s.text().contains("target-end"));
+    let hits = t.search("目标", false);
+    assert_eq!(hits.len(), 1, "{hits:?}");
+    assert!(hits[0].line < 0, "应在历史里:{hits:?}");
+    assert_eq!((hits[0].col, hits[0].cells), (3, 4));
+    assert_eq!(t.search("TARGET", false).len(), 1);
+    assert!(t.search("TARGET", true).is_empty());
+    assert!(t.search("", false).is_empty());
+    t.reveal_line(hits[0].line);
+    assert!(t.snapshot().scrolled_back);
+}
+
+#[test]
+fn osc8_超链接记在文字段上() {
+    let t = sh("printf '\\033]8;;https://example.com\\007点这里\\033]8;;\\007 plain'; sleep 0.3");
+    let s = wait_for(&t, |s| s.text().contains("plain"));
+    let linked: Vec<_> = s.lines[0].iter().filter(|r| r.link.is_some()).collect();
+    assert_eq!(linked.len(), 3, "宽字符各自成段:{:?}", s.lines[0]);
+    assert_eq!(linked[0].link.as_deref(), Some("https://example.com"));
+    assert!(s.lines[0].iter().any(|r| r.link.is_none() && r.text.contains("plain")));
+}

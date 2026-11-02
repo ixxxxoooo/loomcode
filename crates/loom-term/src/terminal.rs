@@ -3,8 +3,11 @@
 //! @author ixxxxoooo
 
 use crate::snapshot::{self, Snapshot};
-use crate::theme::{self, TermTheme, ThemeSlot};
-use alacritty_terminal::event::{Event, EventListener};
+use crate::keys::Mods;
+use crate::mouse::{MouseKind, MouseMode};
+use crate::events::{self, Listener, Pending, SharedWriter, TermEvent};
+use crate::theme::{TermTheme, ThemeSlot};
+use alacritty_terminal::event::EventListener;
 use alacritty_terminal::grid::{Dimensions, Scroll};
 use alacritty_terminal::index::{Column, Line, Point, Side};
 use alacritty_terminal::selection::{Selection, SelectionType};
@@ -39,41 +42,6 @@ pub enum SelectKind {
     Simple,
     Word,
     Line,
-}
-
-type SharedWriter = Arc<Mutex<Box<dyn Write + Send>>>;
-
-/// 接收终端事件:把程序对终端的查询应答写回 pty,记录标题。
-#[derive(Clone)]
-struct Listener {
-    writer: SharedWriter,
-    title: Arc<Mutex<String>>,
-    theme: ThemeSlot,
-}
-
-impl EventListener for Listener {
-    fn send_event(&self, event: Event) {
-        match event {
-            Event::PtyWrite(text) => {
-                if let Ok(mut w) = self.writer.lock() {
-                    let _ = w.write_all(text.as_bytes());
-                    let _ = w.flush();
-                }
-            }
-            // 程序查询前景 / 背景 / 调色板色(OSC 4 / 10 / 11 / 12):按当前主题应答,
-            // 否则 opencode 这类程序拿不到答案,浅色主题下也按深色渲染。
-            Event::ColorRequest(index, format) => {
-                let rgb = self.theme.lock().ok().and_then(|g| g.as_ref().and_then(|t| theme::lookup(t, index)));
-                if let (Some(rgb), Ok(mut w)) = (rgb, self.writer.lock()) {
-                    let _ = w.write_all(format(rgb).as_bytes());
-                    let _ = w.flush();
-                }
-            }
-            Event::Title(t) => *self.title.lock().unwrap() = t,
-            Event::ResetTitle => self.title.lock().unwrap().clear(),
-            _ => {}
-        }
-    }
 }
 
 pub(crate) struct Size {
@@ -117,14 +85,16 @@ pub(crate) fn resize_term<T: EventListener>(term: &mut Term<T>, cols: usize, row
     term.resize(Size { cols, rows });
 }
 
-struct Inner {
+pub(crate) struct Inner {
     term: Term<Listener>,
     parser: Processor,
 }
 
 /// 一个终端。丢弃时会结束它的子进程。
 pub struct Terminal {
+    seq: Arc<std::sync::atomic::AtomicU64>,
     theme: ThemeSlot,
+    events: Arc<Mutex<Vec<TermEvent>>>,
     inner: Arc<Mutex<Inner>>,
     writer: SharedWriter,
     master: Mutex<Box<dyn MasterPty + Send>>,
@@ -165,6 +135,7 @@ impl Terminal {
         }
         cmd.env("TERM", "xterm-256color");
         cmd.env("COLORTERM", "truecolor");
+        cmd.env("TERM_PROGRAM", "LoomCode");
         if let Some(t) = &opts.theme {
             cmd.env("COLORFGBG", t.colorfgbg());
         }
@@ -185,7 +156,9 @@ impl Terminal {
         let writer: SharedWriter = Arc::new(Mutex::new(pair.master.take_writer().map_err(|e| format!("无法写入终端:{e}"))?));
         let title = Arc::new(Mutex::new(String::new()));
         let theme: ThemeSlot = Arc::new(Mutex::new(opts.theme.clone()));
-        let listener = Listener { writer: writer.clone(), title: title.clone(), theme: theme.clone() };
+        let pending: Pending = Arc::new(Mutex::new(Vec::new()));
+        let events = Arc::new(Mutex::new(Vec::new()));
+        let listener = Listener { pending: pending.clone(), title: title.clone(), events: events.clone() };
         let term = Term::new(Config { scrolling_history: opts.scrollback.unwrap_or(10_000), ..Config::default() }, &Size { cols: cols as usize, rows: rows as usize }, listener);
         let inner = Arc::new(Mutex::new(Inner { term, parser: Processor::default() }));
         let child = Arc::new(Mutex::new(child));
@@ -193,6 +166,9 @@ impl Terminal {
         let on_update = Arc::new(on_update);
 
         let (inner2, child2, exit2, notify) = (inner.clone(), child.clone(), exit_code.clone(), on_update.clone());
+        let (writer2, theme2) = (writer.clone(), theme.clone());
+        let seq = Arc::new(std::sync::atomic::AtomicU64::new(0));
+        let seq2 = seq.clone();
         std::thread::spawn(move || {
             let mut buf = [0u8; 8192];
             loop {
@@ -204,6 +180,9 @@ impl Terminal {
                             let Inner { term, parser } = &mut *g;
                             parser.advance(term, &buf[..n]);
                         }
+                        // 放掉终端锁之后再发应答(先问先答,且能读到程序自己改过的颜色)
+                        seq2.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
+                        events::flush(&pending, &writer2, &theme2, |i| inner2.lock().unwrap().term.colors()[i]);
                         notify();
                     }
                 }
@@ -214,7 +193,7 @@ impl Terminal {
             loom_diag::info!("终端退出 pid={pid:?} 退出码={code} 存活 {} 秒", started.elapsed().as_secs());
             notify();
         });
-        Ok(Self { theme, inner, writer, master: Mutex::new(pair.master), child, title, exit_code })
+        Ok(Self { seq, theme, events, inner, writer, master: Mutex::new(pair.master), child, title, exit_code })
     }
 
     /// 更新终端主题(界面切换深浅色时调用);颜色没变什么都不做。
@@ -223,6 +202,16 @@ impl Terminal {
         if !g.as_ref().is_some_and(|old| old.same(&new)) {
             *g = Some(new);
         }
+    }
+
+    /// 输出序号:每读到一批输出加一,界面用它判断搜索结果是否过期。
+    pub fn output_seq(&self) -> u64 {
+        self.seq.load(std::sync::atomic::Ordering::Relaxed)
+    }
+
+    /// 取走积压的界面事件(响铃、剪贴板写入)。
+    pub fn drain_events(&self) -> Vec<TermEvent> {
+        std::mem::take(&mut *self.events.lock().unwrap())
     }
 
     /// 向终端写入字节(键盘输入、粘贴)。
@@ -260,6 +249,24 @@ impl Terminal {
         self.inner.lock().unwrap().term.mode().contains(TermMode::APP_CURSOR)
     }
 
+    /// 程序当前开启的鼠标 / 备用屏幕 / 焦点上报模式。
+    pub fn mouse_mode(&self) -> MouseMode {
+        MouseMode::from_term(*self.inner.lock().unwrap().term.mode())
+    }
+
+    /// 把鼠标事件按程序开启的协议写给它;当前模式不需要该事件时返回 `false`。
+    ///
+    /// 参数:`col` / `row` 画面上的格子坐标(0 起始)。
+    pub fn report_mouse(&self, kind: MouseKind, col: usize, row: usize, mods: Mods) -> bool {
+        match crate::mouse::encode(self.mouse_mode(), kind, col, row, mods) {
+            Some(bytes) => {
+                self.write(&bytes);
+                true
+            }
+            None => false,
+        }
+    }
+
     /// 程序是否开启了括号粘贴模式(粘贴时要用 `ESC[200~` 包起来)。
     pub fn bracketed_paste(&self) -> bool {
         self.inner.lock().unwrap().term.mode().contains(TermMode::BRACKETED_PASTE)
@@ -295,6 +302,23 @@ impl Terminal {
     /// 选中的文本;没有选择或选区为空返回 `None`。
     pub fn selection_text(&self) -> Option<String> {
         self.inner.lock().unwrap().term.selection_to_string().filter(|s| !s.is_empty())
+    }
+
+    /// 在回看历史与当前画面里搜索文本(`case_sensitive` 为假时忽略大小写)。
+    pub fn search(&self, query: &str, case_sensitive: bool) -> Vec<crate::search::SearchMatch> {
+        crate::search::find(&self.inner.lock().unwrap().term, query, case_sensitive)
+    }
+
+    /// 滚动到能看见某个网格行(0 起是当前画面,负数是历史);已经在画面里就不动,否则尽量放在中间。
+    pub fn reveal_line(&self, line: i32) {
+        let mut g = self.inner.lock().unwrap();
+        let rows = g.term.screen_lines() as i32;
+        let offset = g.term.grid().display_offset() as i32;
+        if line + offset >= 0 && line + offset < rows {
+            return;
+        }
+        let want = (rows / 2 - line).clamp(0, g.term.history_size() as i32);
+        g.term.scroll_display(Scroll::Delta(want - offset));
     }
 
     /// 取当前画面快照。
