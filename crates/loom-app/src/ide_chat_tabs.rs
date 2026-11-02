@@ -29,21 +29,65 @@ fn title_of(wb: &Workbench, id: &str) -> String {
 }
 
 impl IdeWindow {
+    /// IDE 固定项目在 `wb.projects` 里的下标。
+    pub(crate) fn pinned_ix(&self, wb: &Workbench) -> Option<usize> {
+        let p = self.pinned.as_ref()?;
+        wb.projects.iter().position(|x| &x.path == p)
+    }
+
+    /// 当前会话是否属于别的项目(只会出现在独立 IDE 窗口里:Agent 窗口切去了别的项目)。
+    pub(crate) fn active_is_foreign(&self, wb: &Workbench) -> bool {
+        let Some(pin) = self.pinned_ix(wb) else { return false };
+        wb.active.as_ref().and_then(|id| project_of(wb, id)).is_some_and(|ix| ix != pin)
+    }
+
+    /// 每次进入 IDE(或首次渲染)把窗口固定到当前项目,并载入该项目自己的对话标签;有变化返回 true。
+    /// 之后在 IDE 里切换标签、新建 / 打开历史会话都只在这个项目内,不会换目录。
+    pub(crate) fn ensure_pin(&mut self, cx: &mut Context<Self>) -> bool {
+        let (epoch, cur, tabs) = {
+            let wb = self.wb.read(cx);
+            let cur = wb.current_project_ix();
+            let path = cur.and_then(|i| wb.projects.get(i)).map(|p| p.path.clone());
+            let tabs: Vec<String> = match cur {
+                Some(ix) => wb.ui_state.last.chat_tabs.iter().filter(|id| project_of(wb, id) == Some(ix)).cloned().collect(),
+                None => Vec::new(),
+            };
+            (wb.ide_enter, path, tabs)
+        };
+        if self.pinned.is_some() && self.seen_enter == epoch {
+            return false;
+        }
+        // 项目还没加载出来时先不固定,下次渲染再试
+        let Some(cur) = cur else { return false };
+        self.seen_enter = epoch;
+        if self.pinned.as_ref() == Some(&cur) {
+            return false;
+        }
+        self.pinned = Some(cur);
+        self.chat_tabs = tabs;
+        self.chat_last_active = None;
+        self.chat_empty = false;
+        true
+    }
+
     /// 同步标签:当前会话变了(新建、从别处打开)就确保它在标签里;关光所有标签后保持空状态直到有新会话。
     pub(crate) fn sync_chat_tabs(&mut self, cx: &mut Context<Self>) {
         let before = self.chat_tabs.clone();
         let active = self.wb.read(cx).active.clone();
+        let foreign = self.active_is_foreign(self.wb.read(cx));
         if active != self.chat_last_active {
-            if let Some(id) = &active && !self.chat_tabs.contains(id) {
+            if let Some(id) = &active && !foreign && !self.chat_tabs.contains(id) {
                 self.chat_tabs.push(id.clone());
             }
-            self.chat_empty = false;
+            if !foreign {
+                self.chat_empty = false;
+            }
             self.chat_last_active = active;
         }
-        // 已被删除的会话不再留标签(历史还没加载完时先保留,免得误删)
+        // 已被删除的、或不属于本项目的会话不留标签(历史还没加载完时先保留,免得误删)
         let wb = self.wb.read(cx);
-        if !wb.projects.is_empty() || wb.demo {
-            self.chat_tabs.retain(|id| wb.views.contains_key(id) || wb.projects.iter().any(|p| p.sessions.iter().any(|s| &s.id == id)));
+        if let Some(pin) = self.pinned_ix(wb) && (!wb.projects.is_empty() || wb.demo) {
+            self.chat_tabs.retain(|id| project_of(wb, id) == Some(pin));
         }
         if self.chat_tabs != before {
             // 渲染期间不能直接更新工作台,放到渲染之后保存
@@ -54,8 +98,15 @@ impl IdeWindow {
 
     /// 把对话栏标签写进 `state.json`(内容没变就不写),下次启动恢复。
     pub(crate) fn save_chat_tabs(&mut self, cx: &mut Context<Self>) {
-        let tabs = self.chat_tabs.clone();
+        let mine = self.chat_tabs.clone();
+        let pin = self.pinned_ix(self.wb.read(cx));
         self.wb.update(cx, |wb, _| {
+            // 标签按项目分开记忆:保留其它项目已存的标签,只替换本项目的那部分
+            let mut tabs: Vec<String> = wb.ui_state.last.chat_tabs.iter().filter(|id| {
+                let ix = project_of(wb, id);
+                ix.is_some() && ix != pin
+            }).cloned().collect();
+            tabs.extend(mine);
             if wb.ui_state.last.chat_tabs != tabs {
                 wb.ui_state.last.chat_tabs = tabs;
                 wb.persist_ui_state();
@@ -72,6 +123,11 @@ impl IdeWindow {
         self.save_chat_tabs(cx);
         let target = id.to_string();
         let Some(ix) = project_of(self.wb.read(cx), id) else { return };
+        // 只能切到本项目的会话:切到别的项目会换掉 IDE 的目录
+        if self.pinned_ix(self.wb.read(cx)).is_some_and(|pin| pin != ix) {
+            self.chat_tabs.retain(|t| t != id);
+            return;
+        }
         let _ = self.wb.update(cx, |wb, cx| wb.open_session(ix, &target, window, cx));
         cx.notify();
     }
@@ -94,7 +150,7 @@ impl IdeWindow {
     fn new_chat(&mut self, window: &mut Window, cx: &mut Context<Self>) {
         let ix = {
             let wb = self.wb.read(cx);
-            wb.active.as_ref().and_then(|id| project_of(wb, id)).unwrap_or_else(|| wb.target_project())
+            self.pinned_ix(wb).or_else(|| wb.active.as_ref().and_then(|id| project_of(wb, id))).unwrap_or_else(|| wb.target_project())
         };
         let _ = self.wb.update(cx, |wb, cx| wb.new_session(ix, window, cx));
     }
@@ -104,8 +160,8 @@ impl IdeWindow {
         let t = cx.theme().clone();
         let (active, history, running) = {
             let wb = self.wb.read(cx);
-            let active = if self.chat_empty { None } else { wb.active.clone() };
-            let ix = wb.active.as_ref().and_then(|id| project_of(wb, id));
+            let active = if self.chat_empty || self.active_is_foreign(wb) { None } else { wb.active.clone() };
+            let ix = self.pinned_ix(wb).or_else(|| wb.active.as_ref().and_then(|id| project_of(wb, id)));
             let history: Vec<(String, String)> = ix.and_then(|i| wb.projects.get(i)).map(|p| {
                 p.sessions.iter().filter(|s| !s.archived).take(MAX_HISTORY).map(|s| (s.id.clone(), s.title.clone())).collect()
             }).unwrap_or_default();

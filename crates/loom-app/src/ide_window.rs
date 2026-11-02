@@ -55,6 +55,10 @@ pub struct IdeWindow {
     pub(crate) _quick_sub: Option<Subscription>,
     /// 对话栏的会话标签(会话 id,顺序即标签顺序)与相关状态
     pub(crate) chat_tabs: Vec<String>,
+    /// IDE 固定的项目(项目路径,取自进入 IDE 时的当前项目):文件树、编辑器、对话标签、历史会话都限定在它之内
+    pub(crate) pinned: Option<String>,
+    /// 已处理到的 `Workbench.ide_enter`;变了说明又一次从 Agent 进入 IDE,要重新固定
+    pub(crate) seen_enter: u64,
     pub(crate) chat_last_active: Option<String>,
     /// 所有标签都被关掉了
     pub(crate) chat_empty: bool,
@@ -156,7 +160,7 @@ impl IdeWindow {
             .detach();
         }
         // 此时工作台可能正处于更新中,不在这里回读它;首次渲染时再同步
-        Self { wb, panel, ide, panel_root: String::new(), focus, left_open: true, chat_open: true, left_narrow: false, left_before: true, chat_narrow: false, chat_before: true, synced: None, _subs: subs, search, search_open: false, quick: None, _quick_sub: None, term_open, term, chat_tabs: wb_tabs, chat_last_active: None, chat_empty: false, chat_wide: std::env::var("LOOM_CHAT_WIDE").is_ok(), notice_open: false, branch_picker: None, _branch_sub: None }
+        Self { wb, panel, ide, panel_root: String::new(), focus, left_open: true, chat_open: true, left_narrow: false, left_before: true, chat_narrow: false, chat_before: true, synced: None, _subs: subs, search, search_open: false, quick: None, _quick_sub: None, term_open, term, chat_tabs: wb_tabs, pinned: None, seen_enter: 0, chat_last_active: None, chat_empty: false, chat_wide: std::env::var("LOOM_CHAT_WIDE").is_ok(), notice_open: false, branch_picker: None, _branch_sub: None }
     }
 
     /// 让面板与根目录跟随工作台当前会话。
@@ -168,12 +172,16 @@ impl IdeWindow {
 
     /// 实际同步;有变化返回 true。渲染时也调用它(不触发 notify)。
     fn sync_state(&mut self, cx: &mut Context<Self>) -> bool {
+        let pin_changed = self.ensure_pin(cx);
         let (id, model, root) = {
             let wb = self.wb.read(cx);
-            (wb.active.clone(), wb.active_model().cloned(), wb.active_project_path())
+            // 目录固定为 IDE 的项目;当前会话不属于它时(独立窗口里 Agent 切去了别的项目)不跟随
+            let root = self.pinned.as_ref().map(|p| wb.work_root(p)).or_else(|| wb.active_project_path());
+            let model = if self.active_is_foreign(wb) { None } else { wb.active_model().cloned() };
+            (wb.active.clone(), model, root)
         };
         let key = (id, root.clone());
-        if self.synced.as_ref() == Some(&key) {
+        if !pin_changed && self.synced.as_ref() == Some(&key) {
             return false;
         }
         self.synced = Some(key);
@@ -323,18 +331,20 @@ impl Render for IdeWindow {
         self.sync_chat_tabs(cx);
         self.apply_responsive(f32::from(window.viewport_size().width));
         let t = cx.theme().clone();
+        let foreign = self.active_is_foreign(self.wb.read(cx));
         let (parts, project, project_name, mode, fused, branch, demo) = {
             let wb = self.wb.read(cx);
-            let project = wb.active_project_path().map(|p| loom_core::project_name_from_path(&p)).unwrap_or_else(|| "LoomCode".into());
+            let pinned = self.pinned_ix(wb);
+            let project = pinned.and_then(|i| wb.projects.get(i)).map(|p| loom_core::project_name_from_path(&wb.work_root(&p.path))).or_else(|| wb.active_project_path().map(|p| loom_core::project_name_from_path(&p))).unwrap_or_else(|| "LoomCode".into());
             let view = wb.active.as_ref().and_then(|id| wb.views.get(id));
-            let name = view.and_then(|v| wb.projects.get(v.project_ix)).map(|p| p.name.clone());
-            let mode = view.map(|v| v.model.read(cx).state.mode.label().to_string());
-            (wb.chat_parts(), project, name, mode, wb.settings.fused_ide, wb.active_branch(), wb.demo)
+            let name = pinned.and_then(|i| wb.projects.get(i)).map(|p| p.name.clone());
+            let mode = view.filter(|_| !foreign).map(|v| v.model.read(cx).state.mode.label().to_string());
+            (if foreign { None } else { wb.chat_parts() }, project, name, mode, wb.settings.fused_ide, wb.active_branch(), wb.demo)
         };
         if let Some((model, _)) = &parts {
             crate::wizard_input::ensure(model, window, cx);
         }
-        let chat_col = v_flex().size_full().child(self.chat_tabs_bar(cx)).child(div().flex_1().min_h_0().child(if self.chat_empty { self.chat_empty_view(cx) } else { chat_panel(parts, branch.clone(), demo, cx) })).into_any_element();
+        let chat_col = v_flex().size_full().child(self.chat_tabs_bar(cx)).child(div().flex_1().min_h_0().child(if self.chat_empty || foreign { self.chat_empty_view(cx) } else { chat_panel(parts, branch.clone(), demo, cx) })).into_any_element();
         v_flex()
             .relative()
             .key_context("IdeWindow")

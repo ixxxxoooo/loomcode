@@ -180,6 +180,9 @@ pub struct Workbench {
     pub ide: bool,
     /// 融合模式的 IDE 外壳:与独立 IDE 窗口是同一个视图,整窗替换 Agent 布局
     pub ide_shell: Option<Entity<IdeWindow>>,
+    /// 「进入 IDE」的次数:每次从 Agent 切到 IDE(或在 Agent 里要求 IDE 打开文件)加一,
+    /// IDE 窗口据此把自己固定到进入时的项目;在 IDE 内切换对话标签不会改变它。
+    pub ide_enter: u64,
     /// Agent 窗口句柄(IDE 窗口据此切回)
     pub agent_window: Option<AnyWindowHandle>,
     /// 独立 IDE 窗口句柄
@@ -315,6 +318,7 @@ impl Workbench {
             _palette_sub: None,
             ide: false,
             ide_shell: None,
+            ide_enter: 0,
             agent_window: Some(window.window_handle()),
             ide_window: None,
             canvas,
@@ -1278,6 +1282,7 @@ impl Workbench {
         }
         self.ide = !self.ide;
         if self.ide {
+            self.ide_enter += 1;
             self.page = Page::Chat;
             if self.ide_shell.is_none() {
                 let wb = cx.entity();
@@ -1296,6 +1301,7 @@ impl Workbench {
 
     /// 打开独立 IDE 窗口;已存在则直接聚焦。
     fn open_ide_window(&mut self, window: &mut Window, cx: &mut Context<Self>) {
+        self.ide_enter += 1;
         self.agent_window = Some(window.window_handle());
         if let Some(handle) = self.ide_window
             && handle.update(cx, |_, w, _| w.activate_window()).is_ok()
