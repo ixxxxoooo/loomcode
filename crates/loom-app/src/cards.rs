@@ -1,4 +1,4 @@
-//! 时间线上的各类卡片:待办、画布、改动汇总、提示(权限 / 提问 / 计划见 `dock_cards`、`ask_cards`,子 Agent 见 `subagent_card`)。
+//! 时间线上的各类卡片:画布、改动汇总、提示(权限 / 提问 / 计划见 `dock_cards`、`ask_cards`,子 Agent 见 `subagent_card`)。
 
 use crate::model::{SessionModel, UiRequest};
 use crate::ui::{MONO, card, caption, icon};
@@ -7,40 +7,6 @@ use gpui_kit::component::{ActiveTheme, h_flex, v_flex};
 use gpui_kit::prelude::FluentBuilder as _;
 use gpui_kit::*;
 use loom_core::*;
-
-/// 待办清单卡。
-pub fn render_todos(id: &str, items: &[TodoItem], cx: &App) -> AnyElement {
-    let t = cx.theme();
-    let done = items.iter().filter(|i| i.status == TodoStatus::Completed).count();
-    card(cx)
-        .p_3()
-        .gap_1p5()
-        .child(
-            h_flex().gap_2().items_center()
-                .child(icon(IconName::ListTodo, 14., t.muted_foreground))
-                .child(div().text_size(px(13.)).font_weight(FontWeight::MEDIUM).child("待办"))
-                .child(caption(format!("{done}/{}", items.len()), cx)),
-        )
-        .children(items.iter().enumerate().map(|(i, it)| {
-            let (ic, color) = match it.status {
-                TodoStatus::Completed => (IconName::CircleCheck, t.success),
-                TodoStatus::InProgress => (IconName::CircleDot, t.primary),
-                TodoStatus::Pending => (IconName::Circle, t.muted_foreground),
-            };
-            h_flex()
-                .id(SharedString::from(format!("{id}-todo-{i}")))
-                .gap_2()
-                .items_center()
-                .child(icon(ic, 14., color))
-                .child(
-                    div().text_size(px(13.))
-                        .text_color(if it.status == TodoStatus::Completed { t.muted_foreground } else { t.foreground })
-                        .when(it.status == TodoStatus::Completed, |d| d.line_through())
-                        .child(it.content.clone()),
-                )
-        }))
-        .into_any_element()
-}
 
 /// Canvas 卡片。
 pub fn render_canvas(session: &Entity<SessionModel>, id: &str, title: &str, cx: &App) -> AnyElement {

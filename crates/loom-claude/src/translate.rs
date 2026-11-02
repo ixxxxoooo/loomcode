@@ -977,6 +977,7 @@ fn parse_todos(input: &Value) -> Vec<TodoItem> {
                         "completed" => TodoStatus::Completed,
                         _ => TodoStatus::Pending,
                     },
+                    active_form: Some(str_of(t, "activeForm")).filter(|s| !s.is_empty()).map(str::to_string),
                 })
                 .collect()
         })
@@ -1269,7 +1270,7 @@ mod tests {
         assert_eq!(card.status, SubagentStatus::Completed);
         assert_eq!(card.children.len(), 1, "子 Agent 的工具归入嵌套时间线");
         assert!(matches!(&card.children[0], TimelineItem::Tool(t) if t.status == ToolStatus::Completed));
-        assert!(matches!(&s.items[1], TimelineItem::Todos { items, .. } if items.len() == 2 && items[0].status == TodoStatus::InProgress));
+        assert!(matches!(&s.items[1], TimelineItem::Todos { items, .. } if items.len() == 2 && items[0].status == TodoStatus::InProgress && items[0].active_form.as_deref() == Some("写代码中") && items[1].active_form.is_none()));
         let TimelineItem::Question(q) = &s.items[2] else { panic!("应是提问卡") };
         assert_eq!(q.questions[0].options.len(), 2);
         assert!(t.take_pending("q1").is_some());

@@ -291,7 +291,7 @@ impl ScriptBuilder {
     pub fn todos(&mut self, id: &str, items: &[(&str, TodoStatus)]) -> &mut Self {
         self.emit(AgentEvent::Todos {
             id: id.into(),
-            items: items.iter().map(|(c, s)| TodoItem { content: c.to_string(), status: *s }).collect(),
+            items: items.iter().map(|(c, s)| TodoItem { content: c.to_string(), status: *s, active_form: Some(format!("正在{c}")) }).collect(),
         });
         self
     }

@@ -791,6 +791,7 @@ impl Workbench {
                 })
                 .detach();
             }
+            crate::rewind_card::debug_autostart(model.clone(), window, cx);
             // 调试用:打开后自动发送一条提示,用于端到端验证真实后端
             if let Ok(text) = std::env::var("LOOM_AUTOSEND") {
                 model.update(cx, |m, cx| m.send_prompt(text, cx));
@@ -1574,6 +1575,8 @@ pub fn chat_panel_with_footer(parts: Option<(Entity<SessionModel>, Entity<Compos
         // 时间线是独立的缓存视图:工作台因动画等原因重跑时直接复用上一帧
         .child(div().flex_1().min_h_0().w_full().children(timeline.map(|tl| tl.cached(StyleRefinement::default().size_full()))))
         .children(crate::dock_cards::render(&model_for_dock, cx))
+        .children(crate::rewind_card::render(&model_for_dock, cx))
+        .children(crate::todo_view::dock(&model_for_dock, cx))
         .children(crate::task_dock::dock(&model_for_dock, cx))
         .child(composer)
         // 页脚(分支 / 运行模式)与输入框同宽居中:分支在输入框左下、说明在右下

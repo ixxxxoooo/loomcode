@@ -158,7 +158,10 @@ fn render_card(session: &Entity<SessionModel>, id: &str, text: &str, images: &[S
     };
     let (s_copy_mark, id_copy_mark) = (session.clone(), id.to_string());
     let (s_retry_mark, id_retry_mark) = (session.clone(), id.to_string());
-    v_flex().id(SharedString::from(format!("umsg-card-{id}"))).group(group.clone()).relative().w_full().gap_2().px(px(14.)).py(px(10.)).min_h(px(40.)).pr(px(60.)).rounded(px(12.)).bg(card_bg(cx)).border_1().border_color(card_border(cx)).shadow_xs().cursor_pointer()
+    // 有检查点 uuid 的消息多一个「回退文件」按钮,右侧留白随按钮数变化
+    let rewindable = session.read(cx).can_rewind(id);
+    let (s_rewind, id_rewind) = (session.clone(), id.to_string());
+    v_flex().id(SharedString::from(format!("umsg-card-{id}"))).group(group.clone()).relative().w_full().gap_2().px(px(14.)).py(px(10.)).min_h(px(40.)).pr(px(if rewindable { 88. } else { 60. })).rounded(px(12.)).bg(card_bg(cx)).border_1().border_color(card_border(cx)).shadow_xs().cursor_pointer()
         .on_click(move |_, window, cx| {
             let (id, text) = (id_click.clone(), text_click.clone());
             s_click.update(cx, |m, cx| m.begin_edit(&id, &text, true, window, cx));
@@ -177,9 +180,16 @@ fn render_card(session: &Entity<SessionModel>, id: &str, text: &str, images: &[S
                     .child(icon(if folded { IconName::ChevronUp } else { IconName::ChevronDown }, 11., t.muted_foreground)),
             )
         })
-        // 悬停时右下角出现:复制、编辑
+        // 悬停时右下角出现:回退文件、重试、复制
         .child(
             h_flex().absolute().right(px(8.)).bottom(px(8.)).gap_0p5().when(!(copied || retried), |d| d.invisible().group_hover(group, |d| d.visible()))
+                .when(rewindable, |d| d.child(action_btn(format!("umsg-rewind-{id}"), IconName::Undo, "回退文件:把 Claude 之后改过的文件恢复到这条消息发出之前", false, cx)
+                    .on_click(move |_, window, cx| {
+                        cx.stop_propagation();
+                        if let Err(why) = s_rewind.update(cx, |m, cx| m.begin_rewind(&id_rewind, cx)) {
+                            crate::notice::warning(window, cx, why);
+                        }
+                    })))
                 .child(action_btn(format!("umsg-retry-{id}"), IconName::RotateCcw, "重试(原样重新发送)", retried, cx)
                     .on_click(move |_, _, cx| {
                         cx.stop_propagation();

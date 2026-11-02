@@ -25,6 +25,9 @@ pub enum TodoStatus {
 pub struct TodoItem {
     pub content: String,
     pub status: TodoStatus,
+    /// 进行中时的动词形式(TodoWrite 的 `activeForm`,如「正在写测试」);没有时界面用 `content`
+    #[serde(default)]
+    pub active_form: Option<String>,
 }
 
 /// 权限选项的性质。

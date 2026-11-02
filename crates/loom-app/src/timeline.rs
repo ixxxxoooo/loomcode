@@ -63,10 +63,12 @@ pub fn render_row(session: &Entity<SessionModel>, ix: usize, window: &mut Window
 /// 回合进行中、暂时没有内容在流出时的「处理中」提示行。
 fn render_working(session: &Entity<SessionModel>, cx: &App) -> AnyElement {
     let (seed, started) = (session.entity_id().as_u64(), session.read(cx).turn_started);
+    // 有进行中的待办时显示它的 activeForm(对标 Claude Code 的状态行),否则随机动词
+    let verb = crate::todo_view::current_active(&session.read(cx).state.items).map(|a| format!("{a}…")).unwrap_or_else(|| crate::appearance::verb_text(cx, &seed.to_string()));
     let t = cx.theme();
     h_flex().h(px(26.)).px_2().gap_2().items_center()
         .child(crate::appearance::glyph_spinner("working", t.primary, cx))
-        .child(ShimmerText::new(crate::appearance::status_line(crate::appearance::verb_text(cx, &seed.to_string()), started)).id("working-shimmer"))
+        .child(ShimmerText::new(crate::appearance::status_line(verb, started)).id("working-shimmer"))
         .text_size(px(13.)).text_color(t.muted_foreground)
         .into_any_element()
 }
@@ -78,7 +80,7 @@ pub fn render_item(session: &Entity<SessionModel>, item: &TimelineItem, depth: u
         TimelineItem::Assistant { id, text, .. } => crate::rich_text::render_assistant(session, id, text, cx),
         TimelineItem::Thinking { id, text, streaming } => render_thinking(session, id, text, *streaming, cx),
         TimelineItem::Tool(tool) => tool_card::render_tool(session, tool, cx),
-        TimelineItem::Todos { id, items } => cards::render_todos(id, items, cx),
+        TimelineItem::Todos { id, items } => crate::todo_view::render_line(session, id, items, cx),
         TimelineItem::Subagent(card) => crate::subagent_card::render(session, card, depth, window, cx),
         TimelineItem::Permission(req) => crate::ask_cards::render_permission(req, cx),
         TimelineItem::Question(req) => crate::ask_cards::render_question(req, cx),
