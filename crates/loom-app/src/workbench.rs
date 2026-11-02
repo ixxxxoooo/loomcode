@@ -559,6 +559,16 @@ impl Workbench {
         self.active.as_ref().and_then(|id| self.views.get(id)).map(|v| &v.model)
     }
 
+    /// 一键收起侧栏里所有项目(不改当前项目)。
+    pub fn collapse_all_projects(&mut self, cx: &mut Context<Self>) {
+        if self.projects.iter().any(|p| p.expanded) {
+            for p in &mut self.projects {
+                p.expanded = false;
+            }
+            cx.notify();
+        }
+    }
+
     pub fn toggle_project(&mut self, ix: usize, cx: &mut Context<Self>) {
         if let Some(p) = self.projects.get_mut(ix) {
             p.expanded = !p.expanded;

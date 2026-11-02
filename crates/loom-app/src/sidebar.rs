@@ -104,6 +104,14 @@ fn nav_row(
         .when_some(shortcut, |d, k| d.child(div().text_size(px(11.)).text_color(t.muted_foreground).child(k)))
 }
 
+/// 「显示 / 隐藏已归档会话」按钮。
+fn archive_btn(on: bool, cx: &mut Context<Workbench>) -> impl IntoElement {
+    Button::new("show-archived").small().ghost().icon(IconName::Archive)
+        .tooltip(if on { "隐藏已归档会话" } else { "显示已归档会话" })
+        .selected(on)
+        .on_click(cx.listener(|this, _, _, cx| this.toggle_show_archived(cx)))
+}
+
 /// 一个项目折叠时要显示的状态:等待你处理 > 运行中 > 未读 > 无(已归档的会话不算)。
 pub fn summary_badge(sessions: &[SessionMeta]) -> SessionBadge {
     let live = || sessions.iter().filter(|s| !s.archived).map(|s| s.badge);
@@ -136,14 +144,18 @@ pub fn render(wb: &Workbench, cx: &mut Context<Workbench>) -> impl IntoElement {
                     |this, _, cx| this.set_page(Page::Customize, cx))),
         )
         .child(
-            h_flex().px_3().pt_2().pb_1().gap_1().items_center()
+            h_flex().id("ws-head").group("ws-head").px_3().pt_2().pb_1().gap_1().items_center().h(px(34.))
                 .child(div().flex_1().text_size(px(12.)).text_color(t.muted_foreground).child("工作区"))
-                .when(!wb.demo, |d| d.child(Button::new("add-project").small().ghost().icon(IconName::FolderPlus).tooltip("添加项目")
-                    .dropdown_menu(project_add::build_menu(cx.entity().downgrade(), project_add::existing_recent(&wb.settings.recent_projects)))))
-                .child(Button::new("show-archived").small().ghost().icon(IconName::Archive)
-                    .tooltip(if wb.show_archived { "隐藏已归档会话" } else { "显示已归档会话" })
-                    .selected(wb.show_archived)
-                    .on_click(cx.listener(|this, _, _, cx| this.toggle_show_archived(cx)))),
+                // 操作按钮只在鼠标移到这一行时出现(对标 VS Code 的区块标题);打开了「显示已归档」时该按钮常驻,提示当前处于筛选状态
+                .child(
+                    h_flex().gap_1().items_center().invisible().group_hover("ws-head", |d| d.visible())
+                        .child(Button::new("collapse-projects").small().ghost().icon(IconName::ChevronsDownUp).tooltip("全部折叠")
+                            .on_click(cx.listener(|this, _, _, cx| this.collapse_all_projects(cx))))
+                        .when(!wb.demo, |d| d.child(Button::new("add-project").small().ghost().icon(IconName::FolderPlus).tooltip("添加项目")
+                            .dropdown_menu(project_add::build_menu(cx.entity().downgrade(), project_add::existing_recent(&wb.settings.recent_projects)))))
+                        .when(!wb.show_archived, |d| d.child(archive_btn(wb.show_archived, cx))),
+                )
+                .when(wb.show_archived, |d| d.child(archive_btn(true, cx))),
         )
         .child(
             v_flex().id("projects").flex_1().min_h_0().overflow_y_scroll().px_2().py_1().gap_1()
