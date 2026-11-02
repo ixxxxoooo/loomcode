@@ -49,7 +49,7 @@ impl IdeView {
 
     /// 对比每个文档的修改时间,按结论重新载入或标记冲突。
     fn check_disk(&mut self, window: &mut Window, cx: &mut Context<Self>) {
-        let paths: Vec<PathBuf> = self.docs.keys().cloned().collect();
+        let paths: Vec<PathBuf> = self.docs.keys().filter(|p| !crate::ide_untitled::is_untitled(p)).cloned().collect();
         let mut changed = false;
         let mut reloaded = Vec::new();
         for path in paths {

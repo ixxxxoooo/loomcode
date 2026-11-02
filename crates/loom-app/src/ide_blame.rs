@@ -56,6 +56,9 @@ pub fn gutter_label(c: &BlameCommit, now: i64) -> String {
 impl IdeView {
     /// 重新计算某文档的追溯(后台线程)。文档有未保存修改时用编辑器内容代替磁盘文件。
     pub(crate) fn refresh_blame(&mut self, path: &Path, cx: &mut Context<Self>) {
+        if crate::ide_untitled::is_untitled(path) {
+            return;
+        }
         let Some(doc) = self.docs.get_mut(path) else { return };
         doc.blame_gen += 1;
         let g = doc.blame_gen;
@@ -85,6 +88,9 @@ impl IdeView {
 
     /// 编辑后 0.7 秒再刷新追溯(防抖);这期间把追溯标成「过期」。
     pub(crate) fn schedule_blame(&mut self, path: &Path, cx: &mut Context<Self>) {
+        if crate::ide_untitled::is_untitled(path) {
+            return;
+        }
         let Some(doc) = self.docs.get_mut(path) else { return };
         doc.blame_fresh = false;
         doc.blame_gen += 1;

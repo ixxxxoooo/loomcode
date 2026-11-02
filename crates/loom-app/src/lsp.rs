@@ -369,7 +369,7 @@ pub fn convert_diagnostics(value: &Value, text: &str) -> (Vec<Diagnostic>, usize
 impl IdeView {
     /// 给已打开的文档接上语言服务器(没有对应服务器、功能关闭、未安装都静默跳过)。
     pub(crate) fn lsp_attach(&mut self, path: &Path, cx: &mut Context<Self>) {
-        if !crate::prefs(cx).editor.lsp {
+        if !crate::prefs(cx).editor.lsp || crate::ide_untitled::is_untitled(path) {
             return;
         }
         let Some(spec) = loom_lsp::spec_for_path(path) else { return };

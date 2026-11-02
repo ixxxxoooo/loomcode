@@ -100,6 +100,10 @@ pub struct IdeView {
     pub(crate) nav: crate::nav_history::NavHistory<(PathBuf, u32)>,
     /// 正在按历史跳转或恢复标签:这期间不记录新的历史
     pub(crate) nav_quiet: bool,
+    /// 临时记事本编号计数
+    pub(crate) untitled_seq: u32,
+    /// 已另存、待换成真实文件标签的 (临时路径, 新路径)
+    pub(crate) saved_as: Vec<(PathBuf, PathBuf)>,
     /// 刚打开文件、还没跳行:紧随其后的 `goto` 替换这一条而不是新增
     pub(crate) fresh_open: bool,
     /// 最近打开的文件,最近的在前
@@ -130,7 +134,7 @@ pub struct IdeView {
 impl IdeView {
     /// 创建空的编辑器视图。
     pub fn new() -> Self {
-        Self { root: String::new(), docs: HashMap::new(), tabs: TabModel::default(), hover_win: None, crumb: None, cmd_click: None, note: None, images: Default::default(), sheets: HashMap::new(), sheet_subs: HashMap::new(), diffs: HashMap::new(), as_text: Default::default(), minimap_ui: Default::default(), applied: None, edit_gen: 0, nav: Default::default(), nav_quiet: false, fresh_open: false, recent: Vec::new(), pending_restore: None, md: HashMap::new(), blame_gutter: false, blame_ui: Default::default(), lsp_listening: false, hover_ui: Default::default(), overlay: None, cursor_msg: None, overlay_sub: None, tabs_scroll: ScrollHandle::new(), tabs_revealed: None }
+        Self { root: String::new(), docs: HashMap::new(), tabs: TabModel::default(), hover_win: None, crumb: None, cmd_click: None, note: None, images: Default::default(), sheets: HashMap::new(), sheet_subs: HashMap::new(), diffs: HashMap::new(), as_text: Default::default(), minimap_ui: Default::default(), applied: None, edit_gen: 0, nav: Default::default(), nav_quiet: false, fresh_open: false, recent: Vec::new(), pending_restore: None, md: HashMap::new(), blame_gutter: false, blame_ui: Default::default(), lsp_listening: false, hover_ui: Default::default(), overlay: None, cursor_msg: None, overlay_sub: None, tabs_scroll: ScrollHandle::new(), tabs_revealed: None, untitled_seq: 0, saved_as: Vec::new() }
     }
 
     /// 设置项目根目录(会话切换时由宿主调用)。
@@ -273,7 +277,7 @@ impl IdeView {
     /// 「延迟」自动保存:停止输入 1 秒后写盘;期间又有编辑就放弃这次(由最后一次编辑触发)。
     fn schedule_autosave(&mut self, path: &Path, cx: &mut Context<Self>) {
         self.edit_gen += 1;
-        if crate::prefs(cx).editor.auto_save != loom_config::AutoSave::Delay {
+        if crate::prefs(cx).editor.auto_save != loom_config::AutoSave::Delay || crate::ide_untitled::is_untitled(path) {
             return;
         }
         let (path, gen_at) = (path.to_path_buf(), self.edit_gen);
@@ -307,6 +311,9 @@ impl IdeView {
 
     /// 在后台线程重新计算某文件的 Git 行标记,完成后铺到编辑器上。
     pub fn refresh_marks(&mut self, path: &Path, cx: &mut Context<Self>) {
+        if crate::ide_untitled::is_untitled(path) {
+            return;
+        }
         let path = path.to_path_buf();
         cx.spawn(async move |this, cx| {
             let p = path.clone();
@@ -330,6 +337,9 @@ impl IdeView {
 
     /// 保存指定标签;返回是否成功(没有该文档也算失败)。
     pub fn save_path(&mut self, path: &Path, cx: &mut Context<Self>) -> bool {
+        if crate::ide_untitled::is_untitled(path) {
+            return self.save_untitled(path, cx);
+        }
         let path = path.to_path_buf();
         let Some(doc) = self.docs.get_mut(&path) else { return false };
         let text = doc.editor.read(cx).value().to_string();
@@ -359,7 +369,7 @@ impl IdeView {
 
     /// 从磁盘重新载入当前文件(丢弃未保存的修改)。
     pub fn reload(&mut self, window: &mut Window, cx: &mut Context<Self>) {
-        let Some(path) = self.tabs.active().map(Path::to_path_buf).filter(|p| !crate::ide_diff::is_diff(p)) else { return };
+        let Some(path) = self.tabs.active().map(Path::to_path_buf).filter(|p| !crate::ide_diff::is_diff(p) && !crate::ide_untitled::is_untitled(p)) else { return };
         self.docs.remove(&path);
         match load(&path, window, cx) {
             Ok(doc) => {
@@ -418,6 +428,15 @@ pub(crate) fn load(path: &Path, window: &mut Window, cx: &mut Context<IdeView>) 
     }
     let bytes = std::fs::read(path).map_err(|e| format!("无法读取 {}:{e}", path.display()))?;
     let text = String::from_utf8(bytes).map_err(|_| "二进制文件,不在编辑器中打开".to_string())?;
+    Ok(build_doc(path, text, meta.modified().ok(), window, cx))
+}
+
+/// 由文本构建文档(磁盘文件与临时记事本共用)。
+///
+/// 参数:`path` 标签路径;`text` 初始内容;`mtime` 磁盘修改时间(临时记事本为 `None`)。
+/// 返回:文档。
+pub(crate) fn build_doc(path: &Path, text: String, mtime: Option<std::time::SystemTime>, window: &mut Window, cx: &mut Context<IdeView>) -> IdeDoc {
+    let prefs = crate::prefs(cx).editor;
     let crlf = text.contains("\r\n");
     let theme = cx.theme().highlight_theme.clone();
     let minimap = std::rc::Rc::new(crate::ide_minimap::build_for(&text, language_for(path), prefs.syntax_highlight, &theme));
@@ -442,7 +461,7 @@ pub(crate) fn load(path: &Path, window: &mut Window, cx: &mut Context<IdeView>) 
                 this.schedule_autosave(&key, cx);
             }
             // 失焦自动保存:编辑器失去焦点(切标签 / 点到别处 / 窗口失焦)时写盘
-            InputEvent::Blur if crate::prefs(cx).editor.auto_save == loom_config::AutoSave::Blur => {
+            InputEvent::Blur if crate::prefs(cx).editor.auto_save == loom_config::AutoSave::Blur && !crate::ide_untitled::is_untitled(&key) => {
                 if this.docs.get(&key).is_some_and(|d| !d.saved) {
                     this.save_path(&key, cx);
                 }
@@ -463,8 +482,7 @@ pub(crate) fn load(path: &Path, window: &mut Window, cx: &mut Context<IdeView>) 
         cx.notify();
     });
     let marks = None;
-    let mtime = meta.modified().ok();
-    Ok(IdeDoc { editor, saved: true, crlf, mtime, stale: false, marks, minimap, mm_key: (theme, prefs.syntax_highlight), mm_gen: 0, hunks: Default::default(), pairs: crate::ide_pairs::PairState::new(language_for(path)), bracket_pair: None, bracket_marks: None, blame: Default::default(), blame_gen: 0, blame_fresh: false, lsp: None, lsp_gen: 0, diag: (0, 0), diag_marks: Default::default(), hover: None, outline: Default::default(), outline_gen: 0, _subs: vec![sub, sub2] })
+    IdeDoc { editor, saved: true, crlf, mtime, stale: false, marks, minimap, mm_key: (theme, prefs.syntax_highlight), mm_gen: 0, hunks: Default::default(), pairs: crate::ide_pairs::PairState::new(language_for(path)), bracket_pair: None, bracket_marks: None, blame: Default::default(), blame_gen: 0, blame_fresh: false, lsp: None, lsp_gen: 0, diag: (0, 0), diag_marks: Default::default(), hover: None, outline: Default::default(), outline_gen: 0, _subs: vec![sub, sub2] }
 }
 
 /// 编辑器对宿主的通知。
@@ -495,6 +513,7 @@ impl IdeView {
 impl Render for IdeView {
     fn render(&mut self, window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
         self.restore_pending(window, cx);
+        self.finish_save_as(window, cx);
         self.sync_prefs(window, cx);
         let t = cx.theme().clone();
         let root = v_flex()

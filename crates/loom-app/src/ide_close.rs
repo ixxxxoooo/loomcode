@@ -11,7 +11,7 @@ use std::path::{Path, PathBuf};
 
 impl IdeView {
     /// 立即关闭一个标签并丢弃其文档。
-    fn drop_tab(&mut self, path: &Path) {
+    pub(crate) fn drop_tab(&mut self, path: &Path) {
         self.docs.remove(path);
         self.images.remove(path);
         self.drop_sheet(path);

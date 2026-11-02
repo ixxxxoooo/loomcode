@@ -58,7 +58,7 @@ pub fn tab_bar(items: Vec<TabItem>, scroll: ScrollHandle, root: &str, cx: &mut C
         .border_color(t.border)
         .children(items.into_iter().enumerate().map(|(i, TabItem { path, dirty, preview, active, pinned })| {
             let is_diff = crate::ide_diff::is_diff(&path);
-            let name = if is_diff { crate::ide_diff::tab_title(&path) } else { path.file_name().map(|n| n.to_string_lossy().to_string()).unwrap_or_default() };
+            let name = if is_diff { crate::ide_diff::tab_title(&path) } else if let Some(n) = crate::ide_untitled::title(&path) { n } else { path.file_name().map(|n| n.to_string_lossy().to_string()).unwrap_or_default() };
             let group = SharedString::from(format!("tab-{i}"));
             let (p_click, p_close, p_mid) = (path.clone(), path.clone(), path.clone());
             let menu = tab_menu(cx.entity().downgrade(), path.clone(), pinned, root.to_string());
@@ -95,6 +95,12 @@ pub fn tab_bar(items: Vec<TabItem>, scroll: ScrollHandle, root: &str, cx: &mut C
                         ),
                 )
         }))
+        // 标签右侧的空白:双击新建临时记事本(对标 VS Code)
+        .child(div().id("ide-tabs-fill").flex_1().min_w(px(24.)).h_full().on_click(cx.listener(|this, ev: &ClickEvent, window, cx| {
+            if ev.click_count() >= 2 {
+                this.new_untitled(window, cx);
+            }
+        })))
 }
 
 /// 标签右键菜单:关闭 / 关闭其他 / 关闭右侧 / 复制路径。
@@ -134,7 +140,7 @@ fn crumb_menu(view: WeakEntity<IdeView>, path: PathBuf, root: String) -> impl Fn
 
 /// 「在访达中显示 / 在资源管理器中定位 / 复制路径 / 复制相对路径」四项(标签菜单与面包屑菜单共用)。差异标签的伪路径没有对应文件,不加。
 fn file_path_items(menu: PopupMenu, view: &WeakEntity<IdeView>, path: &Path, root: &str) -> PopupMenu {
-    if crate::ide_diff::is_diff(path) {
+    if crate::ide_diff::is_diff(path) || crate::ide_untitled::is_untitled(path) {
         return menu;
     }
     let item = |label: &'static str, ic: IconName| PopupMenuItem::new(label).icon(ic);
@@ -170,10 +176,13 @@ pub fn breadcrumbs(path: &Path, root: &str, saved: bool, note: Option<String>, b
             None => path,
         },
     };
-    let segs: Vec<String> = rel.components().map(|c| c.as_os_str().to_string_lossy().to_string()).collect();
+    let segs: Vec<String> = match crate::ide_untitled::title(path) {
+        Some(t) => vec![t],
+        None => rel.components().map(|c| c.as_os_str().to_string_lossy().to_string()).collect(),
+    };
     let last = segs.len().saturating_sub(1);
     // 每一段对应的绝对路径(从外到内):路径的祖先链倒数。差异标签的伪路径不可点
-    let clickable = !crate::ide_diff::is_diff(path);
+    let clickable = !crate::ide_diff::is_diff(path) && !crate::ide_untitled::is_untitled(path);
     let abs: Vec<PathBuf> = (0..segs.len()).map(|i| path.ancestors().nth(last - i).map(Path::to_path_buf).unwrap_or_default()).collect();
     let file = path.to_path_buf();
     let crumb_menu = crumb_menu(cx.entity().downgrade(), path.to_path_buf(), root.to_string());

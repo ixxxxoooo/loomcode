@@ -144,6 +144,9 @@ fn kind_icon(kind: u32) -> IconName {
 impl IdeView {
     /// 立即重新计算某文档的大纲。
     pub(crate) fn refresh_outline(&mut self, path: &std::path::Path, cx: &mut Context<Self>) {
+        if crate::ide_untitled::is_untitled(path) {
+            return;
+        }
         let Some(doc) = self.docs.get_mut(path) else { return };
         doc.outline_gen += 1;
         let g = doc.outline_gen;
@@ -184,6 +187,9 @@ impl IdeView {
 
     /// 编辑后 0.5 秒刷新大纲(防抖)。
     pub(crate) fn schedule_outline(&mut self, path: &std::path::Path, cx: &mut Context<Self>) {
+        if crate::ide_untitled::is_untitled(path) {
+            return;
+        }
         let Some(doc) = self.docs.get_mut(path) else { return };
         doc.outline_gen += 1;
         let (path, g) = (path.to_path_buf(), doc.outline_gen);

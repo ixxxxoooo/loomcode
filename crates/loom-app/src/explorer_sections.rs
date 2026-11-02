@@ -152,9 +152,9 @@ impl Render for OpenEditorsView {
         v_flex().id("open-editors-scroll").max_h(px(ROW_H * OPEN_ROWS_MAX + 4.)).overflow_y_scroll().py_0p5()
             .children(rows.into_iter().enumerate().map(|(i, (path, dirty, preview))| {
                 let is_diff = crate::ide_diff::is_diff(&path);
-                let name = if is_diff { crate::ide_diff::tab_title(&path) } else { path.file_name().map(|n| n.to_string_lossy().to_string()).unwrap_or_default() };
+                let name = if is_diff { crate::ide_diff::tab_title(&path) } else if let Some(n) = crate::ide_untitled::title(&path) { n } else { path.file_name().map(|n| n.to_string_lossy().to_string()).unwrap_or_default() };
                 // 文件所在目录(相对项目根),帮助区分同名文件
-                let dir = if is_diff { String::new() } else { path.parent().and_then(|d| d.strip_prefix(&root).ok()).map(|d| d.display().to_string()).unwrap_or_default() };
+                let dir = if is_diff || crate::ide_untitled::is_untitled(&path) { String::new() } else { path.parent().and_then(|d| d.strip_prefix(&root).ok()).map(|d| d.display().to_string()).unwrap_or_default() };
                 let on = active.as_deref() == Some(path.as_path());
                 let group = SharedString::from(format!("oe-g-{i}"));
                 let (p_open, p_close, ed_open, ed_close) = (path.clone(), path.clone(), editor.clone(), editor.clone());
