@@ -331,6 +331,19 @@ impl IdeView {
             Ok(c) => c,
             Err(e) => {
                 loom_diag::debug!("{} 未接入语言服务器:{e}", path.display());
+                // 没装服务器:每种服务器每次运行只提醒一次(否则跳转 / 悬停 / 诊断悄悄失效,用户无从知道)
+                if e.starts_with("未安装") {
+                    static TOLD: std::sync::Mutex<Vec<String>> = std::sync::Mutex::new(Vec::new());
+                    if let Ok(mut told) = TOLD.lock() && !told.contains(&e) {
+                        told.push(e.clone());
+                        let cmd = e.split_once("安装:").map(|(_, c)| c.trim_end_matches(')').to_string());
+                        let action = cmd.map(|c| crate::notice::NoticeAction {
+                            label: "复制安装命令".into(),
+                            run: std::rc::Rc::new(move |_, cx| cx.write_to_clipboard(ClipboardItem::new_string(c.clone()))),
+                        });
+                        crate::notice::post(cx, crate::notice::Kind::Warning, format!("{e},转到定义 / 悬停 / 诊断暂不可用"), action);
+                    }
+                }
                 cx.notify();
                 return;
             }

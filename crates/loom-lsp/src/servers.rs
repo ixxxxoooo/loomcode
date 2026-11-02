@@ -83,11 +83,18 @@ fn rustup_toolchain_bins() -> Vec<PathBuf> {
     v
 }
 
+/// 是不是 rustup 的代理(`~/.cargo/bin/rust-analyzer` 这类指向 `rustup` 的符号链接)。
+/// 代理在当前工具链没装该组件时会直接报错退出(`Unknown binary 'rust-analyzer' in official toolchain`),不能当真实服务器用。
+fn is_rustup_proxy(p: &Path) -> bool {
+    std::fs::read_link(p).ok().and_then(|t| t.file_name().map(|n| n == "rustup")).unwrap_or(false)
+}
+
 /// 找可执行文件的完整路径:先找 rustup 工具链里的真实文件(绕开代理),再按 PATH 与常见目录。
+/// rustup 代理一律跳过:没装组件时找不到就如实报「未安装」,而不是启动一个必然退出的代理。
 pub fn find_binary(cmd: &str) -> Option<PathBuf> {
     let mut dirs = if cmd == "rust-analyzer" { rustup_toolchain_bins() } else { vec![] };
     dirs.extend(base_dirs());
-    dirs.into_iter().map(|d| d.join(cmd)).find(|p| p.is_file())
+    dirs.into_iter().map(|d| d.join(cmd)).find(|p| p.is_file() && !is_rustup_proxy(p))
 }
 
 /// 子进程的 PATH:原 PATH 加上补充目录,让服务器自己再去找 node、cargo、go 等。
@@ -129,6 +136,18 @@ pub fn init_options(spec: &ServerSpec) -> Option<Value> {
 
 #[cfg(test)]
 mod tests {
+    #[test]
+    fn rustup代理被识别() {
+        let dir = std::env::temp_dir().join(format!("loom-lsp-proxy-{}", std::process::id()));
+        std::fs::create_dir_all(&dir).unwrap();
+        let (real, link) = (dir.join("rustup"), dir.join("rust-analyzer"));
+        std::fs::write(&real, b"").unwrap();
+        std::os::unix::fs::symlink(&real, &link).unwrap();
+        assert!(super::is_rustup_proxy(&link));
+        assert!(!super::is_rustup_proxy(&real));
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
     use super::*;
 
     #[test]

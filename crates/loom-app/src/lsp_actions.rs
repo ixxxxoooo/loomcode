@@ -66,9 +66,26 @@ impl IdeView {
         self.goto_request("textDocument/implementation", "实现", window, cx);
     }
 
-    /// 向语言服务器发一个「转到…」请求(类型定义 / 实现),取第一个结果跳转;`what` 用在提示里。
+    /// 服务器对「转到…」的语义性拒绝,翻成一句人话;不是已知的拒绝返回 None(按错误处理)。
+///
+/// 参数:`what` 动作名(实现 / 类型定义);`err` 服务器返回的错误文本。
+/// 例:gopls 对函数名发「转到实现」会回 `X is a function, not a method`,实现只对接口 / 方法有意义。
+pub fn goto_hint(what: &str, err: &str) -> Option<String> {
+    if what == "实现" && (err.contains("is a function, not a method") || err.contains("not a method")) {
+        return Some("光标处是函数,没有「实现」可转;要看它的声明请用「转到定义」(F12)".into());
+    }
+    if what == "实现" && (err.contains("not an interface") || err.contains("no implementations")) {
+        return Some("光标处不是接口或接口方法,没有「实现」可转".into());
+    }
+    None
+}
+
+/// 向语言服务器发一个「转到…」请求(类型定义 / 实现),取第一个结果跳转;`what` 用在提示里。
     fn goto_request(&mut self, method: &'static str, what: &'static str, window: &mut Window, cx: &mut Context<Self>) {
-        let Some((_, sync, full, rope, offset)) = self.lsp_context(cx) else { return };
+        let Some((_, sync, full, rope, offset)) = self.lsp_context(cx) else {
+            self.show_cursor_message("当前文件没有可用的语言服务器", cx);
+            return;
+        };
         cx.spawn_in(window, async move |this, cx| {
             let res: Result<Option<(PathBuf, u32, u32)>> = cx
                 .background_spawn(async move {
@@ -94,7 +111,11 @@ impl IdeView {
             let _ = this.update_in(cx, |this, window, cx| match res {
                 Ok(Some((path, line, col))) => this.open_at(path, line, col, window, cx),
                 Ok(None) => this.show_cursor_message(format!("未找到{what}"), cx),
-                Err(e) => crate::notice::error(window, cx, format!("转到{what}失败:{e}")),
+                Err(e) => match Self::goto_hint(what, &e.to_string()) {
+                    // 服务器的拒绝是语义上的(光标不在能用的符号上),不是故障:给一句人话的提示,不弹红色错误
+                    Some(hint) => this.show_cursor_message(hint, cx),
+                    None => crate::notice::error(window, cx, format!("转到{what}失败:{e}")),
+                },
             });
         })
         .detach();
@@ -151,6 +172,14 @@ mod tests {
 
     fn edit(sl: u32, sc: u32, el: u32, ec: u32, text: &str) -> lsp_types::TextEdit {
         lsp_types::TextEdit { range: lsp_types::Range::new(lsp_types::Position::new(sl, sc), lsp_types::Position::new(el, ec)), new_text: text.into() }
+    }
+
+    #[::core::prelude::v1::test]
+    fn 转到实现的语义拒绝翻成人话() {
+        let e = "GetRoleNameByRoleId is a function, not a method (query at 'func' token to find matching signatures)";
+        assert!(IdeView::goto_hint("实现", e).unwrap().contains("转到定义"));
+        assert!(IdeView::goto_hint("类型定义", e).is_none());
+        assert!(IdeView::goto_hint("实现", "connection closed").is_none());
     }
 
     #[::core::prelude::v1::test]
