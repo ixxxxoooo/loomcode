@@ -195,6 +195,59 @@ pub fn repo_root(dir: &str) -> Option<String> {
     git(dir, &["rev-parse", "--show-toplevel"]).ok().map(|s| s.trim().to_string()).filter(|s| !s.is_empty())
 }
 
+/// 扫描子目录时跳过的目录名(体积大、不会是用户自己的仓库)。
+const SCAN_SKIP: &[&str] = &["node_modules", "target", "dist", "build", "vendor", "Pods", "DerivedData", "__pycache__", "venv"];
+
+/// 找出 `dir` 相关的所有仓库根(对标 VS Code 的 `git.autoRepositoryDetection`):
+/// 先是包含 `dir` 的仓库(`dir` 在仓库里时),再是 `dir` 往下 `depth` 层里的仓库(含 `.git` 的目录,
+/// 找到就不再往它里面扫;隐藏目录和 `SCAN_SKIP` 里的目录跳过)。结果按路径排序、去重。
+pub fn find_repos(dir: &str, depth: usize) -> Vec<String> {
+    let mut out: Vec<String> = Vec::new();
+    let enclosing = repo_root(dir);
+    if let Some(top) = &enclosing {
+        out.push(top.clone());
+    }
+    let base = std::path::Path::new(dir);
+    // 目录本身在某个仓库里就只用那个仓库(不去扫里面的子模块 / 嵌套仓库);否则才往下找子目录里的仓库
+    if enclosing.is_none() {
+        let mut found: Vec<String> = Vec::new();
+        let mut budget = 4000usize;
+        scan_repos(base, depth, &mut found, &mut budget);
+        found.sort();
+        out.extend(found);
+    }
+    out.dedup();
+    out
+}
+
+fn scan_repos(dir: &std::path::Path, depth: usize, found: &mut Vec<String>, budget: &mut usize) {
+    if depth == 0 {
+        return;
+    }
+    let Ok(rd) = std::fs::read_dir(dir) else { return };
+    for e in rd.flatten() {
+        if *budget == 0 {
+            return;
+        }
+        *budget -= 1;
+        let name = e.file_name().to_string_lossy().to_string();
+        if name.starts_with('.') || SCAN_SKIP.contains(&name.as_str()) {
+            continue;
+        }
+        let p = e.path();
+        if !p.is_dir() {
+            continue;
+        }
+        if p.join(".git").exists() {
+            if let Some(s) = p.canonicalize().ok().and_then(|c| c.to_str().map(String::from)) {
+                found.push(s);
+            }
+        } else {
+            scan_repos(&p, depth - 1, found, budget);
+        }
+    }
+}
+
 /// 本地分支列表。
 pub fn branches(dir: &str) -> Result<Vec<Branch>, String> {
     git(dir, &["branch", "--format=%(HEAD)%(refname:short)"]).map(|o| parse_branches(&o))
@@ -273,6 +326,22 @@ pub fn remove_worktree(dir: &str, path: &str) -> Result<(), String> {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn 扫描子目录里的仓库() {
+        let base = std::env::temp_dir().join(format!("loom-find-repos-{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&base);
+        for d in ["a/.git", "grp/b/.git", "grp/b/inner/.git", "node_modules/x/.git", ".hid/c/.git", "plain/sub"] {
+            std::fs::create_dir_all(base.join(d)).unwrap();
+        }
+        let got = find_repos(base.to_str().unwrap(), 2);
+        let names: Vec<String> = got.iter().map(|p| p.rsplit('/').next().unwrap().to_string()).collect();
+        // a、grp/b;不进 node_modules / 隐藏目录,找到仓库后不再扫它里面的 inner
+        assert_eq!(names, vec!["a", "b"], "{got:?}");
+        // 深度 1 只能看到 a
+        assert_eq!(find_repos(base.to_str().unwrap(), 1).len(), 1);
+        let _ = std::fs::remove_dir_all(&base);
+    }
 
     #[test]
     fn 远程分支去掉_head_与已有本地分支() {

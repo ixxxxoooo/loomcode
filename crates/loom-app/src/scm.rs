@@ -49,8 +49,14 @@ pub enum After {
 pub struct ScmView {
     /// 当前项目根(可能在仓库子目录里)
     pub(crate) root: String,
-    /// 仓库根目录;不在仓库里为 `None`
+    /// 当前查看的仓库根目录;不在仓库里为 `None`
     pub(crate) top: Option<String>,
+    /// 项目里发现的所有仓库(项目所在仓库 + 子目录里的仓库,对标 VS Code 自动检测),多于一个时顶部出现切换条
+    pub(crate) repos: Vec<String>,
+    /// 用户选中的仓库(不在 `repos` 里时退回第一个)
+    chosen: Option<String>,
+    /// 上次扫描仓库的时间:每 30 秒或手动刷新时才重扫,避免每次轮询都遍历目录
+    scanned: Option<Instant>,
     pub(crate) entries: Vec<StatusEntry>,
     pub(crate) groups: Groups,
     pub(crate) sync: SyncInfo,
@@ -87,6 +93,9 @@ pub struct ScmView {
     _sub: Subscription,
 }
 
+/// `error` 里表示「不是仓库」的固定文案。
+const NOT_REPO: &str = "当前目录不在 Git 仓库里";
+
 impl ScmView {
     /// 创建。`root` 为空时先不读取。
     pub fn new(root: String, window: &mut Window, cx: &mut Context<Self>) -> Self {
@@ -105,6 +114,9 @@ impl ScmView {
         let mut this = Self {
             root,
             top: None,
+            repos: Vec::new(),
+            chosen: None,
+            scanned: None,
             entries: Vec::new(),
             groups: Groups::default(),
             sync: SyncInfo::default(),
@@ -141,6 +153,9 @@ impl ScmView {
         }
         self.root = root.to_string();
         self.top = None;
+        self.repos.clear();
+        self.chosen = None;
+        self.scanned = None;
         self.entries.clear();
         self.groups = Groups::default();
         self.sync = SyncInfo::default();
@@ -185,6 +200,63 @@ impl ScmView {
         .detach();
     }
 
+    /// 重新扫描项目里的仓库并刷新(手动刷新、初始化仓库之后)。
+    pub fn rescan(&mut self, cx: &mut Context<Self>) {
+        self.scanned = None;
+        self.refresh(cx);
+    }
+
+    /// 切换到另一个仓库。
+    pub fn select_repo(&mut self, repo: &str, cx: &mut Context<Self>) {
+        if self.top.as_deref() == Some(repo) {
+            return;
+        }
+        self.chosen = Some(repo.to_string());
+        self.top = Some(repo.to_string());
+        self.entries.clear();
+        self.groups = Groups::default();
+        self.sync = SyncInfo::default();
+        self.open.clear();
+        self.selected = None;
+        self.amend = false;
+        self.graph.reset();
+        self.refresh(cx);
+        cx.emit(ScmEvent::Changed);
+        cx.notify();
+    }
+
+    /// 当前目录不是 Git 仓库(而不是读取失败)。
+    pub(crate) fn not_repo(&self) -> bool {
+        self.error.as_deref() == Some(NOT_REPO)
+    }
+
+    /// 在当前目录初始化 Git 仓库(「还不是仓库」空状态里的按钮)。
+    pub fn init_repo(&mut self, window: &mut Window, cx: &mut Context<Self>) {
+        if self.busy.is_some() || self.root.is_empty() {
+            return;
+        }
+        self.busy = Some("初始化仓库");
+        cx.notify();
+        let root = self.root.clone();
+        cx.spawn_in(window, async move |this, cx| {
+            let result = cx.background_spawn(async move { git_scm::init(&root) }).await;
+            let _ = this.update_in(cx, |this, window, cx| {
+                this.busy = None;
+                match result {
+                    Ok(()) => crate::notice::success(window, cx, "已初始化 Git 仓库"),
+                    Err(e) => {
+                        loom_diag::warn!("源代码管理:初始化仓库失败:{e}");
+                        crate::notice::error(window, cx, format!("初始化仓库失败:{e}"));
+                    }
+                }
+                this.rescan(cx);
+                cx.emit(ScmEvent::Changed);
+                cx.notify();
+            });
+        })
+        .detach();
+    }
+
     /// 后台重新读取状态、分支与上游;已展开的文件会重新计算 diff。
     pub fn refresh(&mut self, cx: &mut Context<Self>) {
         if self.loading {
@@ -193,15 +265,19 @@ impl ScmView {
         }
         self.loading = true;
         let root = self.root.clone();
+        let known = self.repos.clone();
+        let chosen = self.chosen.clone();
+        let rescan = self.scanned.is_none_or(|t| t.elapsed() > Duration::from_secs(30));
         cx.spawn(async move |this, cx| {
             let result = cx
                 .background_spawn(async move {
-                    let top = git::repo_root(&root).ok_or_else(|| "当前目录不在 Git 仓库里".to_string())?;
+                    let repos = if rescan { git::find_repos(&root, 2) } else { known };
+                    let top = chosen.filter(|c| repos.contains(c)).or_else(|| repos.first().cloned()).ok_or_else(|| NOT_REPO.to_string())?;
                     let entries = git::status(&top)?;
                     let sync = git_scm::sync_info(&top);
                     let sig = git_log::refs_signature(&top);
                     let stashes = git_log::stashes(&top);
-                    Ok::<_, String>((top, entries, sync, sig, stashes))
+                    Ok::<_, String>((top, repos, entries, sync, sig, stashes))
                 })
                 .await;
             let _ = this.update(cx, |this, cx| {
@@ -210,7 +286,14 @@ impl ScmView {
                 this.loaded = true;
                 let mut changed = first;
                 match result {
-                    Ok((top, entries, sync, sig, stashes)) => {
+                    Ok((top, repos, entries, sync, sig, stashes)) => {
+                        if rescan {
+                            this.scanned = Some(Instant::now());
+                        }
+                        if this.repos != repos {
+                            this.repos = repos;
+                            changed = true;
+                        }
                         if this.graph.stashes != stashes {
                             this.graph.stashes = stashes;
                             changed = true;
@@ -233,6 +316,10 @@ impl ScmView {
                         }
                     }
                     Err(e) => {
+                        if rescan {
+                            this.scanned = Some(Instant::now());
+                        }
+                        this.repos.clear();
                         if this.error.as_deref() != Some(e.as_str()) {
                             changed = true;
                         }

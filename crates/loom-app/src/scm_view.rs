@@ -77,7 +77,7 @@ impl ScmView {
                         let _ = w.update(cx, |this, cx| this.toggle_tree(cx));
                     }
                 }))
-                .item(item("刷新", weak.clone(), |t, _, cx| t.refresh(cx)));
+                .item(item("刷新", weak.clone(), |t, _, cx| t.rescan(cx)));
             // 储藏列表(最多 5 条):应用 / 弹出 / 删除
             for (i, msg) in stashes.iter().take(5).cloned() {
                 let (w1, w2, w3) = (weak.clone(), weak.clone(), weak.clone());
@@ -102,9 +102,51 @@ impl ScmView {
             })
             .child(div().flex_1())
             .child(act_btn("scm-view".into(), if tree { IconName::List } else { IconName::ListTree }, if tree { "以列表查看" } else { "以树形视图查看" }, cx, |this, _, cx| this.toggle_tree(cx)))
-            .child(act_btn("scm-refresh".into(), IconName::RefreshCw, "刷新", cx, |this, _, cx| this.refresh(cx)))
+            .child(act_btn("scm-refresh".into(), IconName::RefreshCw, "刷新", cx, |this, _, cx| this.rescan(cx)))
             .child(Button::new("scm-more").xsmall().ghost().icon(IconName::Ellipsis).tooltip("更多操作").dropdown_menu(more))
             .into_any_element()
+    }
+
+    /// 项目里有多个仓库时的切换条(对标 VS Code「源代码管理存储库」):显示当前仓库名,点开选另一个。
+    fn repo_bar(&self, cx: &mut Context<Self>) -> Option<AnyElement> {
+        if self.repos.len() < 2 {
+            return None;
+        }
+        let t = cx.theme().clone();
+        let cur = self.top.clone().unwrap_or_default();
+        let base = PathBuf::from(&self.root);
+        let label_of = move |p: &str| {
+            let name = Path::new(p).file_name().map(|n| n.to_string_lossy().to_string()).unwrap_or_else(|| p.to_string());
+            let rel = Path::new(p).strip_prefix(&base).ok().map(|r| r.display().to_string()).filter(|r| !r.is_empty() && *r != name);
+            (name, rel)
+        };
+        let (name, _) = label_of(&cur);
+        let repos = self.repos.clone();
+        let weak = cx.entity().downgrade();
+        let count = repos.len();
+        let menu = move |menu: PopupMenu, _: &mut Window, _: &mut Context<PopupMenu>| {
+            let mut menu = menu;
+            for r in repos.iter() {
+                let (name, rel) = label_of(r);
+                let (w, path, on) = (weak.clone(), r.clone(), *r == cur);
+                let text = match rel {
+                    Some(rel) => format!("{name}  ·  {rel}"),
+                    None => name,
+                };
+                menu = menu.item(PopupMenuItem::new(text).checked(on).on_click(move |_, _, cx| {
+                    let _ = w.update(cx, |this, cx| this.select_repo(&path, cx));
+                }));
+            }
+            menu
+        };
+        Some(
+            h_flex().h(px(28.)).w_full().min_w_0().px_3().gap_1().items_center().flex_none().border_b_1().border_color(t.border)
+                .child(icon(IconName::Folder, 13., t.muted_foreground))
+                .child(Button::new("scm-repo").xsmall().ghost().label(name).icon(IconName::ChevronDown).tooltip("切换仓库").dropdown_menu(menu))
+                .child(div().flex_1())
+                .child(div().text_size(px(11.)).text_color(t.muted_foreground).child(format!("{count} 个仓库")))
+                .into_any_element(),
+        )
     }
 
     /// 提交消息框 + 主按钮(提交 / 同步更改 / 发布分支)与旁边的下拉。
@@ -335,6 +377,15 @@ impl Render for ScmView {
     fn render(&mut self, _window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
         self.touch();
         let t = cx.theme().clone();
+        if self.not_repo() {
+            let busy = self.busy.is_some();
+            return empty_state(IconName::GitBranch, "这个文件夹还不是 Git 仓库", "初始化后可以查看改动、提交并推送。", cx)
+                .child(
+                    Button::new("scm-init").small().primary().label(if busy { "正在初始化…" } else { "初始化仓库" }).disabled(busy)
+                        .on_click(cx.listener(|this, _, window, cx| this.init_repo(window, cx))),
+                )
+                .into_any_element();
+        }
         if let Some(e) = &self.error {
             return empty_state(IconName::GitBranch, "无法读取源代码管理状态", e, cx).into_any_element();
         }
@@ -344,6 +395,7 @@ impl Render for ScmView {
         let groups: Vec<AnyElement> = [Group::Conflicts, Group::Staged, Group::Changes].into_iter().filter_map(|g| self.group_view(g, cx)).collect();
         let clean = groups.is_empty();
         v_flex().size_full().min_w_0().overflow_hidden().bg(t.background)
+            .when_some(self.repo_bar(cx), |d, bar| d.child(bar))
             .child(self.toolbar(cx))
             .child(self.commit_box(cx))
             .child(

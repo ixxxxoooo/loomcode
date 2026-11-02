@@ -95,6 +95,11 @@ pub fn discard(dir: &str, entries: &[StatusEntry]) -> Result<(), String> {
     Ok(())
 }
 
+/// 在目录里初始化仓库(`git init`,默认分支名跟随用户的 git 配置)。
+pub fn init(dir: &str) -> Result<(), String> {
+    git(dir, &["init", "-q"]).map(|_| ())
+}
+
 /// 提交。`amend` 为真时修改上一次提交(消息为空则沿用原消息)。
 pub fn commit(dir: &str, message: &str, amend: bool) -> Result<(), String> {
     let msg = message.trim();
