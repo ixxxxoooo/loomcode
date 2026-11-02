@@ -64,7 +64,30 @@ pub fn hover_markdown(hover: &lsp_types::Hover) -> Option<String> {
         HoverContents::Array(items) => items.iter().map(one).collect::<Vec<_>>().join("\n\n"),
         HoverContents::Markup(m) => m.value.clone(),
     };
-    (!text.trim().is_empty()).then(|| truncate(text))
+    (!text.trim().is_empty()).then(|| truncate(annotation_breaks(&text)))
+}
+
+/// 文档注释里以 `@` 开头的注解行(swag 的 `@Summary` / `@Param` / `@Router`、JSDoc 的 `@param`)各占一行:
+/// Markdown 默认把段内换行当空格,整块注解会糊成一大段,所以在这些行前补硬换行(上一行末尾加两个空格)。围栏代码块里不动。
+fn annotation_breaks(md: &str) -> String {
+    let mut out = String::with_capacity(md.len() + 16);
+    let (mut fenced, mut prev_text) = (false, false);
+    for (i, line) in md.split('\n').enumerate() {
+        let t = line.trim_start();
+        if t.starts_with("```") || t.starts_with("~~~") {
+            fenced = !fenced;
+        }
+        let annot = !fenced && t.strip_prefix('@').and_then(|r| r.chars().next()).is_some_and(char::is_alphabetic);
+        if i > 0 {
+            if annot && prev_text && !out.ends_with("  ") {
+                out.push_str("  ");
+            }
+            out.push('\n');
+        }
+        out.push_str(line);
+        prev_text = !fenced && !t.is_empty() && !t.starts_with("```");
+    }
+    out
 }
 
 /// 超过 `MAX_HOVER_BYTES` 时在字符边界截断并补「…」;截断后代码围栏不成对就补一个,免得吞掉后面的排版。
@@ -247,6 +270,13 @@ mod tests {
     fn 语言片段包成代码块() {
         let m = HoverContents::Scalar(MarkedString::LanguageString(LanguageString { language: "rust".into(), value: "fn a()".into() }));
         assert_eq!(hover_markdown(&h(m)).unwrap(), "```rust\nfn a()\n```");
+    }
+
+    #[::core::prelude::v1::test]
+    fn 注解行各占一行() {
+        let md = "doc\n@Summary 汇总\n@Param x\n\n```go\n@Not\n```";
+        assert_eq!(annotation_breaks(md), "doc  \n@Summary 汇总  \n@Param x\n\n```go\n@Not\n```");
+        assert_eq!(annotation_breaks("a @b c"), "a @b c");
     }
 
     #[::core::prelude::v1::test]

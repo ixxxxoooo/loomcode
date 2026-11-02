@@ -162,6 +162,13 @@ impl HoverProvider for LspProvider {
             }
             let card = match res {
                 Ok(Some(h)) => crate::ide_hover::hover_markdown(&h).map(|md| {
+                    // Go:去掉指向私有模块的 pkg.go.dev 链接(点开只会 404)
+                    if path.extension().is_some_and(|e| e == "go") {
+                        loom_lsp::golinks::strip_private_links(&md, &path, loom_lsp::golinks::private_patterns())
+                    } else {
+                        md
+                    }
+                }).filter(|md| !md.trim().is_empty()).map(|md| {
                     let range = match h.range {
                         Some(r) => rope.position_to_offset(&r.start)..rope.position_to_offset(&r.end),
                         None => rope.word_range(offset).unwrap_or(offset..offset),

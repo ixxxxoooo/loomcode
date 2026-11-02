@@ -95,6 +95,9 @@ impl Client {
     pub fn spawn(name: &str, exe: &Path, args: &[&str], root: &Path, init_options: Option<Value>, on_notify: NotifyFn) -> Result<Arc<Client>, String> {
         let mut cmd = Command::new(exe);
         cmd.args(args).current_dir(root).env("PATH", crate::servers::child_path()).stdin(Stdio::piped()).stdout(Stdio::piped()).stderr(Stdio::piped());
+        for (k, v) in crate::servers::extra_env(if name == "gopls" { "gopls" } else { "" }) {
+            cmd.env(k, v);
+        }
         // 与终端同理:fork 期间不能有别的线程调用 libc 时间函数
         let mut child = {
             let _g = loom_diag::fork_guard();

@@ -125,6 +125,18 @@ pub fn project_root(file: &Path, hint: &str) -> PathBuf {
     file.parent().map(Path::to_path_buf).unwrap_or(file)
 }
 
+/// 启动某服务器要额外设置的环境变量。gopls 需要用户的 `GOPRIVATE`(图形界面启动拿不到 shell 里导出的值),
+/// 有了它 gopls 才不会给私有模块生成 pkg.go.dev 链接。
+pub fn extra_env(id: &str) -> Vec<(&'static str, String)> {
+    match id {
+        "gopls" => {
+            let p = crate::golinks::private_patterns();
+            if p.is_empty() || std::env::var_os("GOPRIVATE").is_some() { vec![] } else { vec![("GOPRIVATE", p.to_string())] }
+        }
+        _ => vec![],
+    }
+}
+
 /// 服务器的 `initializationOptions`。
 pub fn init_options(spec: &ServerSpec) -> Option<Value> {
     match spec.id {

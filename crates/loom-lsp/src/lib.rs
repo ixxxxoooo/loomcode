@@ -10,6 +10,7 @@
 
 pub mod client;
 pub mod framing;
+pub mod golinks;
 pub mod hub;
 pub mod position;
 pub mod servers;
