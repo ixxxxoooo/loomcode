@@ -6,7 +6,7 @@ use crate::ide::IdeView;
 use crate::ui::icon;
 use gpui_kit::assets::IconName;
 use gpui_kit::component::button::{Button, ButtonVariants};
-use gpui_kit::component::menu::{ContextMenuExt as _, PopupMenu, PopupMenuItem};
+use gpui_kit::component::menu::{ContextMenuExt as _, DropdownMenu as _, PopupMenu, PopupMenuItem};
 use gpui_kit::component::{ActiveTheme, Selectable as _, Sizable, h_flex, v_flex};
 use gpui_kit::prelude::FluentBuilder as _;
 use gpui_kit::*;
@@ -42,17 +42,16 @@ impl Render for DraggedTab {
 
 /// 标签栏:预览标签用斜体;未保存显示圆点,悬停或当前标签显示关闭按钮;固定标签显示图钉;
 /// 中键关闭、双击固定预览,可拖动排序(固定与非固定之间不互拖)。
-pub fn tab_bar(items: Vec<TabItem>, scroll: ScrollHandle, root: &str, cx: &mut Context<IdeView>) -> impl IntoElement {
+pub fn tab_bar(items: Vec<TabItem>, scroll: ScrollHandle, root: &str, wrap: bool, cx: &mut Context<IdeView>) -> impl IntoElement {
     let t = cx.theme().clone();
-    h_flex()
+    let th = px(crate::tab_style::TAB_H);
+    let tabs = h_flex()
         .id("ide-tabs")
-        .h(px(crate::tab_style::TAB_H))
-        .w_full()
-        .flex_none()
-        .overflow_x_scroll()
-        .track_scroll(&scroll)
-        // 鼠标竖向滚轮也横向滚动标签(触控板横滑原生支持)
-        .on_scroll_wheel(crate::tab_style::wheel_to_horizontal(scroll.clone()))
+        .flex_1()
+        .min_w_0()
+        // 多行:放不下就换行(最多 4 行,再多竖向滚动);单行:横向滚动
+        .when(wrap, |d| d.flex_wrap().items_start().max_h(th * 4.).overflow_y_scroll())
+        .when(!wrap, |d| d.h(th).overflow_x_scroll().track_scroll(&scroll).on_scroll_wheel(crate::tab_style::wheel_to_horizontal(scroll.clone())))
         .bg(t.sidebar)
         .children(items.into_iter().enumerate().map(|(i, TabItem { path, dirty, preview, active, pinned })| {
             let is_diff = crate::ide_diff::is_diff(&path);
@@ -64,6 +63,7 @@ pub fn tab_bar(items: Vec<TabItem>, scroll: ScrollHandle, root: &str, cx: &mut C
             let accent = t.accent;
             crate::tab_style::tab_shell(SharedString::from(format!("ide-tab-{i}")), group.clone(), active, cx)
                 .max_w(px(200.))
+                .h(th)
                 // 底线只画在未选中的标签上:选中标签与下方内容区融为一体
                 .when(!active, |d| d.border_b_1())
                 .on_click(cx.listener(move |this, ev: &ClickEvent, window, cx| {
@@ -96,11 +96,33 @@ pub fn tab_bar(items: Vec<TabItem>, scroll: ScrollHandle, root: &str, cx: &mut C
                 )
         }))
         // 标签右侧的空白:双击新建临时记事本(对标 VS Code)
-        .child(div().id("ide-tabs-fill").flex_1().min_w(px(24.)).h_full().border_b_1().border_color(t.border).on_click(cx.listener(|this, ev: &ClickEvent, window, cx| {
+        .child(div().id("ide-tabs-fill").flex_1().min_w(px(24.)).h(th).border_b_1().border_color(t.border).on_click(cx.listener(|this, ev: &ClickEvent, window, cx| {
             if ev.click_count() >= 2 {
                 this.new_untitled(window, cx);
             }
-        })))
+        })));
+    let view = cx.entity().downgrade();
+    let more = move |menu: PopupMenu, _: &mut Window, _: &mut Context<PopupMenu>| {
+        let item = |label: &'static str| PopupMenuItem::new(label);
+        let (v1, v2, v3) = (view.clone(), view.clone(), view.clone());
+        menu.item(item("多行标签").checked(wrap).on_click(move |_, _, cx| {
+            let _ = v1.update(cx, |this, cx| {
+                this.wrap_tabs = !this.wrap_tabs;
+                cx.notify();
+            });
+        }))
+        .separator()
+        .item(item("关闭已保存").on_click(move |_, window, cx| {
+            let _ = v2.update(cx, |this, cx| this.close_saved(window, cx));
+        }))
+        .item(item("关闭全部").on_click(move |_, window, cx| {
+            let _ = v3.update(cx, |this, cx| this.close_all(window, cx));
+        }))
+    };
+    // 右侧操作区贴在第一行(多行时也不随换行下移),与标签同高、同底线
+    h_flex().w_full().flex_none().items_start().bg(t.sidebar).child(tabs).child(
+        h_flex().h(th).flex_none().px_1().items_center().border_b_1().border_color(t.border).child(Button::new("ide-tabs-more").xsmall().ghost().icon(IconName::Ellipsis).tooltip("更多操作").dropdown_menu(more)),
+    )
 }
 
 /// 标签右键菜单:关闭 / 关闭其他 / 关闭右侧 / 复制路径。
