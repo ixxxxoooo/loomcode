@@ -79,6 +79,13 @@ pub fn render_changes(session: &Entity<SessionModel>, files: &[ChangedFile], cx:
 /// 提示行。
 pub fn render_notice(level: NoticeLevel, text: &str, cx: &App) -> AnyElement {
     let t = cx.theme();
+    // 「已中断」:用户自己的操作,只是一行灰字(对标 Claude Code 的 Interrupted 标记)
+    if text == INTERRUPTED_TEXT {
+        return h_flex().h(px(24.)).px_2().gap_1p5().items_center().text_size(px(12.)).text_color(t.muted_foreground)
+            .child(icon(IconName::CirclePause, 12., t.muted_foreground))
+            .child(format!("{text} · 可以直接输入新的指示"))
+            .into_any_element();
+    }
     let (ic, color) = match level {
         NoticeLevel::Info => (IconName::Info, t.info),
         NoticeLevel::Warning => (IconName::TriangleAlert, t.warning),

@@ -154,6 +154,7 @@ impl Player {
                 self.send(AgentEvent::ModelChanged(m));
             }
             AgentCommand::StopTask { task_id } => self.stop_job(&task_id),
+            AgentCommand::RewindFiles { uuid, dry_run } => self.send(AgentEvent::Rewind(crate::rewind::outcome(&uuid, dry_run))),
             _ => {}
         }
     }
@@ -178,15 +179,17 @@ impl Player {
     /// 播放一个脚本:用户消息 → 回合开始 → 步骤 → 回合结束。
     fn play(&mut self, script: &Script, tag: &str, prompt: &str, _title: &str) {
         self.seq += 1;
+        let id = format!("u-{tag}-{}", self.seq);
         self.send(AgentEvent::Append {
             parent: None,
             item: TimelineItem::User {
-                id: format!("u-{tag}-{}", self.seq),
+                id: id.clone(),
                 text: prompt.to_string(),
                 images: vec![],
                 files: vec![],
             },
         });
+        self.send(AgentEvent::UserUuid { uuid: crate::rewind::uuid_for(&id), id });
         self.send(AgentEvent::TurnStarted);
         self.in_turn = true;
         let outcome = self.run_steps(&script.steps);

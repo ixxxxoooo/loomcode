@@ -1,6 +1,7 @@
 //! LoomCode 演示后端:用脚本化场景驱动界面,不连接真实 Claude。
 
 pub mod player;
+pub mod rewind;
 pub mod scenarios;
 pub mod script;
 pub mod workspace;

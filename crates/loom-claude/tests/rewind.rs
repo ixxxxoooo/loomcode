@@ -35,6 +35,7 @@ fn rewind(h: &BackendHandle, uuid: &str, dry_run: bool) -> RewindOutcome {
     }
 }
 
+/// 注意:检查点只记录编辑工具的改动,Claude 若改用 Bash 写文件,预览会是空的。
 /// 验证:实时发出的消息带上我们的 uuid → Claude 改文件 → 预览列出文件 → 回退恢复磁盘;
 /// 历史回放给出同一个 uuid(重开会话后也能回退)。
 #[test]
@@ -48,7 +49,7 @@ fn 真实_claude_回退文件() {
     let cfg = BackendConfig { cwd: cwd.clone(), session_id: Some(session.clone()), model: Some("haiku".into()), mode: Some(PermissionMode::AcceptEdits), ..Default::default() };
     let h = ClaudeBackend::new(None).start(cfg).expect("需要本机已安装 claude");
     let mut events = collect(&h, 60, |e| matches!(e, AgentEvent::Ready { .. }));
-    h.send(AgentCommand::Prompt { text: "把 a.txt 的内容改成「已修改」,并新建 b.txt 写入「新文件」。只做这两件事,不要解释。".into(), images: vec![], files: vec![], steer: false });
+    h.send(AgentCommand::Prompt { text: "用 Write 工具(不要用 Bash)把 a.txt 的内容改成「已修改」,并新建 b.txt 写入「新文件」。只做这两件事,不要解释。".into(), images: vec![], files: vec![], steer: false });
     events.extend(collect(&h, 180, |e| matches!(e, AgentEvent::TurnEnded(_))));
     let mut state = SessionState::default();
     for e in &events {
@@ -58,10 +59,10 @@ fn 真实_claude_回退文件() {
     let uuid = state.user_uuids.get(&user_id).cloned().expect("用户消息应记下 uuid");
     assert_eq!(std::fs::read_to_string(dir.join("a.txt")).unwrap().trim(), "已修改", "Claude 应已改动文件");
 
+    // 检查点只记编辑工具(Write / Edit)的改动,Bash 改的文件不在其中
     let tools: Vec<String> = state.items.iter().filter_map(|i| match i { TimelineItem::Tool(t) => Some(format!("{}:{:?}", t.name, t.status)), _ => None }).collect();
-    eprintln!("工具调用:{tools:?}");
     let preview = rewind(&h, &uuid, true);
-    assert!(preview.has_changes(), "预览应列出改动:{preview:?}");
+    assert!(preview.has_changes(), "预览应列出改动:{preview:?};工具调用:{tools:?}");
     assert_eq!(preview.files.len(), 2, "{:?}", preview.files);
     assert!(dir.join("b.txt").exists(), "预览不改磁盘");
 

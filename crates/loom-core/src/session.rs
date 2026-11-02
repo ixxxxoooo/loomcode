@@ -5,6 +5,9 @@ use crate::task::*;
 use crate::modes::{Effort, ModelInfo, PermissionMode, default_models};
 use crate::timeline::*;
 
+/// 回合被用户中断时追加的提示文案(界面据此把它画成一行灰字)。
+pub const INTERRUPTED_TEXT: &str = "已中断";
+
 /// 会话运行阶段。
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
 pub enum Phase {
@@ -308,8 +311,21 @@ impl SessionState {
                 self.phase = Phase::Idle;
                 self.last_stop = Some(reason);
                 self.finish_streaming(reason == StopReason::Cancelled);
+                if reason == StopReason::Cancelled {
+                    self.mark_interrupted();
+                }
             }
         }
+    }
+
+    /// 回合被用户中断时在末尾追加一行「已中断」提示(对标 Claude Code 的 Interrupted 标记),
+    /// 否则正文流式中途被打断时时间线看起来像正常结束。连续中断只留一行。
+    fn mark_interrupted(&mut self) {
+        if matches!(self.items.last(), Some(TimelineItem::Notice { text, .. }) if text == INTERRUPTED_TEXT) {
+            return;
+        }
+        let id = format!("notice-{}", self.items.len());
+        self.items.push(TimelineItem::Notice { id, level: NoticeLevel::Info, text: INTERRUPTED_TEXT.into() });
     }
 
     /// 回合结束时收尾:停止所有流式条目;取消时把未完成的工具标为失败。
@@ -620,6 +636,11 @@ mod tests {
         s.apply(AgentEvent::TurnEnded(StopReason::Cancelled));
         assert_eq!(s.phase, Phase::Idle);
         assert!(matches!(&s.items[0], TimelineItem::Tool(t) if t.status == ToolStatus::Interrupted));
+        assert!(matches!(s.items.last(), Some(TimelineItem::Notice { text, .. }) if text == INTERRUPTED_TEXT));
+        // 再次中断不重复追加
+        let n = s.items.len();
+        s.apply(AgentEvent::TurnEnded(StopReason::Cancelled));
+        assert_eq!(s.items.len(), n);
     }
 
     fn sub(id: &str, status: SubagentStatus) -> AgentEvent {
