@@ -164,7 +164,7 @@ impl RightPanel {
         div().when(folder_open, |d| d.h(px(SECTION_H)).min_h(px(48.))).when(!folder_open, |d| d.flex_1().min_h_0()).child(view)
     }
 
-    /// 区块标题行:展开箭头 + 名称(点它折叠 / 展开)、该区块的操作按钮,第一个可见区块还带 `···` 菜单(显示 / 隐藏区块)。
+    /// 区块标题行:展开箭头 + 名称(点它折叠 / 展开)、该区块的操作按钮(悬浮标题行才显示),第一个可见区块还带 `···` 菜单(显示 / 隐藏区块)。
     fn section_head(&self, sec: Section, root_name: &str, actions: Option<AnyElement>, first: bool, cx: &mut Context<Self>) -> AnyElement {
         let t = cx.theme().clone();
         let open = self.sections.open(sec);
@@ -187,7 +187,8 @@ impl RightPanel {
             }
             menu
         };
-        h_flex().h(px(crate::tab_style::TAB_H)).px_2().gap_1().items_center().flex_none().text_size(px(11.)).text_color(t.muted_foreground)
+        let hover_group = SharedString::from(format!("sec-hover-{}", sec.key()));
+        h_flex().group(hover_group.clone()).h(px(crate::tab_style::TAB_H)).px_2().gap_1().items_center().flex_none().text_size(px(11.)).text_color(t.muted_foreground)
             .when(!first, |d| d.border_t_1().border_color(t.border))
             .child(
                 h_flex().id(SharedString::from(format!("sec-head-{}", sec.key()))).flex_1().min_w_0().h_full().gap_1().items_center().cursor_pointer()
@@ -199,7 +200,8 @@ impl RightPanel {
                     .child(icon(if open { IconName::ChevronDown } else { IconName::ChevronRight }, 12., t.muted_foreground))
                     .child(div().min_w_0().truncate().font_weight(FontWeight::SEMIBOLD).child(label)),
             )
-            .children(actions.filter(|_| open))
+            // 操作按钮只在鼠标悬浮标题行时显示(invisible 保留占位,不会让标题抖动)
+            .children(actions.filter(|_| open).map(|a| div().flex_none().invisible().group_hover(hover_group, |d| d.visible()).child(a)))
             .when(first, |d| d.child(Button::new("sec-more").xsmall().ghost().icon(IconName::Ellipsis).tooltip("显示 / 隐藏区块").dropdown_menu(menu)))
             .into_any_element()
     }
