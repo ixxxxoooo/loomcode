@@ -1,200 +1,287 @@
-//! IDE 左栏的「项目内搜索」(⌘⇧F):在后台线程里逐文件做不区分大小写的子串匹配,
-//! 结果按文件分组,点击一行跳到该文件的对应行。
+//! IDE 左栏「搜索」面板的状态与动作(对标 VS Code):边输入边搜(防抖 + 取消过期搜索)、
+//! 区分大小写 / 全词 / 正则、包含与排除文件、替换(单处 / 单文件 / 全部)、忽略匹配、折叠分组。
+//! 搜索与替换内核在 `loom-search`,渲染在 `ide_search_view.rs` / `ide_search_rows.rs`。
 //!
 //! @author ixxxxoooo
 
-use crate::file_icons::file_icon_img;
-use crate::ui::{MONO, empty_state};
-use gpui_kit::assets::IconName;
-use gpui_kit::component::input::{Input, InputEvent, InputState};
-use gpui_kit::component::{ActiveTheme, h_flex, v_flex};
+use crate::ide_search_model::{self as model, Row};
+use gpui_kit::component::WindowExt as _;
+use gpui_kit::component::input::{InputEvent, InputState};
 use gpui_kit::*;
-use std::path::{Path, PathBuf};
+use loom_search::{FileMatches, MatchKey, SearchOutcome, SearchQuery};
+use std::collections::HashSet;
+use std::path::PathBuf;
+use std::sync::Arc;
+use std::sync::atomic::{AtomicBool, Ordering};
+use std::time::Duration;
 
-/// 最多收集的命中行数。
-const MAX_HITS: usize = 500;
-/// 超过这个大小的文件不搜索。
-const MAX_FILE_BYTES: u64 = 1024 * 1024;
+/// 输入后等多久才开始搜(毫秒),与 VS Code 一致量级。
+const DEBOUNCE_MS: u64 = 300;
 
-/// 一个文件里的命中。
-#[derive(Debug, Clone, PartialEq)]
-pub struct FileHits {
-    pub path: PathBuf,
-    /// (行号 1 起始, 该行文本)
-    pub lines: Vec<(u32, String)>,
-}
+actions!(ide_search, [ToggleCase, ToggleWholeWord, ToggleRegex, TogglePreserveCase, ToggleReplace, ReplaceAllMatches]);
 
-/// 搜索面板向窗口发出的事件。
+/// 面板向窗口发出的事件。
 pub enum SearchEvent {
-    /// 打开某文件的某行
-    Open(PathBuf, u32),
+    /// 在编辑器里打开并选中一处匹配(行号 1 起始,列为字符数 0 起始)
+    Open { path: PathBuf, line: u32, start: u32, end: u32 },
 }
 
 impl EventEmitter<SearchEvent> for SearchPanel {}
 
-/// 在 `root` 下搜索 `query`(不区分大小写),最多 `max` 个命中行;返回 (结果, 是否被截断)。
-pub fn search_dir(root: &Path, query: &str, max: usize, intel: &loom_config::IntelPrefs) -> (Vec<FileHits>, bool) {
-    let q = query.to_lowercase();
-    let mut out = Vec::new();
-    let (mut count, mut truncated) = (0usize, false);
-    let mut stack = vec![root.to_path_buf()];
-    'walk: while let Some(dir) = stack.pop() {
-        let Ok(rd) = std::fs::read_dir(&dir) else { continue };
-        let mut entries: Vec<_> = rd.filter_map(|e| e.ok()).collect();
-        entries.sort_by_key(|e| std::cmp::Reverse(e.file_name()));
-        for e in entries {
-            let name = e.file_name().to_string_lossy().to_string();
-            if name.starts_with('.') || intel.ignored(&name) {
-                continue;
-            }
-            let path = e.path();
-            let Ok(ft) = e.file_type() else { continue };
-            if ft.is_dir() {
-                stack.push(path);
-                continue;
-            }
-            if e.metadata().map(|m| m.len() > MAX_FILE_BYTES).unwrap_or(true) {
-                continue;
-            }
-            let Ok(text) = std::fs::read_to_string(&path) else { continue };
-            let mut lines = Vec::new();
-            for (i, l) in text.lines().enumerate() {
-                if l.to_lowercase().contains(&q) {
-                    lines.push((i as u32 + 1, l.trim().chars().take(160).collect::<String>()));
-                    count += 1;
-                    if count >= max {
-                        truncated = true;
-                        out.push(FileHits { path, lines });
-                        break 'walk;
-                    }
-                }
-            }
-            if !lines.is_empty() {
-                out.push(FileHits { path, lines });
-            }
-        }
-    }
-    out.sort_by(|a, b| a.path.cmp(&b.path));
-    (out, truncated)
+/// 替换的范围。
+#[derive(Clone, Copy)]
+pub(crate) enum Scope {
+    /// 一处匹配(文件下标, 匹配下标)
+    One(usize, usize),
+    /// 一个文件里当前列出的全部匹配
+    File(usize),
+    /// 全部结果
+    All,
 }
 
-/// 项目内搜索面板。
+/// 搜索面板。字段对同模块的视图文件开放。
 pub struct SearchPanel {
-    root: String,
+    pub(crate) root: String,
     pub input: Entity<InputState>,
-    results: Vec<FileHits>,
-    truncated: bool,
-    running: bool,
-    /// 已执行过搜索(用来区分「还没搜」与「没结果」)
-    searched: bool,
-    _sub: Subscription,
+    pub(crate) replace_input: Entity<InputState>,
+    pub(crate) include_input: Entity<InputState>,
+    pub(crate) exclude_input: Entity<InputState>,
+    pub(crate) case: bool,
+    pub(crate) word: bool,
+    pub(crate) regex: bool,
+    pub(crate) preserve_case: bool,
+    pub(crate) use_ignore: bool,
+    pub(crate) replace_open: bool,
+    pub(crate) details_open: bool,
+    pub(crate) files: Vec<FileMatches>,
+    pub(crate) rows: Vec<Row>,
+    pub(crate) collapsed: HashSet<PathBuf>,
+    pub(crate) truncated: bool,
+    pub(crate) error: Option<String>,
+    pub(crate) running: bool,
+    /// 已执行过搜索(区分「还没搜」与「没结果」)
+    pub(crate) searched: bool,
+    /// 被点中的匹配:(文件, 行, 起列)
+    pub(crate) active: Option<(PathBuf, u32, u32)>,
+    pub(crate) scroll: UniformListScrollHandle,
+    generation: u64,
+    cancel: Arc<AtomicBool>,
+    _subs: Vec<Subscription>,
 }
 
 impl SearchPanel {
-    /// 创建面板。
+    /// 创建面板。参数:`root` 项目根(可为空,之后用 `set_root` 设置)。
     pub fn new(root: String, window: &mut Window, cx: &mut Context<Self>) -> Self {
-        let input = cx.new(|cx| InputState::new(window, cx).placeholder("在项目中搜索(回车)"));
-        let sub = cx.subscribe_in(&input, window, |this: &mut Self, _, ev: &InputEvent, _, cx| {
-            if let InputEvent::PressEnter { .. } = ev {
-                this.run(cx);
-            }
-        });
-        Self { root, input, results: Vec::new(), truncated: false, running: false, searched: false, _sub: sub }
+        let input = cx.new(|cx| InputState::new(window, cx).placeholder("搜索"));
+        let replace_input = cx.new(|cx| InputState::new(window, cx).placeholder("替换"));
+        let include_input = cx.new(|cx| InputState::new(window, cx).placeholder("例如 *.rs, src/"));
+        let exclude_input = cx.new(|cx| InputState::new(window, cx).placeholder("例如 *.min.js, dist"));
+        let mut subs = Vec::new();
+        for (ix, state) in [&input, &replace_input, &include_input, &exclude_input].into_iter().enumerate() {
+            subs.push(cx.subscribe_in(state, window, move |this: &mut Self, _, ev: &InputEvent, _, cx| match ev {
+                // 替换文本变化只刷新结果行里的替换预览
+                InputEvent::Change if ix == 1 => cx.notify(),
+                InputEvent::Change => this.schedule(DEBOUNCE_MS, cx),
+                InputEvent::PressEnter { .. } if ix != 1 => this.schedule(0, cx),
+                _ => {}
+            }));
+        }
+        Self {
+            root, input, replace_input, include_input, exclude_input, case: false, word: false, regex: false, preserve_case: false, use_ignore: true,
+            replace_open: false, details_open: false, files: Vec::new(), rows: Vec::new(), collapsed: HashSet::new(), truncated: false, error: None,
+            running: false, searched: false, active: None, scroll: UniformListScrollHandle::new(), generation: 0, cancel: Arc::new(AtomicBool::new(false)), _subs: subs,
+        }
     }
 
     /// 切换项目根目录并清空结果。
     pub fn set_root(&mut self, root: String, cx: &mut Context<Self>) {
         if self.root != root {
             self.root = root;
-            self.results.clear();
-            self.searched = false;
-            cx.notify();
+            self.schedule(0, cx);
         }
     }
 
-    /// 执行搜索(后台线程)。
-    fn run(&mut self, cx: &mut Context<Self>) {
-        let query = self.input.read(cx).value().to_string();
-        if query.trim().is_empty() || self.root.is_empty() {
+    /// 用选中文字作为搜索词(⌘⇧F 时编辑器有选区)并立即搜索。
+    pub fn seed(&mut self, text: String, window: &mut Window, cx: &mut Context<Self>) {
+        self.input.update(cx, |i, cx| i.set_value(text, window, cx));
+        self.schedule(0, cx);
+    }
+
+    /// 当前输入得到的搜索条件;「使用忽略文件」开启时并入设置里的忽略目录。
+    fn query(&self, cx: &App) -> SearchQuery {
+        let mut exclude = self.exclude_input.read(cx).value().to_string();
+        if self.use_ignore {
+            let extra: Vec<String> = crate::prefs(cx).intel.ignore.lines().map(str::trim).filter(|l| !l.is_empty()).map(String::from).collect();
+            exclude = std::iter::once(exclude).chain(extra).filter(|s| !s.trim().is_empty()).collect::<Vec<_>>().join(",");
+        }
+        SearchQuery {
+            pattern: self.input.read(cx).value().to_string(),
+            case_sensitive: self.case,
+            whole_word: self.word,
+            regex: self.regex,
+            include: self.include_input.read(cx).value().to_string(),
+            exclude,
+            use_ignore_files: self.use_ignore,
+        }
+    }
+
+    /// 安排一次搜索:取消还在跑的旧搜索,`delay_ms` 后在后台线程执行,只采纳最新一次的结果。关键字为空则清空结果。
+    pub(crate) fn schedule(&mut self, delay_ms: u64, cx: &mut Context<Self>) {
+        self.generation += 1;
+        let generation = self.generation;
+        self.cancel.store(true, Ordering::Relaxed);
+        self.cancel = Arc::new(AtomicBool::new(false));
+        let query = self.query(cx);
+        if query.pattern.is_empty() || self.root.is_empty() {
+            (self.files, self.rows, self.error, self.running, self.searched, self.truncated, self.active) = (Vec::new(), Vec::new(), None, false, false, false, None);
+            cx.notify();
             return;
         }
+        let (root, cancel) = (PathBuf::from(&self.root), self.cancel.clone());
         self.running = true;
         cx.notify();
-        let root = PathBuf::from(&self.root);
-        let intel = crate::prefs(cx).intel;
         cx.spawn(async move |this, cx| {
-            let (results, truncated) = cx.background_spawn(async move { search_dir(&root, &query, MAX_HITS, &intel) }).await;
-            let _ = this.update(cx, |this, cx| {
-                this.results = results;
-                this.truncated = truncated;
-                this.running = false;
-                this.searched = true;
-                cx.notify();
-            });
+            if delay_ms > 0 {
+                cx.background_executor().timer(Duration::from_millis(delay_ms)).await;
+                if this.read_with(cx, |t, _| t.generation != generation).unwrap_or(true) {
+                    return;
+                }
+            }
+            let result = cx.background_spawn(async move { loom_search::search(&root, &query, &cancel) }).await;
+            let _ = this.update(cx, |t, cx| if t.generation == generation { t.apply(result, cx) });
         })
         .detach();
     }
-}
 
-impl Render for SearchPanel {
-    fn render(&mut self, _window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
-        let t = cx.theme().clone();
-        let total: usize = self.results.iter().map(|f| f.lines.len()).sum();
-        let root = PathBuf::from(&self.root);
-        let body = if self.results.is_empty() {
-            let (title, hint) = if self.running { ("搜索中…", "") } else if self.searched { ("没有结果", "换个关键词试试") } else { ("项目内搜索", "输入关键词后回车") };
-            empty_state(IconName::Search, title, hint, cx).into_any_element()
-        } else {
-            v_flex().id("search-results").flex_1().min_h_0().overflow_y_scroll().pb_2()
-                .child(div().px_3().py_1().text_size(px(11.)).text_color(t.muted_foreground).child(format!("{} 个文件,{total} 处匹配{}", self.results.len(), if self.truncated { "(已截断)" } else { "" })))
-                .children(self.results.iter().enumerate().flat_map(|(fi, f)| {
-                    let rel = f.path.strip_prefix(&root).unwrap_or(&f.path).display().to_string();
-                    let name = f.path.file_name().map(|n| n.to_string_lossy().to_string()).unwrap_or_default();
-                    let mut rows: Vec<AnyElement> = vec![h_flex().h(px(24.)).px_3().gap_1p5().items_center().text_size(px(12.5))
-                        .child(file_icon_img(&name, false, false, 14.))
-                        .child(div().flex_none().child(name))
-                        .child(div().flex_1().min_w_0().truncate().text_size(px(11.)).text_color(t.muted_foreground).child(rel))
-                        .into_any_element()];
-                    for (li, (line, text)) in f.lines.iter().enumerate() {
-                        let (path, line) = (f.path.clone(), *line);
-                        rows.push(
-                            h_flex().id(SharedString::from(format!("hit-{fi}-{li}"))).h(px(22.)).pl(px(30.)).pr_2().gap_2().items_center().cursor_pointer()
-                                .hover(|d| d.bg(t.list_hover)).text_size(px(12.))
-                                .on_click(cx.listener(move |_, _, _, cx| cx.emit(SearchEvent::Open(path.clone(), line))))
-                                .child(div().w(px(32.)).flex_none().font_family(MONO).text_size(px(11.)).text_color(t.muted_foreground).child(line.to_string()))
-                                .child(div().flex_1().min_w_0().truncate().child(text.clone()))
-                                .into_any_element(),
-                        );
-                    }
-                    rows
-                }))
-                .into_any_element()
-        };
-        v_flex().size_full().bg(t.sidebar)
-            .child(div().px_3().pt_2().pb_1().child(Input::new(&self.input)))
-            .child(div().flex_1().min_h_0().child(body))
+    /// 采纳一次搜索的结果(已折叠的文件保持折叠)。
+    fn apply(&mut self, result: Result<SearchOutcome, String>, cx: &mut Context<Self>) {
+        match result {
+            Ok(o) if o.cancelled => return,
+            Ok(o) => (self.files, self.truncated, self.error) = (o.files, o.truncated, None),
+            Err(e) => (self.files, self.truncated, self.error) = (Vec::new(), false, Some(e)),
+        }
+        (self.running, self.searched) = (false, true);
+        self.rebuild();
+        cx.notify();
     }
-}
 
-#[cfg(test)]
-mod tests {
-    use super::*;
+    /// 结果或折叠状态变了,重新拍平成行。
+    pub(crate) fn rebuild(&mut self) {
+        self.rows = model::flatten(&self.files, &self.collapsed);
+    }
 
-    #[::core::prelude::v1::test]
-    fn 搜索忽略大小写并给出行号() {
-        let dir = std::env::temp_dir().join(format!("loom-search-{}", std::process::id()));
-        let _ = std::fs::remove_dir_all(&dir);
-        std::fs::create_dir_all(dir.join("sub")).unwrap();
-        std::fs::create_dir_all(dir.join("target")).unwrap();
-        std::fs::write(dir.join("a.txt"), "hello\nWorld Foo\n").unwrap();
-        std::fs::write(dir.join("sub/b.txt"), "foo bar\n").unwrap();
-        std::fs::write(dir.join("target/c.txt"), "foo\n").unwrap();
-        let (res, truncated) = search_dir(&dir, "FOO", 10, &Default::default());
-        assert!(!truncated);
-        assert_eq!(res.len(), 2);
-        assert_eq!(res[0].lines, vec![(2, "World Foo".to_string())]);
-        let (_, truncated) = search_dir(&dir, "foo", 1, &Default::default());
-        assert!(truncated);
-        let _ = std::fs::remove_dir_all(&dir);
+    /// 切换一个开关并立即重搜。
+    fn flip(&mut self, f: impl FnOnce(&mut Self), cx: &mut Context<Self>) {
+        f(self);
+        self.schedule(0, cx);
+    }
+    pub(crate) fn toggle_case(&mut self, cx: &mut Context<Self>) { self.flip(|s| s.case = !s.case, cx) }
+    pub(crate) fn toggle_word(&mut self, cx: &mut Context<Self>) { self.flip(|s| s.word = !s.word, cx) }
+    pub(crate) fn toggle_regex(&mut self, cx: &mut Context<Self>) { self.flip(|s| s.regex = !s.regex, cx) }
+    pub(crate) fn toggle_use_ignore(&mut self, cx: &mut Context<Self>) { self.flip(|s| s.use_ignore = !s.use_ignore, cx) }
+    pub(crate) fn toggle_preserve_case(&mut self, cx: &mut Context<Self>) { self.preserve_case = !self.preserve_case; cx.notify() }
+    pub(crate) fn toggle_replace(&mut self, cx: &mut Context<Self>) { self.replace_open = !self.replace_open; cx.notify() }
+    pub(crate) fn toggle_details(&mut self, cx: &mut Context<Self>) { self.details_open = !self.details_open; cx.notify() }
+
+    /// 清除搜索结果:清空全部输入框与结果。
+    pub(crate) fn clear(&mut self, window: &mut Window, cx: &mut Context<Self>) {
+        for s in [&self.input, &self.replace_input, &self.include_input, &self.exclude_input] {
+            s.update(cx, |i, cx| i.set_value("", window, cx));
+        }
+        self.schedule(0, cx);
+    }
+
+    /// 全部折叠;已经都折叠时改为全部展开。
+    pub(crate) fn toggle_collapse_all(&mut self, cx: &mut Context<Self>) {
+        let all: HashSet<PathBuf> = self.files.iter().map(|f| f.path.clone()).collect();
+        self.collapsed = if self.collapsed.is_superset(&all) { HashSet::new() } else { all };
+        self.rebuild();
+        cx.notify();
+    }
+
+    /// 折叠 / 展开一个文件。
+    pub(crate) fn toggle_file(&mut self, fi: usize, cx: &mut Context<Self>) {
+        let Some(f) = self.files.get(fi) else { return };
+        if !self.collapsed.remove(&f.path) {
+            self.collapsed.insert(f.path.clone());
+        }
+        self.rebuild();
+        cx.notify();
+    }
+
+    /// 点击一处匹配:在编辑器里打开并选中。
+    pub(crate) fn open_match(&mut self, fi: usize, mi: usize, cx: &mut Context<Self>) {
+        let Some((f, m)) = self.files.get(fi).and_then(|f| f.matches.get(mi).map(|m| (f, m))) else { return };
+        self.active = Some((f.path.clone(), m.line, m.start));
+        cx.emit(SearchEvent::Open { path: f.path.clone(), line: m.line, start: m.start, end: m.end });
+        cx.notify();
+    }
+
+    /// 从结果里忽略一处匹配(不改文件,之后的替换也不会碰它)。
+    pub(crate) fn dismiss_match(&mut self, fi: usize, mi: usize, cx: &mut Context<Self>) {
+        model::dismiss_match(&mut self.files, fi, mi);
+        self.rebuild();
+        cx.notify();
+    }
+
+    /// 从结果里忽略一个文件。
+    pub(crate) fn dismiss_file(&mut self, fi: usize, cx: &mut Context<Self>) {
+        model::dismiss_file(&mut self.files, fi);
+        self.rebuild();
+        cx.notify();
+    }
+
+    /// 全部替换前先确认(替换会直接改磁盘文件)。
+    pub(crate) fn confirm_replace_all(&mut self, window: &mut Window, cx: &mut Context<Self>) {
+        let (nf, nm) = model::totals(&self.files);
+        if nm == 0 {
+            return;
+        }
+        let rep = self.replace_input.read(cx).value().to_string();
+        let msg = if rep.is_empty() { format!("确定要从 {nf} 个文件中删除 {nm} 处匹配吗?此操作直接修改磁盘文件。") } else { format!("确定要把 {nf} 个文件中的 {nm} 处匹配替换为「{rep}」吗?此操作直接修改磁盘文件。") };
+        let weak = cx.weak_entity();
+        window.open_dialog(cx, move |dialog, _, _| {
+            let weak = weak.clone();
+            dialog.title("全部替换").child(div().text_size(px(13.)).child(msg.clone())).footer(crate::ui::dialog_footer("替换")).on_ok(move |_, window, cx| {
+                let _ = weak.update(cx, |p, cx| p.start_replace(Scope::All, window, cx));
+                true
+            })
+        });
+    }
+
+    /// 执行替换:只改当前结果里列出的匹配(被忽略的不动),在后台线程写盘,完成后提示并重搜。
+    pub(crate) fn start_replace(&mut self, scope: Scope, window: &mut Window, cx: &mut Context<Self>) {
+        let keys = |f: &FileMatches| -> HashSet<MatchKey> { f.matches.iter().map(|m| (m.line, m.start, m.end)).collect() };
+        let targets: Vec<(PathBuf, HashSet<MatchKey>)> = match scope {
+            Scope::One(fi, mi) => self.files.get(fi).and_then(|f| f.matches.get(mi).map(|m| (f.path.clone(), [(m.line, m.start, m.end)].into_iter().collect()))).into_iter().collect(),
+            Scope::File(fi) => self.files.get(fi).map(|f| (f.path.clone(), keys(f))).into_iter().collect(),
+            Scope::All => self.files.iter().map(|f| (f.path.clone(), keys(f))).collect(),
+        };
+        if targets.is_empty() {
+            return;
+        }
+        let (mut query, replacement, preserve) = (self.query(cx), self.replace_input.read(cx).value().to_string(), self.preserve_case);
+        query.include.clear();
+        query.exclude.clear();
+        cx.spawn_in(window, async move |this, cx| {
+            let (done, errors) = cx.background_spawn(async move {
+                let (mut done, mut errors) = (0usize, Vec::new());
+                for (path, only) in targets {
+                    match loom_search::replace_in_file(&path, &query, &replacement, preserve, Some(&only)) {
+                        Ok(n) => done += n,
+                        Err(e) => errors.push(e),
+                    }
+                }
+                (done, errors)
+            }).await;
+            let _ = this.update_in(cx, |this, window, cx| {
+                match errors.first() {
+                    Some(e) => crate::notice::error(window, cx, format!("替换出错:{e}")),
+                    None => crate::notice::success(window, cx, format!("已替换 {done} 处")),
+                }
+                this.schedule(0, cx);
+            });
+        })
+        .detach();
     }
 }

@@ -30,6 +30,10 @@ impl IdeWindow {
     pub(crate) fn show_search(&mut self, window: &mut Window, cx: &mut Context<Self>) {
         self.left_open = true;
         self.search_open = true;
+        // 编辑器里有单行选区就拿它当搜索词(对标 VS Code 的 seedSearchStringFromSelection)
+        if let Some(text) = self.ide.read(cx).selected_text(cx) {
+            self.search.update(cx, |s, cx| s.seed(text, window, cx));
+        }
         let input = self.search.read(cx).input.clone();
         input.update(cx, |i, cx| i.focus(window, cx));
         cx.notify();

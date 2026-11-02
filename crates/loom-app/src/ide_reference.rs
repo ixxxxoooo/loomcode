@@ -36,6 +36,35 @@ pub fn format_reference(root: &str, path: &Path, lines: Option<(u32, u32)>) -> S
 }
 
 impl IdeView {
+    /// 当前选中的文字:只取非空、不含换行、不超过 200 字符的单行选区,否则 `None`(用来预填搜索框)。
+    pub fn selected_text(&self, cx: &App) -> Option<String> {
+        let doc = self.tabs.active().and_then(|p| self.docs.get(p))?;
+        let ed = doc.editor.read(cx);
+        let range = ed.selected_range();
+        if range.is_empty() {
+            return None;
+        }
+        let text = ed.text().slice(range).to_string();
+        (!text.contains('\n') && text.chars().count() <= 200 && !text.trim().is_empty()).then_some(text)
+    }
+
+    /// 选中一处匹配并滚到可见,不抢焦点(搜索结果点击用)。参数:行号(1 起始)、起止列(字符数,0 起始)。
+    pub fn select_range(&mut self, line: u32, start: u32, end: u32, cx: &mut Context<Self>) {
+        if let Some(c) = self.focused_child() {
+            c.update(cx, |c, cx| c.select_range(line, start, end, cx));
+            return;
+        }
+        let Some(doc) = self.tabs.active().and_then(|p| self.docs.get(p)) else { return };
+        use gpui_kit::component::input::Position;
+        doc.editor.update(cx, |e, cx| {
+            let (a, b) = (e.text().position_to_offset(&Position::new(line.saturating_sub(1), start)), e.text().position_to_offset(&Position::new(line.saturating_sub(1), end)));
+            e.set_selected_range(a..b, cx);
+        });
+        if let Some(path) = self.tabs.active().map(std::path::Path::to_path_buf) {
+            self.record_jump(&path, line);
+        }
+    }
+
     /// 当前文件和选区对应的引用文本;没有打开文件返回 `None`,没有选中内容则只引用文件。
     pub fn selection_reference(&self, cx: &App) -> Option<String> {
         let path = self.tabs.active()?;

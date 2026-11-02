@@ -3671,6 +3671,7 @@ dependencies = [
  "loom-demo",
  "loom-diag",
  "loom-lsp",
+ "loom-search",
  "loom-sheet",
  "loom-term",
  "lsp-types",
@@ -3782,6 +3783,14 @@ dependencies = [
  "async-channel",
  "loom-diag",
  "serde_json",
+]
+
+[[package]]
+name = "loom-search"
+version = "0.1.2"
+dependencies = [
+ "ignore",
+ "regex",
 ]
 
 [[package]]

@@ -103,7 +103,7 @@ impl IdeWindow {
         }));
         // 搜索结果点击 → 打开文件并跳行
         subs.push(cx.subscribe_in(&search, window, |this, _, ev: &crate::ide_search::SearchEvent, window, cx| match ev {
-            crate::ide_search::SearchEvent::Open(path, line) => this.open_at(path.clone(), *line, window, cx),
+            crate::ide_search::SearchEvent::Open { path, line, start, end } => this.open_match(path.clone(), *line, *start, *end, window, cx),
         }));
         // 文件树点选 → 编辑器打开
         subs.push(cx.subscribe_in(&panel, window, |this, _, ev: &PanelEvent, window, cx| match ev {
@@ -153,6 +153,24 @@ impl IdeWindow {
             cx.spawn_in(window, async move |this, cx| {
                 cx.background_executor().timer(std::time::Duration::from_millis(1200)).await;
                 let _ = this.update_in(cx, |this, window, cx| this.toggle_history(window, cx));
+            })
+            .detach();
+        }
+        // 调试用:LOOM_SEARCH=<关键字> 启动后自动打开左栏搜索并填入关键字(LOOM_SEARCH_REPLACE=<文本> 同时展开替换行)
+        if let Ok(q) = std::env::var("LOOM_SEARCH") {
+            let rep = std::env::var("LOOM_SEARCH_REPLACE").ok();
+            cx.spawn_in(window, async move |this, cx| {
+                cx.background_executor().timer(std::time::Duration::from_millis(800)).await;
+                let _ = this.update_in(cx, |this, window, cx| {
+                    this.show_search(window, cx);
+                    this.search.update(cx, |s, cx| {
+                        if let Some(r) = rep {
+                            s.replace_open = true;
+                            s.replace_input.update(cx, |i, cx| i.set_value(r, window, cx));
+                        }
+                        s.seed(q, window, cx);
+                    });
+                });
             })
             .detach();
         }
@@ -534,6 +552,12 @@ pub(crate) fn bind_ide_keys(cx: &mut App) {
             KeyBinding::new("ctrl--", NavBack, Some("IdeWindow")),
             KeyBinding::new("ctrl-_", NavForward, Some("IdeWindow")),
             KeyBinding::new("cmd-shift-f", FindInProject, Some("IdeWindow")),
+            KeyBinding::new("cmd-alt-c", crate::ide_search::ToggleCase, Some("IdeSearch")),
+            KeyBinding::new("cmd-alt-w", crate::ide_search::ToggleWholeWord, Some("IdeSearch")),
+            KeyBinding::new("cmd-alt-r", crate::ide_search::ToggleRegex, Some("IdeSearch")),
+            KeyBinding::new("cmd-alt-p", crate::ide_search::TogglePreserveCase, Some("IdeSearch")),
+            KeyBinding::new("cmd-alt-f", crate::ide_search::ToggleReplace, Some("IdeSearch")),
+            KeyBinding::new("cmd-alt-enter", crate::ide_search::ReplaceAllMatches, Some("IdeSearch")),
             // 编辑器自带库把 ⌘⇧F 绑成「替换」(在更深的 Input 上下文里,会盖住上面这条):
             // 对齐 VS Code,编辑器里 ⌘F = 当前文件查找,⌘⇧F = 全局搜索,替换改成 ⌘⌥F
             KeyBinding::new("cmd-shift-f", FindInProject, Some("IdeWindow > Input")),

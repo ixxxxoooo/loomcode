@@ -139,6 +139,19 @@ impl IdeWindow {
     }
 }
 
+impl IdeWindow {
+    /// 在编辑器里打开路径并选中一处匹配(搜索结果点击):不抢焦点,光标留在搜索面板里。
+    ///
+    /// 参数:`path` 文件;`line` 行号(1 起始);`start` / `end` 起止列(字符数,0 起始)。
+    pub fn open_match(&mut self, path: PathBuf, line: u32, start: u32, end: u32, window: &mut Window, cx: &mut Context<Self>) {
+        self.panel.update(cx, |p, _| p.files.reveal(&path));
+        self.ide.update(cx, |v, cx| {
+            v.open(path, false, window, cx);
+            v.select_range(line, start, end, cx);
+        });
+    }
+}
+
 /// 解析 `行` 或 `行:列`(1 起始,行必须 ≥ 1)。
 pub fn parse_line_col(text: &str) -> Option<(u32, u32)> {
     let mut it = text.trim().splitn(2, [':', ',']);
