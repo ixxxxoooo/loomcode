@@ -332,12 +332,19 @@ impl ScmView {
 }
 
 impl ScmView {
+    /// 多仓库模式:图形区改为显示另一个仓库。
+    pub(crate) fn set_graph_repo(&mut self, path: &str, cx: &mut Context<Self>) {
+        self.graph_repo = Some(path.to_string());
+        cx.notify();
+    }
+
     /// 多仓库模式(对标 VS Code):每个仓库一个可折叠区块,标题行是仓库名与更改数,展开后是该仓库完整的分支 / 提交框 / 更改列表。
     fn multi_view(&mut self, window: &mut Window, cx: &mut Context<Self>) -> AnyElement {
         self.sync_children(window, cx);
         let t = cx.theme().clone();
         let base = PathBuf::from(&self.root);
         let mut list = v_flex().w_full().min_w_0();
+        let weak = cx.entity().downgrade();
         for (i, c) in self.children.iter().enumerate() {
             let open = !self.collapsed_repos.contains(&c.path);
             let name = Path::new(&c.path).file_name().map(|n| n.to_string_lossy().to_string()).unwrap_or_else(|| c.path.clone());
@@ -350,20 +357,45 @@ impl ScmView {
                         .cursor_pointer().bg(t.sidebar).hover(|d| d.bg(t.list_hover))
                         .border_t_1().border_color(t.border)
                         .on_click(cx.listener(move |this, _, _, cx| {
+                            this.graph_repo = Some(path.clone());
                             if !this.collapsed_repos.remove(&path) {
                                 this.collapsed_repos.insert(path.clone());
                             }
                             cx.notify();
                         }))
                         .child(icon(if open { IconName::ChevronDown } else { IconName::ChevronRight }, 13., t.muted_foreground))
-                        .child(div().min_w_0().truncate().text_size(px(11.5)).font_weight(FontWeight::SEMIBOLD).child(name.to_uppercase()))
+                        .child(div().min_w_0().truncate().text_size(px(11.5)).font_weight(FontWeight::SEMIBOLD).child(name))
                         .when_some(rel, |d, rel| d.child(div().min_w_0().truncate().text_size(px(11.)).text_color(t.muted_foreground).child(rel)))
                         .child(div().flex_1())
                         .when(n > 0, |d| d.child(crate::ui::pill(n.to_string(), t.primary_foreground, t.primary))),
                 )
-                .when(open, |d| d.child(c.view.clone()));
+                .when(open, |d| {
+                    // 点到哪个仓库,公共的图形区就显示哪个
+                    let path = c.path.clone();
+                    d.child(div().w_full().capture_any_mouse_down(cx.listener(move |this, _, _, cx| {
+                        if this.graph_repo.as_deref() != Some(path.as_str()) {
+                            this.graph_repo = Some(path.clone());
+                            cx.notify();
+                        }
+                    })).child(c.view.clone()))
+                });
         }
-        v_flex().id("scm-multi").size_full().min_w_0().overflow_y_scroll().bg(t.background).child(list).into_any_element()
+        // 公共的图形区:显示最后点到的仓库(没点过就是第一个),标题行可切换
+        let active = self.graph_repo.clone().filter(|p| self.children.iter().any(|c| &c.path == p)).or_else(|| self.children.first().map(|c| c.path.clone()));
+        let name_of = |p: &str| Path::new(p).file_name().map(|n| n.to_string_lossy().to_string()).unwrap_or_else(|| p.to_string());
+        let repos: Vec<(String, String)> = self.children.iter().map(|c| (c.path.clone(), name_of(&c.path))).collect();
+        let graph = active.and_then(|p| {
+            let view = self.children.iter().find(|c| c.path == p)?.view.clone();
+            let sw = crate::scm::GraphSwitch { current: name_of(&p), repos, owner: weak };
+            view.update(cx, |v, cx| {
+                v.graph_switch = Some(sw);
+                v.graph_section(cx)
+            })
+        });
+        v_flex().size_full().min_w_0().bg(t.background)
+            .child(div().id("scm-multi").flex_1().min_h(px(120.)).min_w_0().overflow_y_scroll().child(list))
+            .when_some(graph, |d, g| d.child(div().id("scm-multi-graph").flex_none().max_h(px(360.)).overflow_y_scroll().w_full().border_t_1().border_color(t.border).child(g)))
+            .into_any_element()
     }
 }
 
@@ -403,7 +435,8 @@ impl Render for ScmView {
                     .when(!embedded, |d| d.flex_1().min_h_0().overflow_y_scroll())
                     .children(groups)
                     .when(clean, |d| d.child(div().px_3().py_4().text_size(px(12.)).text_color(t.muted_foreground).child("没有检测到更改")))
-                    .children(self.graph_section(cx)),
+                    // 多仓库模式下图形区是公共的,由外层统一显示
+                    .children(if embedded { None } else { self.graph_section(cx) }),
             )
             .into_any_element()
     }

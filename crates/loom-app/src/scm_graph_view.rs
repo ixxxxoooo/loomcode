@@ -8,6 +8,7 @@ use crate::scm::ScmView;
 use crate::ui::{MONO, icon};
 use gpui_kit::assets::IconName;
 use gpui_kit::component::button::{Button, ButtonVariants};
+use gpui_kit::component::menu::{DropdownMenu as _, PopupMenu, PopupMenuItem};
 use gpui_kit::component::{ActiveTheme, Selectable as _, Sizable, h_flex, v_flex};
 use gpui_kit::prelude::FluentBuilder as _;
 use gpui_kit::*;
@@ -130,6 +131,22 @@ impl ScmView {
             .on_click(cx.listener(|this, _, _, cx| this.toggle_graph(cx)))
             .child(icon(if open { IconName::ChevronDown } else { IconName::ChevronRight }, 12., t.muted_foreground))
             .child(div().flex_1().min_w_0().truncate().text_size(px(11.5)).font_weight(FontWeight::SEMIBOLD).child(match &g.file { Some(f) => format!("图形 · 文件历史:{}", f.rsplit('/').next().unwrap_or(f)), None => "图形".to_string() }))
+            .when_some(self.graph_switch.clone(), |d, sw| {
+                let current = sw.current.clone();
+                let menu = move |menu: PopupMenu, _: &mut Window, _: &mut Context<PopupMenu>| {
+                    let mut menu = menu;
+                    for (path, name) in sw.repos.iter() {
+                        let (owner, p, on) = (sw.owner.clone(), path.clone(), *name == sw.current);
+                        menu = menu.item(PopupMenuItem::new(name.clone()).checked(on).on_click(move |_, _, cx| {
+                            let _ = owner.update(cx, |this, cx| this.set_graph_repo(&p, cx));
+                        }));
+                    }
+                    menu
+                };
+                // 包一层吃掉按下事件,点它不会触发标题行的展开 / 收起
+                d.child(div().flex_none().on_mouse_down(MouseButton::Left, |_, _, cx| cx.stop_propagation())
+                    .child(Button::new("scm-graph-repo").xsmall().ghost().icon(IconName::Folder).label(current).tooltip("切换图形区显示的仓库").dropdown_menu(menu)))
+            })
             .when(g.file.is_some(), |d| d.child(Button::new("scm-graph-unfile").xsmall().ghost().icon(IconName::X).tooltip("取消文件过滤,显示整个仓库的历史").on_click(cx.listener(|this, _, _, cx| { cx.stop_propagation(); this.graph.file = None; this.graph.sig = None; this.graph.loaded = false; this.reload_graph(cx); }))))
             .child(
                 h_flex().invisible().group_hover("scm-graph-head", |d| d.visible()).gap_0p5()

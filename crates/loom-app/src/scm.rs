@@ -58,6 +58,10 @@ pub struct ScmView {
     pub(crate) children: Vec<RepoChild>,
     /// 多仓库模式下收起的仓库(仓库根路径)
     pub(crate) collapsed_repos: HashSet<String>,
+    /// 多仓库模式下「图形」区当前显示的仓库(最后点到的那个)
+    pub(crate) graph_repo: Option<String>,
+    /// 图形区标题行的仓库切换(多仓库模式下由外层给被显示的那个子视图设置)
+    pub(crate) graph_switch: Option<GraphSwitch>,
     /// 作为多仓库区块里的一个子视图:根节点不撑满高度、列表不自己滚动(由外层统一滚动)
     pub(crate) embedded: bool,
     /// 上次扫描仓库的时间:每 30 秒或手动刷新时才重扫,避免每次轮询都遍历目录
@@ -98,6 +102,14 @@ pub struct ScmView {
     _sub: Subscription,
 }
 
+/// 图形区标题行上的仓库切换:当前仓库名、所有仓库(路径,名称)与外层视图。
+#[derive(Clone)]
+pub(crate) struct GraphSwitch {
+    pub(crate) current: String,
+    pub(crate) repos: Vec<(String, String)>,
+    pub(crate) owner: WeakEntity<ScmView>,
+}
+
 /// 多仓库模式里的一个仓库。
 pub(crate) struct RepoChild {
     pub(crate) path: String,
@@ -130,6 +142,8 @@ impl ScmView {
             children: Vec::new(),
             collapsed_repos: HashSet::new(),
             embedded: false,
+            graph_repo: None,
+            graph_switch: None,
             scanned: None,
             entries: Vec::new(),
             groups: Groups::default(),
@@ -169,6 +183,7 @@ impl ScmView {
         self.top = None;
         self.repos.clear();
         self.children.clear();
+        self.graph_repo = None;
         self.scanned = None;
         self.entries.clear();
         self.groups = Groups::default();
