@@ -697,6 +697,7 @@ impl Workbench {
             PaletteAction::OpenFile(path) => self.open_file(path, window, cx),
             PaletteAction::RunScenario(id) => self.open_scenario(&id, window, cx),
             PaletteAction::SwitchMode => self.request_switch_mode(window, cx),
+            PaletteAction::Ide(_) => {}
         }
     }
 

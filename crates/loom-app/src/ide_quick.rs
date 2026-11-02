@@ -22,17 +22,42 @@ impl IdeWindow {
             cx.notify();
             return;
         }
-        let root = self.wb.read(cx).active_project_path().unwrap_or_default();
+        let root = self.pinned.clone().or_else(|| self.wb.read(cx).active_project_path()).unwrap_or_default();
         let mut items: Vec<PaletteItem> = collect_files(std::path::Path::new(&root), 5000, &crate::prefs(cx).intel)
             .into_iter()
             .map(|f| PaletteItem { title: f.rsplit('/').next().unwrap_or(&f).to_string(), subtitle: f.clone(), group: Group::File, icon: IconName::FileText, action: PaletteAction::OpenFile(f) })
             .collect();
-        // 最近打开的文件排在最前(查询为空时一眼能看到)
+        // 最近打开的文件:无查询时单独成组列在最前(最多 8 个),有查询时文件列表也按最近优先
         let recent: Vec<String> = self.ide.read(cx).recent.iter().filter_map(|p| std::path::Path::new(p).strip_prefix(&root).ok().map(|r| r.to_string_lossy().to_string())).collect();
         items.sort_by_key(|i| recent.iter().position(|r| *r == i.subtitle).unwrap_or(usize::MAX));
+        let top: Vec<PaletteItem> = recent
+            .iter()
+            .filter_map(|r| items.iter().find(|i| i.subtitle == *r))
+            .take(8)
+            .map(|i| PaletteItem { group: Group::Recent, ..i.clone() })
+            .collect();
+        items.splice(0..0, top);
+        // 本项目的对话会话(IDE 固定在进入时的项目)
+        {
+            let wb = self.wb.read(cx);
+            if let Some(p) = self.pinned_ix(wb).and_then(|ix| wb.projects.get(ix)) {
+                for s in &p.sessions {
+                    items.push(PaletteItem { title: s.title.clone(), subtitle: p.name.clone(), group: Group::Session, icon: IconName::MessageSquare, action: PaletteAction::OpenSession(0, s.id.clone()) });
+                }
+            }
+        }
         let mut cmd = |title: &str, sub: &str, ic: IconName, action: PaletteAction| {
             items.push(PaletteItem { title: title.into(), subtitle: sub.into(), group: Group::Command, icon: ic, action });
         };
+        cmd("新建临时记事本", "双击标签栏空白", IconName::FilePlus, PaletteAction::Ide("untitled"));
+        cmd("保存文件", "⌘S", IconName::Save, PaletteAction::Ide("save"));
+        cmd("全部保存", "", IconName::Save, PaletteAction::Ide("save-all"));
+        cmd("关闭标签", "⌘W", IconName::X, PaletteAction::Ide("close-tab"));
+        cmd("跳转到行…", "⌃G", IconName::ArrowDownToLine, PaletteAction::Ide("goto-line"));
+        cmd("在项目中搜索", "⇧⌘F", IconName::Search, PaletteAction::Ide("search"));
+        cmd("源代码管理", "⌃⇧G", IconName::GitBranch, PaletteAction::Ide("scm"));
+        cmd("显示 / 隐藏终端", "⌘J", IconName::SquareTerminal, PaletteAction::Ide("terminal"));
+        cmd("新建对话会话", "", IconName::Plus, PaletteAction::Ide("new-chat"));
         cmd("切换到 Agent", "⇧⌘E", IconName::MessageSquare, PaletteAction::ToggleIde);
         cmd("显示 / 隐藏侧栏", "⌘B", IconName::PanelLeft, PaletteAction::ToggleLeft);
         cmd("显示 / 隐藏对话栏", "⌥⌘B", IconName::PanelRight, PaletteAction::ToggleRight);
@@ -47,6 +72,8 @@ impl IdeWindow {
                     PaletteAction::ToggleLeft => this.left_open = !this.left_open,
                     PaletteAction::ToggleRight => this.chat_open = !this.chat_open,
                     PaletteAction::ToggleIde => this.back_to_agent(cx),
+                    PaletteAction::OpenSession(_, id) => this.activate_chat_tab(&id, window, cx),
+                    PaletteAction::Ide(name) => this.run_ide_command(name, window, cx),
                     _ => {}
                 }
                 cx.notify();
@@ -54,6 +81,24 @@ impl IdeWindow {
         }));
         self.quick = Some(palette);
         cx.notify();
+    }
+
+    /// 执行快速面板里的 IDE 内置命令。
+    ///
+    /// 参数:`name` 命令名(见 `PaletteAction::Ide`)。
+    fn run_ide_command(&mut self, name: &str, window: &mut Window, cx: &mut Context<Self>) {
+        match name {
+            "untitled" => self.ide.update(cx, |v, cx| v.new_untitled(window, cx)),
+            "save" => self.ide.update(cx, |v, cx| v.save(cx)),
+            "save-all" => self.ide.update(cx, |v, cx| v.save_all(cx)),
+            "close-tab" => self.ide.update(cx, |v, cx| v.close_active(window, cx)),
+            "goto-line" => self.goto_line_dialog(window, cx),
+            "search" => self.show_search(window, cx),
+            "scm" => self.show_scm(window, cx),
+            "terminal" => self.toggle_term(window, cx),
+            "new-chat" => self.new_chat(window, cx),
+            _ => {}
+        }
     }
 
     /// 跳转到行:输入 `行` 或 `行:列`。

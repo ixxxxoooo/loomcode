@@ -181,7 +181,7 @@ impl IdeWindow {
     }
 
     /// 在当前项目里新开一个会话(它会自动成为新标签)。
-    fn new_chat(&mut self, window: &mut Window, cx: &mut Context<Self>) {
+    pub(crate) fn new_chat(&mut self, window: &mut Window, cx: &mut Context<Self>) {
         let ix = {
             let wb = self.wb.read(cx);
             self.pinned_ix(wb).or_else(|| wb.active.as_ref().and_then(|id| project_of(wb, id))).unwrap_or_else(|| wb.target_project())

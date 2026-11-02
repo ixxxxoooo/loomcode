@@ -31,6 +31,8 @@ pub enum PaletteAction {
     RunScenario(String),
     /// 演示 ↔ 真实一键切换(确认后重启)
     SwitchMode,
+    /// IDE 窗口的内置命令(键为命令名,由 `ide_quick` 执行)
+    Ide(&'static str),
 }
 
 /// 条目分组。
@@ -40,6 +42,8 @@ pub enum Group {
     Session,
     Project,
     File,
+    /// 最近打开的文件:只在无查询时显示,有查询时由「文件」分组承担
+    Recent,
     Scenario,
 }
 
@@ -50,6 +54,7 @@ impl Group {
             Self::Session => "会话",
             Self::Project => "项目",
             Self::File => "文件",
+            Self::Recent => "最近文件",
             Self::Scenario => "演示场景",
         }
     }

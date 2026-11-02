@@ -97,7 +97,8 @@ pub fn fuzzy_score(query: &str, text: &str) -> Option<i32> {
 pub fn filter_items(items: &[PaletteItem], query: &str, limit: usize, segment: Segment) -> Vec<PaletteItem> {
     if query.trim().is_empty() {
         let keep = |i: &&PaletteItem| match segment {
-            Segment::All => matches!(i.group, Group::Command | Group::Session),
+            Segment::All => matches!(i.group, Group::Command | Group::Session | Group::Recent),
+            Segment::File => matches!(i.group, Group::File | Group::Recent),
             other => other.accepts(i.group),
         };
         return items.iter().filter(keep).take(limit).cloned().collect();
@@ -105,7 +106,7 @@ pub fn filter_items(items: &[PaletteItem], query: &str, limit: usize, segment: S
     let mut scored: Vec<(i32, usize, &PaletteItem)> = items
         .iter()
         .enumerate()
-        .filter(|(_, i)| segment.accepts(i.group))
+        .filter(|(_, i)| segment.accepts(i.group) && i.group != Group::Recent)
         .filter_map(|(ix, i)| {
             let a = fuzzy_score(query, &i.title);
             let b = fuzzy_score(query, &i.subtitle).map(|s| s - 12);
