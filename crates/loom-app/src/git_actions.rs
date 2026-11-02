@@ -70,6 +70,23 @@ impl Workbench {
         self.run_git(dir, msg, window, cx, move |d| git::switch_branch(d, &name));
     }
 
+    /// 切换分支(分支选择器用):`remote` 为真时检出远程分支并建立跟踪。
+    pub fn switch_ref(&mut self, dir: &str, name: &str, remote: bool, window: &mut Window, cx: &mut Context<Self>) {
+        if !remote {
+            return self.switch_branch(dir, name, window, cx);
+        }
+        let name = name.to_string();
+        let msg = format!("已检出远程分支 {name}");
+        self.run_git(dir, msg, window, cx, move |d| git::switch_remote_branch(d, &name));
+    }
+
+    /// 以给定名称新建分支并切换(分支选择器里直接输入新名字)。
+    pub fn create_branch_named(&mut self, dir: &str, name: &str, window: &mut Window, cx: &mut Context<Self>) {
+        let name = name.to_string();
+        let msg = format!("已创建并切换到 {name}");
+        self.run_git(dir, msg, window, cx, move |d| git::create_branch(d, &name));
+    }
+
     /// 弹出「新建分支」对话框:输入名称,基于当前 HEAD 建分支并切换过去。
     pub fn create_branch_dialog(&mut self, dir: &str, window: &mut Window, cx: &mut Context<Self>) {
         let input = cx.new(|cx| InputState::new(window, cx).placeholder("新分支名,例如 feature/login"));

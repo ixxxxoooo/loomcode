@@ -217,6 +217,30 @@ pub fn file_at_head(dir: &str, rel: &str) -> Option<String> {
     git(dir, &["show", &format!("HEAD:{rel}")]).ok()
 }
 
+/// 解析 `git branch -r --format=%(refname:short)`:去掉 `origin/HEAD` 与已有同名本地分支的远程分支。
+pub fn parse_remote_branches(out: &str, local: &[Branch]) -> Vec<String> {
+    out.lines()
+        .map(str::trim)
+        .filter(|l| !l.is_empty() && !l.contains("->") && !l.ends_with("/HEAD") && l.contains('/'))
+        .filter(|l| {
+            let short = l.split_once('/').map_or(*l, |(_, b)| b);
+            !local.iter().any(|b| b.name == short)
+        })
+        .map(str::to_string)
+        .collect()
+}
+
+/// 还没有本地对应分支的远程分支(如 `origin/feature-x`)。
+pub fn remote_branches(dir: &str, local: &[Branch]) -> Vec<String> {
+    git(dir, &["branch", "-r", "--format=%(refname:short)"]).map(|o| parse_remote_branches(&o, local)).unwrap_or_default()
+}
+
+/// 检出远程分支:建立同名本地分支并跟踪它。
+pub fn switch_remote_branch(dir: &str, remote_ref: &str) -> Result<(), String> {
+    validate_branch_name(remote_ref)?;
+    git(dir, &["switch", "--track", remote_ref]).map(|_| ())
+}
+
 /// 切换到已有分支。工作区有冲突改动时 git 会拒绝,错误原样返回。
 pub fn switch_branch(dir: &str, name: &str) -> Result<(), String> {
     validate_branch_name(name)?;
@@ -249,6 +273,13 @@ pub fn remove_worktree(dir: &str, path: &str) -> Result<(), String> {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn 远程分支去掉_head_与已有本地分支() {
+        let local = vec![Branch { name: "main".into(), current: true }];
+        let out = "origin\norigin/HEAD\norigin/main\norigin/feature/x\nupstream/dev\n";
+        assert_eq!(parse_remote_branches(out, &local), vec!["origin/feature/x".to_string(), "upstream/dev".to_string()]);
+    }
 
     #[test]
     fn 解析分支列表() {

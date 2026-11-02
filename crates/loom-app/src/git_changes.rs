@@ -32,7 +32,7 @@ impl RightPanel {
     pub(crate) fn changes_tab(&self, items: &[TimelineItem], cx: &mut Context<Self>) -> AnyElement {
         // 宿主决定点文件行的行为:IDE(没有分段栏,旁边就是编辑器)打开文件,Agent 右栏就地展开 diff
         let open_on_click = !self.show_tabs;
-        self.scm.update(cx, |s, _| s.open_on_click = open_on_click);
+        self.scm.update(cx, |s, _| { s.open_on_click = open_on_click; s.pick_branch = open_on_click; });
         if !self.show_tabs {
             return self.scm.clone().into_any_element();
         }

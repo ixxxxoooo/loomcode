@@ -62,6 +62,9 @@ pub struct IdeWindow {
     pub(crate) chat_wide: bool,
     /// 通知面板(状态栏铃铛)是否展开
     pub(crate) notice_open: bool,
+    /// 分支选择器(点状态栏分支名或 SCM 顶部分支名弹出)
+    pub(crate) branch_picker: Option<Entity<crate::branch_picker::BranchPicker>>,
+    pub(crate) _branch_sub: Option<Subscription>,
 }
 
 impl IdeWindow {
@@ -71,6 +74,7 @@ impl IdeWindow {
     pub fn new(wb: Entity<Workbench>, ide: Entity<IdeView>, scm: Entity<crate::scm::ScmView>, demo: bool, _root: String, wb_tabs: Vec<String>, window: &mut Window, cx: &mut Context<Self>) -> Self {
         bind_ide_keys(cx);
         crate::window_memory::track("ide", window, cx);
+        let scm_events = scm.clone();
         let panel = cx.new(|cx| RightPanel::new(_root.clone(), demo, None, scm, window, cx));
         panel.update(cx, |p, cx| {
             p.show_tabs = false;
@@ -79,6 +83,12 @@ impl IdeWindow {
         });
         let search = cx.new(|cx| crate::ide_search::SearchPanel::new(String::new(), window, cx));
         let mut subs = Vec::new();
+        // SCM 顶部点分支名 → 分支选择器
+        subs.push(cx.subscribe_in(&scm_events, window, |this, _, ev: &crate::scm::ScmEvent, window, cx| {
+            if matches!(ev, crate::scm::ScmEvent::PickBranch) {
+                this.toggle_branch_picker(window, cx);
+            }
+        }));
         // 搜索结果点击 → 打开文件并跳行
         subs.push(cx.subscribe_in(&search, window, |this, _, ev: &crate::ide_search::SearchEvent, window, cx| match ev {
             crate::ide_search::SearchEvent::Open(path, line) => this.open_at(path.clone(), *line, window, cx),
@@ -103,6 +113,19 @@ impl IdeWindow {
         let term = cx.new(|cx| crate::ide_terminal::BottomTerminal::new(panel.clone(), cx));
         // 调试用:LOOM_IDE_TERM=1 启动时就展开底部终端面板,方便截图
         let term_open = std::env::var("LOOM_IDE_TERM").is_ok_and(|v| v == "1");
+        // 调试用:LOOM_BRANCH=1 启动后自动打开分支选择器(=查询词则预填)
+        if let Ok(q) = std::env::var("LOOM_BRANCH") {
+            cx.spawn_in(window, async move |this, cx| {
+                cx.background_executor().timer(std::time::Duration::from_millis(800)).await;
+                let _ = this.update_in(cx, |this, window, cx| {
+                    this.toggle_branch_picker(window, cx);
+                    if q != "1" && let Some(p) = &this.branch_picker {
+                        p.update(cx, |p, cx| p.set_query(&q, window, cx));
+                    }
+                });
+            })
+            .detach();
+        }
         // 调试用:LOOM_NOTICES=1 启动后弹出一组示例通知(=open 同时展开通知面板),验证右下角提示与铃铛
         if let Ok(v) = std::env::var("LOOM_NOTICES") {
             cx.spawn_in(window, async move |this, cx| {
@@ -124,7 +147,7 @@ impl IdeWindow {
             .detach();
         }
         // 此时工作台可能正处于更新中,不在这里回读它;首次渲染时再同步
-        Self { wb, panel, ide, panel_root: String::new(), focus, left_open: true, chat_open: true, left_narrow: false, left_before: true, chat_narrow: false, chat_before: true, synced: None, _subs: subs, search, search_open: false, quick: None, _quick_sub: None, term_open, term, chat_tabs: wb_tabs, chat_last_active: None, chat_empty: false, chat_wide: std::env::var("LOOM_CHAT_WIDE").is_ok(), notice_open: false }
+        Self { wb, panel, ide, panel_root: String::new(), focus, left_open: true, chat_open: true, left_narrow: false, left_before: true, chat_narrow: false, chat_before: true, synced: None, _subs: subs, search, search_open: false, quick: None, _quick_sub: None, term_open, term, chat_tabs: wb_tabs, chat_last_active: None, chat_empty: false, chat_wide: std::env::var("LOOM_CHAT_WIDE").is_ok(), notice_open: false, branch_picker: None, _branch_sub: None }
     }
 
     /// 让面板与根目录跟随工作台当前会话。
@@ -361,12 +384,40 @@ impl Render for IdeWindow {
                     ),
             )
             .when_some(self.quick.clone(), |d, p| d.child(p))
-            .child(ide_status::status_bar(project_name, branch, self.ide.read(cx).cursor_info(cx), self.ide.read(cx).lsp_summary(), mode, demo, self.bell(cx), cx))
+            .child(ide_status::status_bar(project_name, branch, self.ide.read(cx).cursor_info(cx), self.ide.read(cx).lsp_summary(), mode, demo, self.bell(cx), { let this = cx.entity(); move |window, cx| { this.update(cx, |t, cx| t.toggle_branch_picker(window, cx)); } }, cx))
+            .when_some(self.branch_picker.clone(), |d, p| d.child(p))
             .when(self.notice_open, |d| d.child(self.notice_panel(cx)))
     }
 }
 
 impl IdeWindow {
+    /// 打开 / 关闭分支选择器。
+    pub(crate) fn toggle_branch_picker(&mut self, window: &mut Window, cx: &mut Context<Self>) {
+        if self.branch_picker.take().is_some() {
+            self._branch_sub = None;
+            window.focus(&self.focus, cx);
+            cx.notify();
+            return;
+        }
+        let Some(dir) = self.wb.read(cx).active_git_dir() else {
+            crate::notice::info(window, cx, "当前项目不是 Git 仓库");
+            return;
+        };
+        let picker = cx.new(|cx| crate::branch_picker::BranchPicker::new(dir.clone(), window, cx));
+        self._branch_sub = Some(cx.subscribe_in(&picker, window, move |this, _, ev: &crate::branch_picker::BranchEvent, window, cx| {
+            use crate::branch_picker::BranchEvent;
+            this.toggle_branch_picker(window, cx);
+            let wb = this.wb.clone();
+            match ev {
+                BranchEvent::Close => {}
+                BranchEvent::Switch { name, remote } => { wb.update(cx, |w, cx| w.switch_ref(&dir, name, *remote, window, cx)); }
+                BranchEvent::Create(name) => { wb.update(cx, |w, cx| w.create_branch_named(&dir, name, window, cx)); }
+            }
+        }));
+        self.branch_picker = Some(picker);
+        cx.notify();
+    }
+
     /// 状态栏最右的铃铛:有未读时带数字角标;点击展开 / 收起通知面板。
     fn bell(&self, cx: &mut Context<Self>) -> AnyElement {
         use gpui_kit::component::ActiveTheme as _;

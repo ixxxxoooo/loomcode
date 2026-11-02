@@ -90,8 +90,13 @@ impl ScmView {
             menu
         };
         h_flex().h(px(32.)).w_full().min_w_0().px_3().gap_1().items_center().flex_none()
-            .child(icon(IconName::GitBranch, 13., t.muted_foreground))
-            .child(div().min_w_0().truncate().text_size(px(12.5)).font_weight(FontWeight::MEDIUM).child(branch))
+            .child(
+                h_flex().id("scm-branch").min_w_0().h(px(24.)).px_1().gap_1().items_center().rounded(px(5.))
+                    .when(self.pick_branch, |d| d.cursor_pointer().hover(|d| d.bg(t.list_hover)).on_click(cx.listener(|_, _, _, cx| cx.emit(crate::scm::ScmEvent::PickBranch))))
+                    .child(icon(IconName::GitBranch, 13., t.muted_foreground))
+                    .child(div().min_w_0().truncate().text_size(px(12.5)).font_weight(FontWeight::MEDIUM).child(branch))
+                    .when(self.pick_branch, |d| d.child(icon(IconName::ChevronDown, 11., t.muted_foreground))),
+            )
             .when(has_up && (ahead > 0 || behind > 0), |d| {
                 d.child(div().ml_1().text_size(px(11.)).font_family(MONO).text_color(t.muted_foreground).child(format!("{}{}", if behind > 0 { format!("↓{behind} ") } else { String::new() }, if ahead > 0 { format!("↑{ahead}") } else { String::new() })))
             })

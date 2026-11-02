@@ -27,6 +27,8 @@ pub enum ScmEvent {
     OpenFile(PathBuf, bool),
     /// 仓库状态被改动(暂存 / 提交 / 放弃…),文件树的 Git 标记需要刷新
     Changed,
+    /// 点了顶部分支名:请宿主弹出分支选择器(只有宿主能放得下浮层时才会发)
+    PickBranch,
 }
 
 impl EventEmitter<ScmEvent> for ScmView {}
@@ -76,6 +78,8 @@ pub struct ScmView {
     pub(crate) generating: bool,
     /// 点文件行:true 在编辑器里打开(IDE,旁边就是编辑器),false 就地展开 diff(Agent 右栏)。由宿主面板在渲染时设置
     pub(crate) open_on_click: bool,
+    /// 宿主支持分支选择器时为真:顶部分支名可点(宿主渲染时设置)
+    pub(crate) pick_branch: bool,
     /// 上次被绘制的时间:可见时轮询更勤
     last_paint: Instant,
     _sub: Subscription,
@@ -117,6 +121,7 @@ impl ScmView {
             ai: None,
             generating: false,
             open_on_click: false,
+            pick_branch: false,
             last_paint: Instant::now() - Duration::from_secs(3600),
             _sub: sub,
         };
