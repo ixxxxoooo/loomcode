@@ -60,6 +60,11 @@ impl ScmView {
     ///
     /// 参数:`path` 文件绝对路径。文件不在当前仓库里时什么也不做。
     pub fn show_file_history(&mut self, path: &std::path::Path, cx: &mut Context<Self>) {
+        // 多仓库模式:交给包含该文件的那个仓库
+        if let Some(view) = self.children.iter().find(|c| path.starts_with(&c.path)).map(|c| c.view.clone()) {
+            view.update(cx, |v, cx| v.show_file_history(path, cx));
+            return;
+        }
         let Some(top) = self.top.clone() else { return };
         let Ok(rel) = path.strip_prefix(&top) else { return };
         self.graph.file = Some(rel.to_string_lossy().to_string());

@@ -51,10 +51,15 @@ pub struct ScmView {
     pub(crate) root: String,
     /// 当前查看的仓库根目录;不在仓库里为 `None`
     pub(crate) top: Option<String>,
-    /// 项目里发现的所有仓库(项目所在仓库 + 子目录里的仓库,对标 VS Code 自动检测),多于一个时顶部出现切换条
+    /// 项目里发现的所有仓库(项目所在仓库 + 子目录里的仓库,对标 VS Code 自动检测)。
+    /// 恰好一个时本视图自己管它;两个及以上时进入「多仓库」模式:每个仓库一个嵌入的子视图,本视图只负责折叠与汇总
     pub(crate) repos: Vec<String>,
-    /// 用户选中的仓库(不在 `repos` 里时退回第一个)
-    chosen: Option<String>,
+    /// 多仓库模式下每个仓库的子视图(`root` = 仓库根,就是一个普通的单仓库 `ScmView`)
+    pub(crate) children: Vec<RepoChild>,
+    /// 多仓库模式下收起的仓库(仓库根路径)
+    pub(crate) collapsed_repos: HashSet<String>,
+    /// 作为多仓库区块里的一个子视图:根节点不撑满高度、列表不自己滚动(由外层统一滚动)
+    pub(crate) embedded: bool,
     /// 上次扫描仓库的时间:每 30 秒或手动刷新时才重扫,避免每次轮询都遍历目录
     scanned: Option<Instant>,
     pub(crate) entries: Vec<StatusEntry>,
@@ -93,6 +98,13 @@ pub struct ScmView {
     _sub: Subscription,
 }
 
+/// 多仓库模式里的一个仓库。
+pub(crate) struct RepoChild {
+    pub(crate) path: String,
+    pub(crate) view: Entity<ScmView>,
+    _subs: Vec<Subscription>,
+}
+
 /// `error` 里表示「不是仓库」的固定文案。
 const NOT_REPO: &str = "当前目录不在 Git 仓库里";
 
@@ -115,7 +127,9 @@ impl ScmView {
             root,
             top: None,
             repos: Vec::new(),
-            chosen: None,
+            children: Vec::new(),
+            collapsed_repos: HashSet::new(),
+            embedded: false,
             scanned: None,
             entries: Vec::new(),
             groups: Groups::default(),
@@ -154,7 +168,7 @@ impl ScmView {
         self.root = root.to_string();
         self.top = None;
         self.repos.clear();
-        self.chosen = None;
+        self.children.clear();
         self.scanned = None;
         self.entries.clear();
         self.groups = Groups::default();
@@ -170,8 +184,38 @@ impl ScmView {
     }
 
     /// 有改动的不同文件数(活动栏角标用)。
-    pub fn count(&self) -> usize {
-        self.groups.distinct()
+    pub fn count(&self, cx: &App) -> usize {
+        self.groups.distinct() + self.children.iter().map(|c| c.view.read(cx).count(cx)).sum::<usize>()
+    }
+
+    /// 多仓库模式:按 `repos` 对齐子视图(新增的创建、消失的丢掉),并把宿主设置的行为同步给它们。渲染里调用。
+    pub(crate) fn sync_children(&mut self, window: &mut Window, cx: &mut Context<Self>) {
+        if self.repos.len() < 2 {
+            self.children.clear();
+            return;
+        }
+        self.children.retain(|c| self.repos.contains(&c.path));
+        for path in self.repos.clone() {
+            if self.children.iter().any(|c| c.path == path) {
+                continue;
+            }
+            let view = cx.new(|cx| ScmView::new(path.clone(), window, cx));
+            view.update(cx, |v, _| v.embedded = true);
+            let fwd = cx.subscribe(&view, |_, _, ev: &ScmEvent, cx| cx.emit(ev.clone()));
+            let obs = cx.observe(&view, |_, _, cx| cx.notify());
+            self.children.push(RepoChild { path, view, _subs: vec![fwd, obs] });
+        }
+        // 保持与 repos(已排序)相同的顺序
+        let order = self.repos.clone();
+        self.children.sort_by_key(|c| order.iter().position(|p| *p == c.path));
+        let (open_on_click, ai) = (self.open_on_click, self.ai.clone());
+        for c in &self.children {
+            c.view.update(cx, |v, _| {
+                v.open_on_click = open_on_click;
+                v.pick_branch = false;
+                v.ai = ai.clone();
+            });
+        }
     }
 
     /// 视图被绘制时调用(渲染里),用来判断是否可见。
@@ -203,26 +247,10 @@ impl ScmView {
     /// 重新扫描项目里的仓库并刷新(手动刷新、初始化仓库之后)。
     pub fn rescan(&mut self, cx: &mut Context<Self>) {
         self.scanned = None;
-        self.refresh(cx);
-    }
-
-    /// 切换到另一个仓库。
-    pub fn select_repo(&mut self, repo: &str, cx: &mut Context<Self>) {
-        if self.top.as_deref() == Some(repo) {
-            return;
+        for c in &self.children {
+            c.view.update(cx, |v, cx| v.rescan(cx));
         }
-        self.chosen = Some(repo.to_string());
-        self.top = Some(repo.to_string());
-        self.entries.clear();
-        self.groups = Groups::default();
-        self.sync = SyncInfo::default();
-        self.open.clear();
-        self.selected = None;
-        self.amend = false;
-        self.graph.reset();
         self.refresh(cx);
-        cx.emit(ScmEvent::Changed);
-        cx.notify();
     }
 
     /// 当前目录不是 Git 仓库(而不是读取失败)。
@@ -266,18 +294,25 @@ impl ScmView {
         self.loading = true;
         let root = self.root.clone();
         let known = self.repos.clone();
-        let chosen = self.chosen.clone();
         let rescan = self.scanned.is_none_or(|t| t.elapsed() > Duration::from_secs(30));
         cx.spawn(async move |this, cx| {
             let result = cx
                 .background_spawn(async move {
                     let repos = if rescan { git::find_repos(&root, 2) } else { known };
-                    let top = chosen.filter(|c| repos.contains(c)).or_else(|| repos.first().cloned()).ok_or_else(|| NOT_REPO.to_string())?;
-                    let entries = git::status(&top)?;
-                    let sync = git_scm::sync_info(&top);
-                    let sig = git_log::refs_signature(&top);
-                    let stashes = git_log::stashes(&top);
-                    Ok::<_, String>((top, repos, entries, sync, sig, stashes))
+                    // 两个及以上仓库:本视图不读状态,交给各自的子视图
+                    let data = match repos.as_slice() {
+                        [] => return Err(NOT_REPO.to_string()),
+                        [top] => {
+                            let top = top.clone();
+                            let entries = git::status(&top)?;
+                            let sync = git_scm::sync_info(&top);
+                            let sig = git_log::refs_signature(&top);
+                            let stashes = git_log::stashes(&top);
+                            Some((top, entries, sync, sig, stashes))
+                        }
+                        _ => None,
+                    };
+                    Ok::<_, String>((repos, data))
                 })
                 .await;
             let _ = this.update(cx, |this, cx| {
@@ -286,7 +321,21 @@ impl ScmView {
                 this.loaded = true;
                 let mut changed = first;
                 match result {
-                    Ok((top, repos, entries, sync, sig, stashes)) => {
+                    Ok((repos, None)) => {
+                        if rescan {
+                            this.scanned = Some(Instant::now());
+                        }
+                        if this.repos != repos || this.top.is_some() || this.error.is_some() {
+                            changed = true;
+                        }
+                        this.repos = repos;
+                        this.top = None;
+                        this.entries.clear();
+                        this.groups = Groups::default();
+                        this.open.clear();
+                        this.error = None;
+                    }
+                    Ok((repos, Some((top, entries, sync, sig, stashes)))) => {
                         if rescan {
                             this.scanned = Some(Instant::now());
                         }
@@ -402,6 +451,10 @@ impl ScmView {
 
     /// 调试用(`LOOM_DIFF`):打开第 `n` 个文件(暂存组在前)的差异标签。
     pub(crate) fn open_nth_diff(&self, n: usize, cx: &mut Context<Self>) {
+        if let Some(view) = self.children.first().map(|c| c.view.clone()) {
+            view.update(cx, |v, cx| v.open_nth_diff(n, cx));
+            return;
+        }
         let keys: Vec<String> = self.groups.staged.iter().chain(self.groups.changes.iter()).map(|i| i.key()).collect();
         if let Some(k) = keys.get(n) {
             self.open_diff_tab(k, false, cx);

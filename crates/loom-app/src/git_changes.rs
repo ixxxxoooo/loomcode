@@ -45,7 +45,7 @@ impl RightPanel {
 
     fn changes_switch(&self, cx: &mut Context<Self>) -> impl IntoElement {
         let t = cx.theme().clone();
-        let count = self.scm.read(cx).count();
+        let count = self.scm.read(cx).count(cx);
         let btn = |id: &'static str, label: &'static str, mode: ChangesMode, badge: usize, cx: &mut Context<Self>| {
             let on = self.changes_mode == mode;
             div().id(id).h(px(24.)).px_2().gap_1().flex().items_center().rounded(px(6.)).cursor_pointer().text_size(px(12.))

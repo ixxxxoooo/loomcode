@@ -107,48 +107,6 @@ impl ScmView {
             .into_any_element()
     }
 
-    /// 项目里有多个仓库时的切换条(对标 VS Code「源代码管理存储库」):显示当前仓库名,点开选另一个。
-    fn repo_bar(&self, cx: &mut Context<Self>) -> Option<AnyElement> {
-        if self.repos.len() < 2 {
-            return None;
-        }
-        let t = cx.theme().clone();
-        let cur = self.top.clone().unwrap_or_default();
-        let base = PathBuf::from(&self.root);
-        let label_of = move |p: &str| {
-            let name = Path::new(p).file_name().map(|n| n.to_string_lossy().to_string()).unwrap_or_else(|| p.to_string());
-            let rel = Path::new(p).strip_prefix(&base).ok().map(|r| r.display().to_string()).filter(|r| !r.is_empty() && *r != name);
-            (name, rel)
-        };
-        let (name, _) = label_of(&cur);
-        let repos = self.repos.clone();
-        let weak = cx.entity().downgrade();
-        let count = repos.len();
-        let menu = move |menu: PopupMenu, _: &mut Window, _: &mut Context<PopupMenu>| {
-            let mut menu = menu;
-            for r in repos.iter() {
-                let (name, rel) = label_of(r);
-                let (w, path, on) = (weak.clone(), r.clone(), *r == cur);
-                let text = match rel {
-                    Some(rel) => format!("{name}  ·  {rel}"),
-                    None => name,
-                };
-                menu = menu.item(PopupMenuItem::new(text).checked(on).on_click(move |_, _, cx| {
-                    let _ = w.update(cx, |this, cx| this.select_repo(&path, cx));
-                }));
-            }
-            menu
-        };
-        Some(
-            h_flex().h(px(28.)).w_full().min_w_0().px_3().gap_1().items_center().flex_none().border_b_1().border_color(t.border)
-                .child(icon(IconName::Folder, 13., t.muted_foreground))
-                .child(Button::new("scm-repo").xsmall().ghost().label(name).icon(IconName::ChevronDown).tooltip("切换仓库").dropdown_menu(menu))
-                .child(div().flex_1())
-                .child(div().text_size(px(11.)).text_color(t.muted_foreground).child(format!("{count} 个仓库")))
-                .into_any_element(),
-        )
-    }
-
     /// 提交消息框 + 主按钮(提交 / 同步更改 / 发布分支)与旁边的下拉。
     fn commit_box(&self, cx: &mut Context<Self>) -> AnyElement {
         let t = cx.theme().clone();
@@ -373,10 +331,50 @@ impl ScmView {
     }
 }
 
+impl ScmView {
+    /// 多仓库模式(对标 VS Code):每个仓库一个可折叠区块,标题行是仓库名与更改数,展开后是该仓库完整的分支 / 提交框 / 更改列表。
+    fn multi_view(&mut self, window: &mut Window, cx: &mut Context<Self>) -> AnyElement {
+        self.sync_children(window, cx);
+        let t = cx.theme().clone();
+        let base = PathBuf::from(&self.root);
+        let mut list = v_flex().w_full().min_w_0();
+        for (i, c) in self.children.iter().enumerate() {
+            let open = !self.collapsed_repos.contains(&c.path);
+            let name = Path::new(&c.path).file_name().map(|n| n.to_string_lossy().to_string()).unwrap_or_else(|| c.path.clone());
+            let rel = Path::new(&c.path).strip_prefix(&base).ok().map(|r| r.display().to_string()).filter(|r| !r.is_empty() && *r != name);
+            let n = c.view.read(cx).count(cx);
+            let path = c.path.clone();
+            list = list
+                .child(
+                    h_flex().id(SharedString::from(format!("scm-repo-{i}"))).h(px(26.)).w_full().min_w_0().px_2().gap_1().items_center().flex_none()
+                        .cursor_pointer().bg(t.sidebar).hover(|d| d.bg(t.list_hover))
+                        .border_t_1().border_color(t.border)
+                        .on_click(cx.listener(move |this, _, _, cx| {
+                            if !this.collapsed_repos.remove(&path) {
+                                this.collapsed_repos.insert(path.clone());
+                            }
+                            cx.notify();
+                        }))
+                        .child(icon(if open { IconName::ChevronDown } else { IconName::ChevronRight }, 13., t.muted_foreground))
+                        .child(div().min_w_0().truncate().text_size(px(11.5)).font_weight(FontWeight::SEMIBOLD).child(name.to_uppercase()))
+                        .when_some(rel, |d, rel| d.child(div().min_w_0().truncate().text_size(px(11.)).text_color(t.muted_foreground).child(rel)))
+                        .child(div().flex_1())
+                        .when(n > 0, |d| d.child(crate::ui::pill(n.to_string(), t.primary_foreground, t.primary))),
+                )
+                .when(open, |d| d.child(c.view.clone()));
+        }
+        v_flex().id("scm-multi").size_full().min_w_0().overflow_y_scroll().bg(t.background).child(list).into_any_element()
+    }
+}
+
 impl Render for ScmView {
-    fn render(&mut self, _window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
+    fn render(&mut self, window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
         self.touch();
         let t = cx.theme().clone();
+        if self.repos.len() >= 2 {
+            return self.multi_view(window, cx);
+        }
+        self.children.clear();
         if self.not_repo() {
             let busy = self.busy.is_some();
             return empty_state(IconName::GitBranch, "这个文件夹还不是 Git 仓库", "初始化后可以查看改动、提交并推送。", cx)
@@ -394,12 +392,15 @@ impl Render for ScmView {
         }
         let groups: Vec<AnyElement> = [Group::Conflicts, Group::Staged, Group::Changes].into_iter().filter_map(|g| self.group_view(g, cx)).collect();
         let clean = groups.is_empty();
-        v_flex().size_full().min_w_0().overflow_hidden().bg(t.background)
-            .when_some(self.repo_bar(cx), |d, bar| d.child(bar))
+        let embedded = self.embedded;
+        v_flex().min_w_0().bg(t.background)
+            .when(!embedded, |d| d.size_full().overflow_hidden())
+            .when(embedded, |d| d.w_full())
             .child(self.toolbar(cx))
             .child(self.commit_box(cx))
             .child(
-                v_flex().id("scm-scroll").flex_1().min_h_0().overflow_y_scroll().pb_3()
+                v_flex().id("scm-scroll").pb_3()
+                    .when(!embedded, |d| d.flex_1().min_h_0().overflow_y_scroll())
                     .children(groups)
                     .when(clean, |d| d.child(div().px_3().py_4().text_size(px(12.)).text_color(t.muted_foreground).child("没有检测到更改")))
                     .children(self.graph_section(cx)),

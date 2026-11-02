@@ -42,7 +42,7 @@ impl IdeWindow {
         let cur = self.panel.read(cx).tab;
         let (left_open, search_open, primary) = (self.left_open, self.search_open, t.primary);
         // 活动栏的一项:图标按钮 + 选中时左侧竖条
-        let scm_count = self.panel.read(cx).scm.read(cx).count();
+        let scm_count = self.panel.read(cx).scm.read(cx).count(cx);
         let badge_bg = t.primary;
         let badge_fg = t.primary_foreground;
         let item = move |id: SharedString, ic: IconName, tip: &'static str, active: bool| {
