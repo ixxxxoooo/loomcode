@@ -10,18 +10,26 @@ use loom_config::ShimmerKind;
 use std::time::Duration;
 
 /// 流光溢彩一个循环的时长(毫秒)。
-const AURORA_CYCLE_MS: u64 = 3600;
+const AURORA_CYCLE_MS: u64 = 5000;
 /// 流光溢彩的刷新帧率上限(逐字重排文字,限频以免空闲时频繁重建)。
 const AURORA_FPS: f32 = 20.;
-/// 一行文字上色环占的圈数:越大相邻字符色差越明显。
-const AURORA_TURNS_PER_LINE: f32 = 0.6;
+/// 一行文字在调色板上跨越的圈数:越小整行越接近同一种颜色,过渡越柔和。
+const AURORA_TURNS_PER_LINE: f32 = 0.45;
+/// 极光调色板(色相 °):青 → 蓝 → 紫 → 粉 → 紫 → 蓝,首尾相接可无缝循环,避开黄绿红这类刺眼色。
+const AURORA_HUES: [f32; 6] = [178., 212., 262., 318., 262., 212.];
 
-/// 色环上的一点:`hue` 取 0..1 循环,返回柔和饱和的彩色(深浅色背景都清晰)。
+/// 调色板上的一点:`pos` 取 0..1 循环,在相邻色标间做余弦平滑插值,返回低饱和的柔和色。
 ///
-/// 参数:`hue` 色相(自动取小数部分);`dark` 是否深色主题。
+/// 参数:`pos` 位置(自动取小数部分);`dark` 是否深色主题。
 /// 返回:对应颜色。
-pub fn aurora_color(hue: f32, dark: bool) -> Hsla {
-    hsla(hue.rem_euclid(1.), 0.78, if dark { 0.68 } else { 0.5 }, 1.)
+pub fn aurora_color(pos: f32, dark: bool) -> Hsla {
+    let n = AURORA_HUES.len();
+    let x = pos.rem_euclid(1.) * n as f32;
+    let (i, f) = (x as usize % n, x.fract());
+    let k = (1. - (f * std::f32::consts::PI).cos()) / 2.;
+    let (h0, h1) = (AURORA_HUES[i], AURORA_HUES[(i + 1) % n]);
+    let hue = (h0 + (h1 - h0) * k) / 360.;
+    hsla(hue, if dark { 0.62 } else { 0.55 }, if dark { 0.74 } else { 0.52 }, 1.)
 }
 
 /// 给每个字符分配流光溢彩的高亮区间。

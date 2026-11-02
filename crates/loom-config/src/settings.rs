@@ -265,7 +265,7 @@ pub enum ShimmerKind {
     /// 经典:单色高亮带从左扫到右
     #[default]
     Classic,
-    /// 流光溢彩:整行文字随时间流转渐变的七彩色
+    /// 流光溢彩:整行文字在青、蓝、紫、粉之间柔和流转
     Aurora,
 }
 
@@ -285,7 +285,7 @@ impl ShimmerKind {
     pub fn describe(self) -> &'static str {
         match self {
             Self::Classic => "单色高亮带从左到右扫过文字,颜色跟随主题",
-            Self::Aurora => "文字沿色环流转渐变,像极光一样流光溢彩",
+            Self::Aurora => "青蓝紫粉的柔和渐变缓缓流过文字,像极光",
         }
     }
 }
