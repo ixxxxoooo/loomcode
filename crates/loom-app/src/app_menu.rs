@@ -50,12 +50,19 @@ fn close_tab_under_mouse(cx: &mut App) -> bool {
     };
     let editor_hover = editor.read(cx).hover_win == Some(wid);
     let has_file_tab = editor.read(cx).tabs.active().is_some();
-    let right_hover = wb.read(cx).right_hover == Some(wid);
+    let in_ide = { let w = wb.read(cx); w.ide || w.ide_window.is_some_and(|h| h.window_id() == wid) };
+    let right_hover = wb.read(cx).right_hover == Some(wid) && !wb.read(cx).ide;
     let (p, elsewhere) = { let p = panel.read(cx); ((p.tab, !p.open.is_empty()), p.editor_elsewhere) };
     let close_file = has_file_tab && !elsewhere && (editor_hover || (right_hover && p.0 == RightTab::Files));
     if close_file {
         cx.defer(move |cx| {
             let _ = active.update(cx, |_, window, cx| editor.update(cx, |v, cx| v.close_active(window, cx)));
+        });
+        return true;
+    }
+    if in_ide && let Some(ide) = crate::ide_chat_tabs::chat_hovered(wid).and_then(|w| w.upgrade()).filter(|i| { let i = i.read(cx); !i.chat_empty && !i.chat_tabs.is_empty() }) {
+        cx.defer(move |cx| {
+            let _ = active.update(cx, |_, window, cx| ide.update(cx, |this, cx| { this.close_active_chat_tab(window, cx); }));
         });
         return true;
     }

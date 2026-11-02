@@ -344,7 +344,11 @@ impl Render for IdeWindow {
         if let Some((model, _)) = &parts {
             crate::wizard_input::ensure(model, window, cx);
         }
-        let chat_col = v_flex().size_full().child(self.chat_tabs_bar(cx)).child(div().flex_1().min_h_0().child(if self.chat_empty || foreign { self.chat_empty_view(cx) } else { chat_panel(parts, branch.clone(), demo, cx) })).into_any_element();
+        let chat_me = cx.entity().downgrade();
+        let chat_col = div().id("ide-chat-host").size_full()
+            .on_hover(move |on, window, _| crate::ide_chat_tabs::set_chat_hover(*on, window, &chat_me))
+            .child(v_flex().size_full().child(self.chat_tabs_bar(cx)).child(div().flex_1().min_h_0().child(if self.chat_empty || foreign { self.chat_empty_view(cx) } else { chat_panel(parts, branch.clone(), demo, cx) })))
+            .into_any_element();
         v_flex()
             .relative()
             .key_context("IdeWindow")

@@ -18,6 +18,28 @@ const MAX_HISTORY: usize = 40;
 /// 标签标题最大宽度。
 const TAB_MAX_W: f32 = 150.;
 
+thread_local! {
+    /// 鼠标当前悬停的 IDE 对话栏(窗口 + 对应的 IdeWindow),⌘W 据此优先关对话标签
+    static CHAT_HOVER: std::cell::RefCell<Option<(WindowId, WeakEntity<IdeWindow>)>> = const { std::cell::RefCell::new(None) };
+}
+
+/// 记录 / 清除对话栏的悬停状态(由对话栏容器的 `on_hover` 调用)。
+pub(crate) fn set_chat_hover(on: bool, window: &Window, me: &WeakEntity<IdeWindow>) {
+    CHAT_HOVER.with(|h| {
+        let mut h = h.borrow_mut();
+        if on {
+            *h = Some((window.window_handle().window_id(), me.clone()));
+        } else if h.as_ref().is_some_and(|(_, w)| w == me) {
+            *h = None;
+        }
+    });
+}
+
+/// 鼠标正悬停在 `window` 里的对话栏时,返回对应的 IdeWindow。
+pub(crate) fn chat_hovered(window: WindowId) -> Option<WeakEntity<IdeWindow>> {
+    CHAT_HOVER.with(|h| h.borrow().as_ref().filter(|(w, _)| *w == window).map(|(_, e)| e.clone()))
+}
+
 /// 找到某个会话所在项目的下标。
 fn project_of(wb: &Workbench, id: &str) -> Option<usize> {
     wb.views.get(id).map(|v| v.project_ix).or_else(|| wb.projects.iter().position(|p| p.sessions.iter().any(|s| s.id == id)))
@@ -144,6 +166,18 @@ impl IdeWindow {
             }
         }
         cx.notify();
+    }
+
+    /// 关闭当前会话标签(⌘W 悬停在对话栏时)。没有可关的标签返回 false。
+    pub(crate) fn close_active_chat_tab(&mut self, window: &mut Window, cx: &mut Context<Self>) -> bool {
+        let id = {
+            let wb = self.wb.read(cx);
+            if self.chat_empty || self.active_is_foreign(wb) { return false }
+            wb.active.clone().filter(|id| self.chat_tabs.contains(id))
+        };
+        let Some(id) = id else { return false };
+        self.close_chat_tab(&id, window, cx);
+        true
     }
 
     /// 在当前项目里新开一个会话(它会自动成为新标签)。
