@@ -336,6 +336,12 @@ impl ScmView {
         cx.emit(ScmEvent::OpenDiff(src, pinned));
     }
 
+    /// 在编辑区打开某文件在某次提交里的左右对比(时间线点提交)。`parent` 为该提交的第一个父提交。
+    pub(crate) fn open_rev_diff(&self, top: String, rel: String, hash: &str, parent: Option<String>, pinned: bool, cx: &mut Context<Self>) {
+        let src = crate::ide_diff::DiffSource { top, rel, orig: None, group: crate::scm_model::Group::Changes, untracked: false, rev: Some((hash.to_string(), parent)) };
+        cx.emit(ScmEvent::OpenDiff(src, pinned));
+    }
+
     /// 在编辑器里打开某个文件(仓库内相对路径)。
     pub(crate) fn open_file(&self, rel: &str, pinned: bool, cx: &mut Context<Self>) {
         if let Some(top) = &self.top {

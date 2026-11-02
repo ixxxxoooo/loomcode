@@ -22,6 +22,10 @@ pub struct LastState {
     pub files_current: Option<String>,
     /// 「文件」标签右侧的资源管理器是否收起
     pub tree_collapsed: bool,
+    /// 资源管理器里被隐藏的区块键(见 `explorer_sections`)
+    pub explorer_hidden: Vec<String>,
+    /// 资源管理器里折叠的区块键;`None` 表示从没记录过,用默认(时间线折叠)
+    pub explorer_collapsed: Option<Vec<String>>,
 }
 
 #[cfg(test)]
@@ -37,7 +41,7 @@ mod tests {
 
     #[test]
     fn 往返序列化() {
-        let s = LastState { session: Some("a".into()), chat_tabs: vec!["a".into(), "b".into()], right_tabs: Some(vec![]), right_tab: Some("files".into()), files_current: Some("/x/y.rs".into()), tree_collapsed: true };
+        let s = LastState { session: Some("a".into()), chat_tabs: vec!["a".into(), "b".into()], right_tabs: Some(vec![]), right_tab: Some("files".into()), files_current: Some("/x/y.rs".into()), tree_collapsed: true, ..Default::default() };
         let back: LastState = serde_json::from_str(&serde_json::to_string(&s).unwrap()).unwrap();
         assert_eq!(s, back);
     }

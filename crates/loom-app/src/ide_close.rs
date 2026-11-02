@@ -77,6 +77,20 @@ impl IdeView {
         self.request_close(list, window, cx);
     }
 
+    /// 保存所有有未保存修改的标签。
+    pub fn save_all(&mut self, cx: &mut Context<Self>) {
+        let dirty: Vec<PathBuf> = self.tabs.tabs().iter().filter(|p| self.docs.get(*p).is_some_and(|d| !d.saved)).cloned().collect();
+        for p in dirty {
+            self.save_path(&p, cx);
+        }
+    }
+
+    /// 关闭所有标签(有未保存修改会先确认)。
+    pub fn close_all(&mut self, window: &mut Window, cx: &mut Context<Self>) {
+        let all = self.tabs.tabs().to_vec();
+        self.request_close(all, window, cx);
+    }
+
     /// 关闭当前标签。
     pub fn close_active(&mut self, window: &mut Window, cx: &mut Context<Self>) {
         if let Some(p) = self.tabs.active().map(Path::to_path_buf) {

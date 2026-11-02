@@ -111,6 +111,7 @@ mod ide_rainbow;
 mod ide_chrome;
 mod crumb_picker;
 mod outline;
+mod explorer_sections;
 mod tab_style;
 mod ide_close;
 mod ide_tabs;

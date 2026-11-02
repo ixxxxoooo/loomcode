@@ -181,7 +181,7 @@ pub fn worktree_path(root: &Path, repo_root: &str, branch: &str) -> PathBuf {
 /// 执行 git 命令,成功返回 stdout,失败返回 stderr 的首行(给用户看)。
 ///
 /// 不允许 git 在终端上询问凭据(`GIT_TERMINAL_PROMPT=0`),拉取 / 推送缺凭据时立刻失败而不是卡住。
-pub(crate) fn git(dir: &str, args: &[&str]) -> Result<String, String> {
+pub fn git(dir: &str, args: &[&str]) -> Result<String, String> {
     let out = Command::new("git").arg("-C").arg(dir).args(args).env("GIT_TERMINAL_PROMPT", "0").output().map_err(|e| format!("无法运行 git:{e}"))?;
     if out.status.success() {
         return Ok(String::from_utf8_lossy(&out.stdout).to_string());

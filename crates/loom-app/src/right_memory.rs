@@ -21,6 +21,9 @@ impl RightPanel {
         // 预览的文件现在由编辑器的标签记忆(`state.json` 的 `ide`)保存
         last.files_current = None;
         last.tree_collapsed = self.tree_collapsed;
+        let (hidden, collapsed) = self.sections.to_keys();
+        last.explorer_hidden = hidden;
+        last.explorer_collapsed = Some(collapsed);
     }
 
     /// 按上次的状态恢复标签与树的收起状态;打开的文件由编辑器的标签记忆恢复。
@@ -33,6 +36,7 @@ impl RightPanel {
             self.tab = t;
         }
         self.tree_collapsed = last.tree_collapsed;
+        self.sections = crate::explorer_sections::SectionState::from_keys(&last.explorer_hidden, last.explorer_collapsed.as_deref());
     }
 }
 

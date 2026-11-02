@@ -10,7 +10,10 @@ use crate::git_status::GitMark;
 use crate::right_panel::{PanelEvent, RightPanel};
 use crate::ui::{MONO, empty_state, icon};
 use gpui_kit::assets::IconName;
-use gpui_kit::component::menu::ContextMenuExt as _;
+use crate::explorer_sections::Section;
+use gpui_kit::component::button::{Button, ButtonVariants};
+use gpui_kit::component::menu::{ContextMenuExt as _, DropdownMenu as _, PopupMenu, PopupMenuItem};
+use gpui_kit::component::Sizable;
 use gpui_kit::component::{ActiveTheme, h_flex, v_flex};
 use gpui_kit::prelude::FluentBuilder as _;
 use gpui_kit::*;
@@ -20,8 +23,8 @@ use std::path::PathBuf;
 const ROW_H: f32 = 28.;
 /// 每级缩进。
 const INDENT: f32 = 16.;
-/// 大纲区展开时的高度。
-const OUTLINE_H: f32 = 220.;
+/// 大纲 / 时间线区展开时的高度。
+const SECTION_H: f32 = 200.;
 
 impl RightPanel {
     /// 资源管理器视图。
@@ -30,35 +33,45 @@ impl RightPanel {
         let root = self.files.root_path().to_path_buf();
         let root_name = root.file_name().map(|n| n.to_string_lossy().to_string()).unwrap_or_default();
         let rows = self.files.rows();
-        let (folder_open, outline_open) = (self.folder_open, self.outline_open);
-        // 区块标题行:左边是「展开箭头 + 名称」(点它折叠 / 展开),右边是操作按钮
-        let toolbar = h_flex().h(px(28.)).px_2().gap_1().items_center().text_size(px(11.)).text_color(t.muted_foreground)
-            .child(
-                h_flex().id("ft-folder-head").flex_1().min_w_0().h_full().gap_1().items_center().cursor_pointer()
-                    .on_click(cx.listener(|this, _, _, cx| { this.folder_open = !this.folder_open; cx.notify(); }))
-                    .child(icon(if folder_open { IconName::ChevronDown } else { IconName::ChevronRight }, 12., t.muted_foreground))
-                    .child(div().min_w_0().truncate().font_weight(FontWeight::SEMIBOLD).child(root_name.to_uppercase())),
-            )
-            .children([
-                ("ft-refresh", IconName::RefreshCw, "刷新", 0u8),
-                ("ft-new-file", IconName::FilePlus, "新建文件", 1),
-                ("ft-new-dir", IconName::FolderPlus, "新建文件夹", 2),
-                ("ft-collapse", IconName::ChevronsDownUp, "全部折叠", 3),
-            ].map(|(id, ic, tip, kind)| {
-                div().id(id).p_1().rounded(px(4.)).cursor_pointer().hover(|d| d.bg(t.list_hover))
-                    .tooltip(move |window, cx| gpui_kit::component::tooltip::Tooltip::new(tip).build(window, cx))
-                    .on_click(cx.listener(move |this, _, window, cx| {
-                        let dir = this.files.target_dir();
-                        match kind {
-                            0 => this.reload_files(cx),
-                            1 => this.new_entry_dialog(dir, false, window, cx),
-                            2 => this.new_entry_dialog(dir, true, window, cx),
-                            _ => this.files.collapse_all(),
-                        }
-                        cx.notify();
-                    }))
-                    .child(icon(ic, 13., t.muted_foreground))
-            }));
+        let folder_actions = h_flex().gap_1().items_center().children([
+            ("ft-refresh", IconName::RefreshCw, "刷新", 0u8),
+            ("ft-new-file", IconName::FilePlus, "新建文件", 1),
+            ("ft-new-dir", IconName::FolderPlus, "新建文件夹", 2),
+            ("ft-collapse", IconName::ChevronsDownUp, "全部折叠", 3),
+        ].map(|(id, ic, tip, kind)| {
+            div().id(id).p_1().rounded(px(4.)).cursor_pointer().hover(|d| d.bg(t.list_hover))
+                .tooltip(move |window, cx| gpui_kit::component::tooltip::Tooltip::new(tip).build(window, cx))
+                .on_click(cx.listener(move |this, _, window, cx| {
+                    let dir = this.files.target_dir();
+                    match kind {
+                        0 => this.reload_files(cx),
+                        1 => this.new_entry_dialog(dir, false, window, cx),
+                        2 => this.new_entry_dialog(dir, true, window, cx),
+                        _ => this.files.collapse_all(),
+                    }
+                    cx.notify();
+                }))
+                .child(icon(ic, 13., t.muted_foreground))
+        }));
+        // 「打开的编辑器」标题行的操作:保存全部 / 关闭全部
+        let editor_actions = h_flex().gap_1().items_center().children([
+            ("oe-save-all", IconName::SaveAll, "全部保存", true),
+            ("oe-close-all", IconName::ListX, "全部关闭", false),
+        ].map(|(id, ic, tip, save)| {
+            div().id(id).p_1().rounded(px(4.)).cursor_pointer().hover(|d| d.bg(t.list_hover))
+                .tooltip(move |window, cx| gpui_kit::component::tooltip::Tooltip::new(tip).build(window, cx))
+                .on_click(cx.listener(move |this, _, window, cx| {
+                    if let Some(ed) = this.src.clone() {
+                        ed.update(cx, |v, cx| if save { v.save_all(cx) } else { v.close_all(window, cx) });
+                    }
+                }))
+                .child(icon(ic, 13., t.muted_foreground))
+        }));
+        let st = self.sections.clone();
+        if let Some(tl) = &self.timeline {
+            let on = st.open(Section::Timeline);
+            tl.update(cx, |v, cx| v.set_enabled(on, cx));
+        }
         let accent = t.primary.opacity(0.18);
         let root_for_drop = root.clone();
         let root_for_ext = root.clone();
@@ -123,21 +136,71 @@ impl RightPanel {
         } else {
             tree.context_menu(crate::file_ops::empty_menu(cx.entity().downgrade(), root.clone())).into_any_element()
         };
-        // 大纲区标题行
-        let outline_head = h_flex().id("ft-outline-head").h(px(28.)).px_2().gap_1().items_center().flex_none().cursor_pointer().border_t_1().border_color(t.border)
-            .text_size(px(11.)).text_color(t.muted_foreground)
-            .on_click(cx.listener(|this, _, _, cx| { this.outline_open = !this.outline_open; cx.notify(); }))
-            .child(icon(if outline_open { IconName::ChevronDown } else { IconName::ChevronRight }, 12., t.muted_foreground))
-            .child(div().font_weight(FontWeight::SEMIBOLD).child("大纲"));
-        v_flex().size_full()
-            .child(toolbar)
-            .when(folder_open, |d| d.child(v_flex().flex_1().min_h_0().child(body)))
-            // 项目文件夹收起后,大纲占满剩下的高度;否则固定一块高度放在树的下面
-            .when_some(self.outline.clone(), |d, outline| {
-                d.child(outline_head).when(outline_open, |d| {
-                    d.child(div().when(folder_open, |d| d.h(px(OUTLINE_H)).flex_none()).when(!folder_open, |d| d.flex_1()).min_h_0().child(outline))
-                })
-            })
+        let mut actions: Vec<(Section, AnyElement)> = vec![(Section::Folder, folder_actions.into_any_element()), (Section::OpenEditors, editor_actions.into_any_element())];
+        let mut col = v_flex().size_full();
+        let folder_open = st.open(Section::Folder);
+        let mut body = Some(body);
+        for sec in Section::ALL {
+            if !st.visible(sec) {
+                continue;
+            }
+            let extra = actions.iter().position(|(s, _)| *s == sec).map(|i| actions.remove(i).1);
+            col = col.child(self.section_head(sec, &root_name, extra, st.first_visible() == Some(sec), cx));
+            if !st.open(sec) {
+                continue;
+            }
+            col = match sec {
+                Section::OpenEditors => col.children(self.open_editors.clone()),
+                Section::Folder => col.child(v_flex().flex_1().min_h(px(80.)).child(body.take().unwrap_or_else(|| div().into_any_element()))),
+                Section::Outline => col.children(self.outline.clone().map(|o| Self::fixed_or_fill(o, folder_open))),
+                Section::Timeline => col.children(self.timeline.clone().map(|o| Self::fixed_or_fill(o, folder_open))),
+            };
+        }
+        col.into_any_element()
+    }
+
+    /// 大纲 / 时间线的容器:文件夹区展开时给固定高度(空间不够会收缩),否则平分剩余高度。
+    fn fixed_or_fill(view: impl IntoElement, folder_open: bool) -> impl IntoElement {
+        div().when(folder_open, |d| d.h(px(SECTION_H)).min_h(px(48.))).when(!folder_open, |d| d.flex_1().min_h_0()).child(view)
+    }
+
+    /// 区块标题行:展开箭头 + 名称(点它折叠 / 展开)、该区块的操作按钮,第一个可见区块还带 `···` 菜单(显示 / 隐藏区块)。
+    fn section_head(&self, sec: Section, root_name: &str, actions: Option<AnyElement>, first: bool, cx: &mut Context<Self>) -> AnyElement {
+        let t = cx.theme().clone();
+        let open = self.sections.open(sec);
+        let label = if sec == Section::Folder { root_name.to_uppercase() } else { sec.label().to_string() };
+        let weak = cx.entity().downgrade();
+        let st = self.sections.clone();
+        let menu = move |menu: PopupMenu, _: &mut Window, _: &mut Context<PopupMenu>| {
+            let mut menu = menu;
+            for s in Section::ALL {
+                let (w, on) = (weak.clone(), st.visible(s));
+                // 至少留一个区块,否则这个菜单也没了
+                let only = on && Section::ALL.iter().filter(|x| st.visible(**x)).count() == 1;
+                menu = menu.item(PopupMenuItem::new(s.label()).checked(on).disabled(only).on_click(move |_, _, cx| {
+                    let _ = w.update(cx, |this, cx| {
+                        this.sections.toggle_hidden(s);
+                        cx.emit(PanelEvent::StateChanged);
+                        cx.notify();
+                    });
+                }));
+            }
+            menu
+        };
+        h_flex().h(px(28.)).px_2().gap_1().items_center().flex_none().text_size(px(11.)).text_color(t.muted_foreground)
+            .when(!first, |d| d.border_t_1().border_color(t.border))
+            .child(
+                h_flex().id(SharedString::from(format!("sec-head-{}", sec.key()))).flex_1().min_w_0().h_full().gap_1().items_center().cursor_pointer()
+                    .on_click(cx.listener(move |this, _, _, cx| {
+                        this.sections.toggle_collapsed(sec);
+                        cx.emit(PanelEvent::StateChanged);
+                        cx.notify();
+                    }))
+                    .child(icon(if open { IconName::ChevronDown } else { IconName::ChevronRight }, 12., t.muted_foreground))
+                    .child(div().min_w_0().truncate().font_weight(FontWeight::SEMIBOLD).child(label)),
+            )
+            .children(actions.filter(|_| open))
+            .when(first, |d| d.child(Button::new("sec-more").xsmall().ghost().icon(IconName::Ellipsis).tooltip("显示 / 隐藏区块").dropdown_menu(menu)))
             .into_any_element()
     }
 }
