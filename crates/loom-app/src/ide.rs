@@ -598,7 +598,7 @@ impl IdeView {
             self.reveal_active_tab(a);
         }
         if let Some(img_path) = active.clone().filter(|p| self.images.contains(p)) {
-            return root.child(tab_bar(self.tab_items(&img_path), self.tabs_scroll.clone(), &self.root, self.wrap_tabs, self.is_split(), cx)).child(breadcrumbs(&img_path, &self.root, true, None, None, cx)).child(
+            return root.child(tab_bar(self.tab_items(&img_path), self.tabs_scroll.clone(), &self.root, self.wrap_tabs, self.is_split(), cx)).child(breadcrumbs(&img_path, &self.root, true, None, None, None, cx)).child(
                 div().flex_1().min_h_0().flex().items_center().justify_center().p_4().child(img(img_path).max_w_full().max_h_full()),
             ).into_any_element();
         }
@@ -608,7 +608,7 @@ impl IdeView {
         }
         if let Some(sheet_path) = active.clone().filter(|p| self.sheets.contains_key(p)) {
             let view = self.sheets[&sheet_path].clone();
-            return root.child(tab_bar(self.tab_items(&sheet_path), self.tabs_scroll.clone(), &self.root, self.wrap_tabs, self.is_split(), cx)).child(breadcrumbs(&sheet_path, &self.root, true, None, None, cx)).child(div().flex_1().min_h_0().child(view)).into_any_element();
+            return root.child(tab_bar(self.tab_items(&sheet_path), self.tabs_scroll.clone(), &self.root, self.wrap_tabs, self.is_split(), cx)).child(breadcrumbs(&sheet_path, &self.root, true, None, None, None, cx)).child(div().flex_1().min_h_0().child(view)).into_any_element();
         }
         let Some(path) = active.filter(|p| self.docs.contains_key(p)) else {
             if let Some(note) = self.note.clone() {
@@ -637,8 +637,7 @@ impl IdeView {
         let doc = &self.docs[&path];
         let editor = doc.editor.clone();
         root.child(tab_bar(self.tab_items(&path), self.tabs_scroll.clone(), &self.root, self.wrap_tabs, self.is_split(), cx))
-            .child(breadcrumbs(&path, &self.root, doc.saved, self.note.clone().or_else(|| doc.stale.then(|| "磁盘上的文件已被修改,点右侧刷新按钮载入(会丢弃你的修改)".to_string())), Some(self.blame_gutter), cx))
-            .children(md_view.as_ref().map(|v| crate::ide_markdown::mode_bar(v, md_mode, cx)))
+            .child(breadcrumbs(&path, &self.root, doc.saved, self.note.clone().or_else(|| doc.stale.then(|| "磁盘上的文件已被修改,点右侧刷新按钮载入(会丢弃你的修改)".to_string())), Some(self.blame_gutter), md_view.as_ref().map(|v| crate::ide_markdown::mode_bar(v, md_mode, cx)), cx))
             .child({
                 let prefs = crate::prefs(cx).editor;
                 let gutter = self.blame_gutter.then(|| crate::ide_blame::gutter(doc, &self.blame_ui, cx)).flatten();

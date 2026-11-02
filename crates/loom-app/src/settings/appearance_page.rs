@@ -9,7 +9,7 @@ use gpui_kit::assets::IconName;
 use gpui_kit::component::{ActiveTheme, h_flex, v_flex};
 use gpui_kit::prelude::FluentBuilder as _;
 use gpui_kit::*;
-use loom_config::{ScrollbarStyle, ToolDensity};
+use loom_config::{ScrollbarStyle, ShimmerKind, ToolDensity};
 
 /// 外观页在主题 / 强调色之后的全部区块。
 pub fn sections(wb: &Workbench, cx: &mut Context<Workbench>) -> Vec<AnyElement> {
@@ -54,6 +54,13 @@ pub fn sections(wb: &Workbench, cx: &mut Context<Workbench>) -> Vec<AnyElement> 
             row("显示方式", "「跟随系统」沿用 macOS「显示滚动条」设置;「自动隐藏」仅在滚动时出现;「始终显示」常驻", segmented("sb-style",
                 vec![(ScrollbarStyle::System, "跟随系统"), (ScrollbarStyle::Auto, "自动隐藏"), (ScrollbarStyle::Always, "始终显示")], a.scrollbar, cx,
                 |this, v, cx| this.update_settings(cx, |s| s.appearance.scrollbar = v)), cx),
+        ], cx).into_any_element(),
+        group("流光样式", rows![
+            row("流光效果", a.shimmer.describe(), segmented("shimmer-kind",
+                ShimmerKind::ALL.iter().map(|k| (*k, k.label())).collect(), a.shimmer, cx,
+                |this, v, cx| this.update_settings(cx, |s| s.appearance.shimmer = v)), cx),
+            div().px_3().py_3().text_size(px(14.)).text_color(t.muted_foreground)
+                .child(crate::shimmer_text::shimmer_label("预览:思考中… (12s · 按 Esc 中断)", "shimmer-demo", cx)),
         ], cx).into_any_element(),
         group("等待动画", spinners, cx).into_any_element(),
         note("运行中会话流末尾的「处理中…」与思考行会按所选风格显示文案;颜色跟随主题强调色", cx).into_any_element(),

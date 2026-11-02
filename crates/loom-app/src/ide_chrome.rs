@@ -215,7 +215,9 @@ fn file_path_items(menu: PopupMenu, view: &WeakEntity<IdeView>, path: &Path, roo
 }
 
 /// 面包屑:项目内的相对路径,最后一段为文件名;保存失败等提示显示在右侧。
-pub fn breadcrumbs(path: &Path, root: &str, saved: bool, note: Option<String>, blame: Option<bool>, cx: &mut Context<IdeView>) -> impl IntoElement {
+///
+/// 参数:`extra` 放在提示与追溯 / 刷新按钮之间的附加控件(Markdown 的「预览 / 源码 / 分栏」切换),没有传 `None`。
+pub fn breadcrumbs(path: &Path, root: &str, saved: bool, note: Option<String>, blame: Option<bool>, extra: Option<AnyElement>, cx: &mut Context<IdeView>) -> impl IntoElement {
     let t = cx.theme().clone();
     let home = std::env::var_os("HOME").map(PathBuf::from);
     let tilde;
@@ -275,6 +277,7 @@ pub fn breadcrumbs(path: &Path, root: &str, saved: bool, note: Option<String>, b
         })))
         .when_some(note, |d, n| d.child(div().text_color(t.warning).child(n)))
         .when(!saved, |d| d.child(div().text_color(t.muted_foreground).child("未保存 · ⌘S")))
+        .children(extra)
         .when_some(blame, |d, on| {
             d.child(
                 Button::new("ide-blame")

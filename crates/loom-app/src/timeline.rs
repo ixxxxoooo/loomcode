@@ -5,7 +5,6 @@ use crate::model::SessionModel;
 use crate::tool_card;
 use crate::ui::{icon, pill};
 use gpui_kit::assets::IconName;
-use gpui_kit::component::shimmer::ShimmerText;
 use gpui_kit::component::{ActiveTheme, h_flex, v_flex};
 use gpui_kit::prelude::FluentBuilder as _;
 use gpui_kit::*;
@@ -83,7 +82,7 @@ fn render_working(session: &Entity<SessionModel>, cx: &App) -> AnyElement {
     }
     h_flex().h(px(26.)).px_2().gap_2().items_center()
         .child(crate::appearance::glyph_spinner("working", t.primary, cx))
-        .child(ShimmerText::new(crate::appearance::status_line(verb, started)).id("working-shimmer"))
+        .child(crate::shimmer_text::shimmer_label(crate::appearance::status_line(verb, started), "working-shimmer", cx))
         .text_size(px(13.)).text_color(t.muted_foreground)
         .into_any_element()
 }
@@ -135,7 +134,7 @@ fn render_thinking(session: &Entity<SessionModel>, id: &str, text: &str, streami
                 .child(if streaming {
                     // 字号要在外层设(ShimmerText 自己不带),否则会用默认的大字号,和「已思考」(13px)对不上
                     div().text_size(px(13.)).text_color(t.muted_foreground)
-                        .child(ShimmerText::new(crate::appearance::status_line(crate::appearance::verb_text(cx, id), session.read(cx).turn_started)).id(SharedString::from(format!("think-shimmer-{id}"))))
+                        .child(crate::shimmer_text::shimmer_label(crate::appearance::status_line(crate::appearance::verb_text(cx, id), session.read(cx).turn_started), format!("think-shimmer-{id}"), cx))
                         .into_any_element()
                 } else {
                     div().text_size(px(13.)).text_color(t.muted_foreground).child(thought_label(session.read(cx).thinking_secs(id))).into_any_element()

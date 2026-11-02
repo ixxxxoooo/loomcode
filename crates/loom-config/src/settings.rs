@@ -258,6 +258,38 @@ pub enum SpinnerStyle {
     Minimal,
 }
 
+/// 流光样式:运行中文字上扫过的高亮效果。
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, Default)]
+#[serde(rename_all = "snake_case")]
+pub enum ShimmerKind {
+    /// 经典:单色高亮带从左扫到右
+    #[default]
+    Classic,
+    /// 流光溢彩:整行文字随时间流转渐变的七彩色
+    Aurora,
+}
+
+impl ShimmerKind {
+    /// 全部样式。
+    pub const ALL: [ShimmerKind; 2] = [Self::Classic, Self::Aurora];
+
+    /// 样式名。
+    pub fn label(self) -> &'static str {
+        match self {
+            Self::Classic => "经典",
+            Self::Aurora => "流光溢彩",
+        }
+    }
+
+    /// 一句话说明。
+    pub fn describe(self) -> &'static str {
+        match self {
+            Self::Classic => "单色高亮带从左到右扫过文字,颜色跟随主题",
+            Self::Aurora => "文字沿色环流转渐变,像极光一样流光溢彩",
+        }
+    }
+}
+
 /// 工具调用详细程度(参考 OhMyAgent 与 Cursor 的「对话密度」)。
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, Default)]
 #[serde(rename_all = "snake_case")]
@@ -308,11 +340,13 @@ pub struct AppearancePrefs {
     pub spinner: SpinnerStyle,
     /// 工具调用详细程度
     pub tool_density: ToolDensity,
+    /// 流光样式
+    pub shimmer: ShimmerKind,
 }
 
 impl Default for AppearancePrefs {
     fn default() -> Self {
-        Self { chat_width: 820, settings_width: 760, timeline_font_pct: 100, scrollbar: ScrollbarStyle::System, spinner: SpinnerStyle::Classic, tool_density: ToolDensity::Standard }
+        Self { chat_width: 820, settings_width: 760, timeline_font_pct: 100, scrollbar: ScrollbarStyle::System, spinner: SpinnerStyle::Classic, tool_density: ToolDensity::Standard, shimmer: ShimmerKind::Classic }
     }
 }
 

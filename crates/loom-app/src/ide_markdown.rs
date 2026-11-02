@@ -179,10 +179,12 @@ fn front_card(front: &str, cx: &App) -> impl IntoElement {
         }))
 }
 
-/// 所见即所得 / 源码 / 分栏切换条(IDE 用)。
+/// 所见即所得 / 源码 / 分栏切换按钮组(IDE 用)。
+///
+/// 不再单独占一行:作为 `ide_chrome::breadcrumbs` 的 `extra` 放在面包屑行右侧。
 pub fn mode_bar<T: 'static>(view: &Entity<MdDocView>, cur: MdMode, cx: &mut Context<T>) -> AnyElement {
     let t = cx.theme().clone();
-    h_flex().w_full().h(px(28.)).flex_none().px_3().gap_1().justify_end().items_center().border_b_1().border_color(t.border.opacity(0.6))
+    h_flex().flex_none().gap_0p5().items_center()
         .children([(MdMode::Preview, "预览"), (MdMode::Source, "源码"), (MdMode::Split, "分栏")].into_iter().map(|(m, label)| {
             let v = view.clone();
             let active = m == cur;

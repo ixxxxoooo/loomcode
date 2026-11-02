@@ -10,7 +10,6 @@ use crate::row_groups::{needs_attention, summary};
 use crate::tool_card::render_tool;
 use crate::ui::icon;
 use gpui_kit::assets::IconName;
-use gpui_kit::component::shimmer::ShimmerText;
 use gpui_kit::component::{ActiveTheme, h_flex, v_flex};
 use gpui_kit::prelude::FluentBuilder as _;
 use gpui_kit::*;
@@ -96,7 +95,7 @@ fn step_row(tool: &ToolCall, live: bool, cx: &App) -> Div {
         (false, false) => format!("{} {subject}", p.verb),
     };
     let label = if live {
-        ShimmerText::new(text).id(SharedString::from(format!("tstep-shim-{}", tool.id))).into_any_element()
+        crate::shimmer_text::shimmer_label(text, format!("tstep-shim-{}", tool.id), cx)
     } else {
         div().child(text).into_any_element()
     };
