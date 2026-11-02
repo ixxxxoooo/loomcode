@@ -96,6 +96,7 @@ mod lsp;
 mod ide_memory;
 mod ide_prefs;
 mod ide_brackets;
+mod ide_guides;
 mod ide_chrome;
 mod tab_style;
 mod ide_close;

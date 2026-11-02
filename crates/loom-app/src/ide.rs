@@ -492,6 +492,7 @@ impl Render for IdeView {
                 let prefs = crate::prefs(cx).editor;
                 let gutter = self.blame_gutter.then(|| crate::ide_blame::gutter(doc, &self.blame_ui, cx)).flatten();
                 let inline = crate::ide_blame::inline_blame(doc, cx);
+                let guide = crate::ide_guides::overlay(doc, cx);
                 let hover = crate::ide_hover::hover_card(doc, &path, cx.weak_entity(), window, cx);
                 let cursor_msg = self.cursor_msg.as_ref().and_then(|m| crate::ide_message::message_element(doc, m, cx.weak_entity(), cx));
                 let ctx_menu = crate::ide_menu::editor_menu(&editor, cx.weak_entity());
@@ -510,6 +511,7 @@ impl Render for IdeView {
                                 .child(div().size_full().context_menu(ctx_menu).child(Editor::new(&editor).bordered(false).appearance(false).size_full())))
                     })
                     .children(mm)
+                    .children(guide)
                     .children(inline)
                     .children(hover)
                     .children(cursor_msg);
