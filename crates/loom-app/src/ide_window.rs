@@ -9,7 +9,7 @@ use crate::ide::{ChangeAllOccurrences, CloseTab, FindReferences, FormatDocument,
 use crate::right_panel::{PanelEvent, RightPanel};
 use crate::ui::{icon, no_drag};
 use gpui_kit::component::Disableable as _;
-use crate::workbench::{RightTab, SaveFile, ToggleIde, ToggleLeft, ToggleRight, Workbench, chat_panel};
+use crate::workbench::{NewSession, RightTab, SaveFile, ToggleIde, ToggleLeft, ToggleRight, Workbench, chat_panel};
 use gpui_kit::assets::IconName;
 use gpui_kit::component::TitleBar;
 use gpui_kit::component::button::{Button, ButtonVariants};
@@ -184,6 +184,25 @@ impl IdeWindow {
         }
     }
 
+    /// ⌘N:IDE 窗口自己没有会话,转到 Agent 窗口新建会话并切到前台。
+    ///
+    /// 融合模式下 IDE 嵌在工作台里,动作直接交给工作台处理。
+    fn new_agent_session(&mut self, cx: &mut Context<Self>) {
+        if self.wb.read(cx).settings.fused_ide {
+            cx.propagate();
+            return;
+        }
+        let wb = self.wb.clone();
+        let Some(handle) = wb.read(cx).agent_window else { return };
+        // 要更新另一个窗口里的工作台,推迟到当前事件之后,避免重复借用
+        cx.defer(move |cx| {
+            let _ = handle.update(cx, |_, window, cx| {
+                window.activate_window();
+                wb.update(cx, |wb, cx| wb.new_session(wb.target_project(), window, cx));
+            });
+        });
+    }
+
     /// 标题栏:左侧侧栏开关 / 搜索 / 后退 / 前进、居中的项目名搜索框、右侧对话栏开关 + 回 Agent(与 Agent 窗口同位置)。
     fn title_bar(&self, project: String, fused: bool, cx: &mut Context<Self>) -> impl IntoElement {
         let t = cx.theme().clone();
@@ -283,6 +302,7 @@ impl Render for IdeWindow {
             .on_action(cx.listener(|this, _: &crate::term_actions::ToggleTerminal, window, cx| this.toggle_term(window, cx)))
             .on_action(cx.listener(|this, _: &crate::term_actions::NewTerminal, window, cx| this.open_new_term(window, cx)))
             .on_action(cx.listener(|this, _: &ToggleIde, _, cx| this.back_to_agent(cx)))
+            .on_action(cx.listener(|this, _: &NewSession, _, cx| this.new_agent_session(cx)))
             .on_action(cx.listener(|this, _: &ToggleLeft, _, cx| { this.left_open = !this.left_open; cx.notify(); }))
             .on_action(cx.listener(|this, _: &ToggleRight, _, cx| { this.chat_open = !this.chat_open; cx.notify(); }))
             .size_full()
