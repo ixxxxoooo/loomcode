@@ -419,7 +419,7 @@ impl Render for IdeWindow {
                             div().size_full().child(chat_col).into_any_element()
                         } else {
                             h_resizable("ide-split")
-                                .child(resizable_panel().size(px(260.)).size_range(px(160.)..px(520.)).flex_none().visible(self.left_open)
+                                .child(resizable_panel().size(px(260.)).size_range(px(160.)..px(520.)).flex_none().fixed().visible(self.left_open)
                                     .child(div().size_full().child(if self.search_open { self.search.clone().into_any_element() } else { self.panel.clone().into_any_element() })))
                                 .child(resizable_panel().size_range(px(320.)..Pixels::MAX).child(
                                     v_resizable("ide-vsplit")
@@ -427,7 +427,7 @@ impl Render for IdeWindow {
                                         .child(resizable_panel().size(px(260.)).size_range(px(120.)..px(600.)).flex_none().visible(self.term_open)
                                             .child(div().size_full().child(self.term.clone()))),
                                 ))
-                                .child(resizable_panel().size(px(420.)).size_range(px(crate::layout_rules::COMPOSER_MIN_W)..px(900.)).flex_none().visible(self.chat_open)
+                                .child(resizable_panel().size(px(420.)).size_range(px(crate::layout_rules::COMPOSER_MIN_W)..px(900.)).flex_none().fixed().visible(self.chat_open)
                                     .child(chat_col))
                                 .into_any_element()
                         }),
