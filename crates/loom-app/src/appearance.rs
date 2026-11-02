@@ -64,17 +64,32 @@ pub fn glyph_frames(style: SpinnerStyle) -> &'static [&'static str] {
     }
 }
 
-/// 动画字符:所有帧叠在同一格里,每 150ms 显示下一帧(与 OhMyAgent 一致),循环播放。
+/// 字符动画每一帧停留的时间(与 OhMyAgent 一致)。
+const GLYPH_FRAME_MS: u64 = 150;
+/// 字符动画的刷新帧率上限:比换帧频率(1000 / 150 ≈ 6.7)略高,避免换帧时刻被量化得忽快忽慢。
+const GLYPH_FPS: f32 = 10.;
+
+/// 字符动画下标:`t` 是一个循环内的进度(0..1),`n` 是帧数。返回:当前该显示的帧下标。
+pub fn glyph_index(t: f32, n: usize) -> usize {
+    ((t * n as f32) as usize).min(n.saturating_sub(1))
+}
+
+/// 动画字符:每 150ms 换下一帧,循环播放。
+///
+/// 只有一个元素、一个动画,并限频到 10 帧 / 秒(以前每个字形各叠一个元素、每个都按 60 帧重绘,
+/// 空闲时也让工作台每秒重建 60 次)。
 ///
 /// 参数:`id` 元素 id 前缀;`style` 风格;`color` 字符颜色;`size` 字号。
 pub fn glyph_anim(id: &str, style: SpinnerStyle, color: Hsla, size: f32) -> AnyElement {
     let frames = glyph_frames(style);
     let n = frames.len();
-    div().relative().size(px(size + 4.)).flex_none().children(frames.iter().enumerate().map(|(i, g)| {
-        div().absolute().size_full().flex().items_center().justify_center().text_size(px(size)).text_color(color).child(g.to_string())
-            .with_animation(SharedString::from(format!("{id}-g{i}")), Animation::new(Duration::from_millis(150 * n as u64)).repeat(),
-                move |d, t| d.opacity(if ((t * n as f32) as usize).min(n - 1) == i { 1. } else { 0. }))
-    })).into_any_element()
+    div().id(SharedString::from(format!("{id}-glyph"))).relative().size(px(size + 4.)).flex_none().flex().items_center().justify_center().text_size(px(size)).text_color(color)
+        .with_animation(
+            SharedString::from(format!("{id}-g")),
+            Animation::new(Duration::from_millis(GLYPH_FRAME_MS * n as u64)).repeat_synced().with_max_fps(GLYPH_FPS),
+            move |d, t| d.child(frames[glyph_index(t, n)].to_string()),
+        )
+        .into_any_element()
 }
 
 /// 当前风格的动画字符(会话里的处理中 / 思考中提示用)。
@@ -117,5 +132,23 @@ mod tests {
         assert_eq!(elapsed_text(5), "5s");
         assert_eq!(elapsed_text(65), "1m 05s");
         assert_eq!(elapsed_text(3720), "1h 02m");
+    }
+
+    #[::core::prelude::v1::test]
+    fn 字符动画下标覆盖全部帧且不越界() {
+        let n = 10;
+        let seen: std::collections::BTreeSet<usize> = (0..=100).map(|i| glyph_index(i as f32 / 100., n)).collect();
+        assert_eq!(seen.len(), n, "一个循环里每一帧都应出现");
+        assert_eq!(glyph_index(1.0, n), n - 1, "进度恰为 1 时不越界");
+        assert_eq!(glyph_index(0.0, n), 0);
+        assert_eq!(glyph_index(0.5, 0), 0, "没有帧时不 panic");
+    }
+
+    #[::core::prelude::v1::test]
+    fn 所有风格都有帧() {
+        use loom_config::SpinnerStyle::*;
+        for s in [Classic, Fun, ClaudeCode, Poetic, Geek, Minimal] {
+            assert!(glyph_frames(s).len() >= 4);
+        }
     }
 }

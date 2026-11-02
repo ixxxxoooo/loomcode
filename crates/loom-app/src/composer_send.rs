@@ -42,7 +42,7 @@ pub fn send_button(running: bool, can_send: bool, on_click: impl Fn(&mut Window,
                 div().absolute().size_full().flex().items_center().justify_center().child(
                     icon(IconName::LoaderCircle, BTN - 2., c).with_animation(
                         "send-ring",
-                        Animation::new(Duration::from_millis(1100)).repeat(),
+                        Animation::new(Duration::from_millis(1100)).repeat_synced().with_max_fps(crate::ui::fps::SPIN),
                         |ic, delta| ic.transform(Transformation::rotate(percentage(delta))),
                     ),
                 ),
@@ -50,7 +50,7 @@ pub fn send_button(running: bool, can_send: bool, on_click: impl Fn(&mut Window,
             // 中间的停止方块随呼吸轻微缩放
             .child(div().size(px(9.)).rounded(px(2.5)).bg(c).with_animation(
                 "send-stop-pulse",
-                Animation::new(Duration::from_millis(1600)).repeat(),
+                Animation::new(Duration::from_millis(1600)).repeat_synced().with_max_fps(crate::ui::fps::BREATHE),
                 |d, delta| d.opacity(0.65 + 0.35 * (delta * std::f32::consts::TAU).cos().abs()),
             ))
             .into_any_element();
@@ -75,7 +75,7 @@ pub fn optimize_button(enabled: bool, busy: bool, on_click: impl Fn(&mut Window,
     let ic = icon(IconName::WandSparkles, 16., fg);
     let base = div().id("optimize").size(px(BTN)).flex_none().flex().items_center().justify_center().rounded_full();
     if busy {
-        return base.child(ic.with_animation("optimize-busy", Animation::new(Duration::from_millis(900)).repeat(), |i, delta| {
+        return base.child(ic.with_animation("optimize-busy", Animation::new(Duration::from_millis(900)).repeat_synced().with_max_fps(crate::ui::fps::BREATHE), |i, delta| {
             i.opacity(0.35 + 0.65 * (0.5 - 0.5 * (delta * std::f32::consts::TAU).cos()))
         })).into_any_element();
     }

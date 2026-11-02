@@ -13,11 +13,24 @@ pub fn icon(name: IconName, size: f32, color: Hsla) -> Icon {
     Icon::new(name).size(px(size)).text_color(color)
 }
 
-/// 呼吸动画:一个来回 1.6 秒,透明度在 0.35–1.0 之间平滑起伏。
+/// 循环动画(呼吸、转圈)的刷新帧率上限。
+///
+/// gpui 的循环动画默认每帧都请求重绘,而重绘会标脏当前视图及其全部祖先,
+/// 使 `Workbench::render` 以 60 次 / 秒重跑(空闲时也是)。循环动画都是「环境动效」,
+/// 15–20 帧 / 秒足够顺滑,所以统一用 `with_max_fps` 限频并用 `repeat_synced` 让同类动画共用相位
+/// (同一时刻的多个动画只触发一次重绘)。一次性短动画(淡入、箭头旋转)不受影响,仍按 60 帧。
+pub mod fps {
+    /// 呼吸 / 脉冲(透明度渐变)。
+    pub const BREATHE: f32 = 15.;
+    /// 匀速旋转的转圈图标。
+    pub const SPIN: f32 = 20.;
+}
+
+/// 呼吸动画:一个来回 1.6 秒,透明度在 0.35–1.0 之间平滑起伏(15 帧 / 秒,见 [`fps`])。
 ///
 /// 参数:`el` 带 id 的元素;`id` 动画标识。返回:带呼吸动画的元素。
 pub fn breathe<E: IntoElement + StatefulInteractiveElement + Styled + 'static>(el: E, id: &'static str) -> AnyElement {
-    el.with_animation(id, Animation::new(std::time::Duration::from_millis(1600)).repeat(),
+    el.with_animation(id, Animation::new(std::time::Duration::from_millis(1600)).repeat_synced().with_max_fps(fps::BREATHE),
         |d, delta| d.opacity(0.675 + 0.325 * (delta * std::f32::consts::TAU).cos())).into_any_element()
 }
 
