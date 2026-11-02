@@ -110,12 +110,16 @@ pub struct IdeView {
     pub(crate) overlay_sub: Option<Subscription>,
     /// 悬停卡片的收起计时与鼠标靠近判断
     pub(crate) hover_ui: crate::ide_hover::HoverUi,
+    /// 标签条的滚动句柄:标签放不下时横向滚动,当前标签变化后滚到可见处
+    pub(crate) tabs_scroll: ScrollHandle,
+    /// 上一次已滚到可见处的 (当前标签, 标签数):变了才重新定位,不干扰用户手动滚动
+    tabs_revealed: Option<(PathBuf, usize)>,
 }
 
 impl IdeView {
     /// 创建空的编辑器视图。
     pub fn new() -> Self {
-        Self { root: String::new(), docs: HashMap::new(), tabs: TabModel::default(), note: None, images: Default::default(), sheets: HashMap::new(), sheet_subs: HashMap::new(), as_text: Default::default(), minimap_ui: Default::default(), applied: None, edit_gen: 0, nav: Default::default(), nav_quiet: false, fresh_open: false, recent: Vec::new(), pending_restore: None, md: HashMap::new(), blame_gutter: false, blame_ui: Default::default(), lsp_listening: false, hover_ui: Default::default(), overlay: None, cursor_msg: None, overlay_sub: None }
+        Self { root: String::new(), docs: HashMap::new(), tabs: TabModel::default(), note: None, images: Default::default(), sheets: HashMap::new(), sheet_subs: HashMap::new(), as_text: Default::default(), minimap_ui: Default::default(), applied: None, edit_gen: 0, nav: Default::default(), nav_quiet: false, fresh_open: false, recent: Vec::new(), pending_restore: None, md: HashMap::new(), blame_gutter: false, blame_ui: Default::default(), lsp_listening: false, hover_ui: Default::default(), overlay: None, cursor_msg: None, overlay_sub: None, tabs_scroll: ScrollHandle::new(), tabs_revealed: None }
     }
 
     /// 设置项目根目录(会话切换时由宿主调用)。
@@ -197,6 +201,18 @@ impl IdeView {
     pub fn move_tab(&mut self, path: &Path, target: &Path, cx: &mut Context<Self>) {
         self.tabs.move_to(path, target);
         cx.notify();
+    }
+
+    /// 当前标签或标签数变了就让标签条滚到当前标签(参考 VS Code:激活的标签始终可见)。
+    fn reveal_active_tab(&mut self, active: &Path) {
+        let sig = (active.to_path_buf(), self.tabs.tabs().len());
+        if self.tabs_revealed.as_ref() == Some(&sig) {
+            return;
+        }
+        if let Some(ix) = self.tabs.tabs().iter().position(|p| p == active) {
+            self.tabs_scroll.scroll_to_item(ix);
+        }
+        self.tabs_revealed = Some(sig);
     }
 
     /// 标签栏的数据;`active` 为当前标签。
@@ -461,14 +477,17 @@ impl Render for IdeView {
             .on_action(cx.listener(|this, _: &NextTab, window, cx| this.cycle(1, window, cx)))
             .on_action(cx.listener(|this, _: &PrevTab, window, cx| this.cycle(-1, window, cx)));
         let active = self.tabs.active().map(Path::to_path_buf);
+        if let Some(a) = &active {
+            self.reveal_active_tab(a);
+        }
         if let Some(img_path) = active.clone().filter(|p| self.images.contains(p)) {
-            return root.child(tab_bar(self.tab_items(&img_path), cx)).child(breadcrumbs(&img_path, &self.root, true, None, None, cx)).child(
+            return root.child(tab_bar(self.tab_items(&img_path), self.tabs_scroll.clone(), cx)).child(breadcrumbs(&img_path, &self.root, true, None, None, cx)).child(
                 div().flex_1().min_h_0().flex().items_center().justify_center().p_4().child(img(img_path).max_w_full().max_h_full()),
             ).into_any_element();
         }
         if let Some(sheet_path) = active.clone().filter(|p| self.sheets.contains_key(p)) {
             let view = self.sheets[&sheet_path].clone();
-            return root.child(tab_bar(self.tab_items(&sheet_path), cx)).child(breadcrumbs(&sheet_path, &self.root, true, None, None, cx)).child(div().flex_1().min_h_0().child(view)).into_any_element();
+            return root.child(tab_bar(self.tab_items(&sheet_path), self.tabs_scroll.clone(), cx)).child(breadcrumbs(&sheet_path, &self.root, true, None, None, cx)).child(div().flex_1().min_h_0().child(view)).into_any_element();
         }
         let Some(path) = active.filter(|p| self.docs.contains_key(p)) else {
             if let Some(note) = self.note.clone() {
@@ -496,7 +515,7 @@ impl Render for IdeView {
         let overlay = self.overlay_element(cx);
         let doc = &self.docs[&path];
         let editor = doc.editor.clone();
-        root.child(tab_bar(self.tab_items(&path), cx))
+        root.child(tab_bar(self.tab_items(&path), self.tabs_scroll.clone(), cx))
             .child(breadcrumbs(&path, &self.root, doc.saved, self.note.clone().or_else(|| doc.stale.then(|| "磁盘上的文件已被修改,点右侧刷新按钮载入(会丢弃你的修改)".to_string())), Some(self.blame_gutter), cx))
             .children(md_view.as_ref().map(|v| crate::ide_markdown::mode_bar(v, md_mode, cx)))
             .child({

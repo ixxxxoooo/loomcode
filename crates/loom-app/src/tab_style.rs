@@ -38,3 +38,19 @@ pub fn tab_close_box(id: SharedString, cx: &App) -> Stateful<Div> {
 pub fn tab_close_icon(cx: &App) -> Icon {
     icon(IconName::X, 12., cx.theme().muted_foreground)
 }
+
+/// 标签条的滚轮处理:只有竖向滚动量(普通鼠标滚轮)时换算成横向滚动;横向滚动量(触控板横滑)交给默认逻辑。
+///
+/// 参数:`scroll` 标签条的滚动句柄。返回:可挂在 `on_scroll_wheel` 上的处理函数。
+pub fn wheel_to_horizontal(scroll: ScrollHandle) -> impl Fn(&ScrollWheelEvent, &mut Window, &mut App) + 'static {
+    move |ev, window, cx| {
+        let d = ev.delta.pixel_delta(px(20.));
+        if d.y == px(0.) || d.x != px(0.) {
+            return;
+        }
+        let (off, max) = (scroll.offset(), scroll.max_offset());
+        scroll.set_offset(point((off.x + d.y).clamp(-max.x, px(0.)), off.y));
+        cx.stop_propagation();
+        window.refresh();
+    }
+}

@@ -141,6 +141,9 @@ pub struct RightPanel {
     pub(crate) scm: Entity<crate::scm::ScmView>,
     /// 仓库状态变化(暂存 / 提交…)时刷新文件树的 Git 标记
     _scm_subs: Vec<Subscription>,
+    /// 标签条的滚动句柄(标签放不下时横向滚动)与上次已滚到可见处的 (当前标签, 标签数)
+    pub(crate) tabs_scroll: ScrollHandle,
+    pub(crate) tabs_revealed: std::cell::Cell<Option<(RightTab, usize)>>,
 }
 
 impl RightPanel {
@@ -175,6 +178,8 @@ impl RightPanel {
             changes_mode: crate::git_changes::ChangesMode::initial(),
             scm,
             _scm_subs: vec![scm_sub, scm_obs],
+            tabs_scroll: ScrollHandle::new(),
+            tabs_revealed: std::cell::Cell::new(None),
         }
     }
 

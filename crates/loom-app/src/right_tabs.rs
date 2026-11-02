@@ -67,6 +67,14 @@ impl RightPanel {
             }
             menu
         };
+        // 当前标签或标签数变了:滚到当前标签可见处
+        let sig = (self.tab, self.open.len());
+        if self.tabs_revealed.get() != Some(sig) {
+            if let Some(ix) = self.open.iter().position(|t| *t == self.tab) {
+                self.tabs_scroll.scroll_to_item(ix);
+            }
+            self.tabs_revealed.set(Some(sig));
+        }
         let tabs = self.open.iter().copied().map(|rt| {
             let on = rt == cur;
             let group = SharedString::from(format!("rt-g-{}", rt.key()));
@@ -91,7 +99,12 @@ impl RightPanel {
         });
         crate::window_header::draggable(h_flex().id("rt-tabbar").h(px(crate::window_header::HEADER_H)).w_full().min_w_0().flex_none().px_2().gap_0p5().items_center())
             // 标签放不下时横向滚动,「+」与右侧按钮始终固定可见
-            .child(div().id("rt-tabs-scroll").min_w_0().flex_shrink(1.).h_full().flex().items_center().overflow_x_scroll().child(h_flex().gap_0p5().items_center().children(tabs)))
+            .child(
+                h_flex().id("rt-tabs-scroll").min_w_0().flex_shrink(1.).h_full().gap_0p5().items_center().overflow_x_scroll()
+                    .track_scroll(&self.tabs_scroll)
+                    .on_scroll_wheel(crate::tab_style::wheel_to_horizontal(self.tabs_scroll.clone()))
+                    .children(tabs),
+            )
             .child(Button::new("rt-add").xsmall().ghost().icon(IconName::Plus).tooltip("新增标签").dropdown_menu(menu))
             .child(div().flex_1().h_full())
             .when_some(trailing, |d, f| d.child(div().flex_none().child(f(window, cx))))

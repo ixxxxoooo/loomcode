@@ -43,7 +43,7 @@ impl Render for DraggedTab {
 
 /// 标签栏:预览标签用斜体;未保存显示圆点,悬停或当前标签显示关闭按钮;固定标签显示图钉;
 /// 中键关闭、双击固定预览,可拖动排序(固定与非固定之间不互拖)。
-pub fn tab_bar(items: Vec<TabItem>, cx: &mut Context<IdeView>) -> impl IntoElement {
+pub fn tab_bar(items: Vec<TabItem>, scroll: ScrollHandle, cx: &mut Context<IdeView>) -> impl IntoElement {
     let t = cx.theme().clone();
     h_flex()
         .id("ide-tabs")
@@ -51,6 +51,9 @@ pub fn tab_bar(items: Vec<TabItem>, cx: &mut Context<IdeView>) -> impl IntoEleme
         .w_full()
         .flex_none()
         .overflow_x_scroll()
+        .track_scroll(&scroll)
+        // 鼠标竖向滚轮也横向滚动标签(触控板横滑原生支持)
+        .on_scroll_wheel(crate::tab_style::wheel_to_horizontal(scroll.clone()))
         .bg(t.sidebar)
         .border_b_1()
         .border_color(t.border)
