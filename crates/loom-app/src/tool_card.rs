@@ -33,6 +33,13 @@ pub fn tool_icon(kind: ToolKind) -> IconName {
 /// 编辑 Diff 收起时的预览高度。
 const DIFF_PREVIEW_H: f32 = 130.;
 
+/// 文字内容:执行中的工具用流光文字(随外观偏好),其余是普通文字。
+///
+/// 参数:`text` 文字;`id` 流光元素 id(同屏唯一);`running` 是否执行中。
+fn live_text(text: String, id: String, running: bool, cx: &App) -> AnyElement {
+    if running { crate::shimmer_text::shimmer_label(text, id, cx) } else { div().child(text).into_any_element() }
+}
+
 /// 状态指示器。
 fn status_indicator(id: &str, status: ToolStatus, cx: &App) -> AnyElement {
     let t = cx.theme();
@@ -94,25 +101,26 @@ pub fn render_tool(session: &Entity<SessionModel>, tool: &ToolCall, cx: &App) ->
     let described = tool.kind == ToolKind::Execute && p.detail.is_some();
     let group = SharedString::from(format!("trow-{}", tool.id));
     let open_path = (matches!(tool.kind, ToolKind::Read | ToolKind::Edit | ToolKind::Write)).then(|| tool.locations.first().cloned().or_else(|| p.is_path.then(|| p.subject.clone()))).flatten();
+    let running = tool.status == ToolStatus::Running;
     let subject_color = if failed { t.danger } else { t.foreground };
     let subject = if described {
         // 说明优先占宽,命令首行跟在后面(灰色等宽、截断),对标 Claude Code 两者都显示
         h_flex().min_w_0().gap(px(8.)).items_baseline()
-            .child(div().min_w_0().truncate().text_size(px(13.)).text_color(subject_color).child(p.detail.clone().unwrap_or_default()))
+            .child(div().min_w_0().truncate().text_size(px(13.)).text_color(subject_color).child(live_text(p.detail.clone().unwrap_or_default(), format!("tsh-d-{}", tool.id), running, cx)))
             .child(div().min_w_0().flex_shrink(1.).truncate().text_size(px(11.5)).font_family(MONO).text_color(t.muted_foreground.opacity(0.7)).child(p.subject.clone()))
             .into_any_element()
     } else if p.is_path {
         let name = p.subject.rsplit('/').next().unwrap_or(&p.subject).to_string();
         h_flex().min_w_0().gap(px(5.)).items_center()
             .child(crate::file_icons::file_icon_img(&name, false, false, 14.))
-            .child(div().min_w_0().truncate().text_size(px(13.)).font_weight(FontWeight::MEDIUM).text_color(subject_color).child(name))
+            .child(div().min_w_0().truncate().text_size(px(13.)).font_weight(FontWeight::MEDIUM).text_color(subject_color).child(live_text(name, format!("tsh-n-{}", tool.id), running, cx)))
             .into_any_element()
     } else if tool.kind == ToolKind::Execute {
-        div().min_w_0().truncate().text_size(px(12.)).font_family(MONO).text_color(subject_color).child(crate::code_hl::shell_text(p.subject.lines().next().unwrap_or(""), "", cx)).into_any_element()
+        div().min_w_0().truncate().text_size(px(12.)).font_family(MONO).text_color(subject_color).child(if running { crate::shimmer_text::shimmer_label(p.subject.lines().next().unwrap_or("").to_string(), format!("tsh-c-{}", tool.id), cx) } else { crate::code_hl::shell_text(p.subject.lines().next().unwrap_or(""), "", cx).into_any_element() }).into_any_element()
     } else if tool.kind == ToolKind::Search {
-        div().min_w_0().truncate().text_size(px(12.)).font_family(MONO).text_color(subject_color).child(p.subject.clone()).into_any_element()
+        div().min_w_0().truncate().text_size(px(12.)).font_family(MONO).text_color(subject_color).child(live_text(p.subject.clone(), format!("tsh-s-{}", tool.id), running, cx)).into_any_element()
     } else {
-        div().min_w_0().truncate().text_size(px(13.)).font_weight(FontWeight::MEDIUM).text_color(subject_color).child(p.subject.clone()).into_any_element()
+        div().min_w_0().truncate().text_size(px(13.)).font_weight(FontWeight::MEDIUM).text_color(subject_color).child(live_text(p.subject.clone(), format!("tsh-o-{}", tool.id), running, cx)).into_any_element()
     };
     // 纯文字行(对齐 Cursor / OhMyAgent):贴合内容宽度,没有整行底色;箭头与「打开文件」悬停才出现;成功不打勾
     let header = h_flex()
@@ -132,7 +140,7 @@ pub fn render_tool(session: &Entity<SessionModel>, tool: &ToolCall, cx: &App) ->
             })
         })
         .child(div().w(px(16.)).flex().justify_center().child(icon(tool_icon(tool.kind), 12., if failed { t.danger } else { t.muted_foreground })))
-        .when(!p.verb.is_empty(), |d| d.child(div().flex_none().text_size(px(12.)).text_color(t.muted_foreground).child(p.verb.clone())))
+        .when(!p.verb.is_empty(), |d| d.child(div().flex_none().text_size(px(12.)).text_color(t.muted_foreground).child(live_text(p.verb.clone(), format!("tsh-v-{}", tool.id), running, cx))))
         .child(subject)
         .when(!described, |d| d.when_some(p.detail.clone().filter(|x| !x.is_empty()), |d, x| {
             d.child(div().flex_none().text_size(px(11.)).text_color(t.muted_foreground.opacity(0.75)).child(x))

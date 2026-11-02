@@ -45,7 +45,7 @@ pub fn render_group(session: &Entity<SessionModel>, range: Range<usize>, cx: &Ap
         .hover(|d| d.bg(t.list_hover))
         .on_click(move |_, _, cx| { s.update(cx, |m, cx| m.toggle(&k, cx)); })
         .child(if running { crate::appearance::row_spinner(&format!("tgrp-sp-{}", first.id), cx) } else { icon(IconName::Layers, 14., t.muted_foreground).into_any_element() })
-        .child(div().text_size(px(13.)).text_color(t.muted_foreground).child(text))
+        .child(div().text_size(px(13.)).text_color(t.muted_foreground).child(if running { crate::shimmer_text::shimmer_label(text, format!("tgrp-sh-{}", first.id), cx) } else { div().child(text).into_any_element() }))
         .when(failed > 0, |d| d.child(div().text_size(px(12.)).text_color(t.danger).child(format!("{failed} 项失败"))))
         .child(model.motion.chevron(&key, expanded, 12., t.muted_foreground));
     v_flex().w_full()

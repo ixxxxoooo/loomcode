@@ -64,7 +64,7 @@ pub fn render(session: &Entity<SessionModel>, card_data: &SubagentCard, depth: u
         .child(div().w(px(16.)).h(px(20.)).flex().items_center().justify_center().child(icon(IconName::Bot, 14., icon_color)))
         .child(v_flex().flex_1().min_w_0().gap(px(2.))
             .child(h_flex().gap_1p5().items_baseline()
-                .child(div().min_w_0().truncate().text_size(px(13.)).text_color(t.foreground).child(title))
+                .child(div().min_w_0().truncate().text_size(px(13.)).text_color(t.foreground).child(if active { crate::shimmer_text::shimmer_label(title, format!("sub-sh-{}", card_data.id), cx) } else { div().child(title).into_any_element() }))
                 .child(div().flex_none().text_size(px(12.)).text_color(t.muted_foreground.opacity(0.7)).child(card_data.agent_type.clone()))
                 .when(card_data.background, |d| d.child(pill("后台", t.primary, t.muted))))
             .child(h_flex().gap_2().items_center().text_size(px(12.))

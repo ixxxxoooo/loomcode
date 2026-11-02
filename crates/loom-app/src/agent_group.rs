@@ -40,7 +40,7 @@ pub fn render_group(session: &Entity<SessionModel>, range: Range<usize>, window:
         .hover(|d| d.bg(cx.theme().list_hover))
         .on_click(move |_, _, cx| { s.update(cx, |m, cx| m.toggle(&k, cx)); })
         .child(if running > 0 { crate::appearance::row_spinner(&format!("agrp-sp-{}", first.id), cx) } else { icon(IconName::Bot, 14., muted).into_any_element() })
-        .child(div().text_size(px(13.)).text_color(if expanded { fg } else { muted }).child(format!("并行 {} 个子 Agent", cards.len())))
+        .child(div().text_size(px(13.)).text_color(if expanded { fg } else { muted }).child({ let label = format!("并行 {} 个子 Agent", cards.len()); if running > 0 { crate::shimmer_text::shimmer_label(label, format!("agrp-sh-{}", first.id), cx) } else { div().child(label).into_any_element() } }))
         .when(running > 0, |d| d.child(chip(running, "运行中", cx.theme().primary)))
         .when(done > 0, |d| d.child(chip(done, "已完成", success)))
         .when(failed > 0, |d| d.child(chip(failed, "失败", danger)))
