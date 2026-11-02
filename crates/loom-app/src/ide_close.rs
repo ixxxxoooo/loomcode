@@ -52,7 +52,7 @@ impl IdeView {
     }
 
     /// 关闭一批标签并让编辑器聚焦到新的当前标签。
-    fn close_now(&mut self, paths: &[PathBuf], window: &mut Window, cx: &mut Context<Self>) {
+    pub(crate) fn close_now(&mut self, paths: &[PathBuf], window: &mut Window, cx: &mut Context<Self>) {
         for p in paths {
             self.drop_tab(p);
         }
@@ -60,6 +60,8 @@ impl IdeView {
         // 次组的标签全关完了:请主组合并拆分
         if self.parent.is_some() && self.tabs.tabs().is_empty() {
             cx.emit(crate::ide::IdeEvent::GroupEmpty);
+        } else if self.split.is_some() && self.tabs.tabs().is_empty() {
+            self.promote_second(cx);
         }
         cx.notify();
     }

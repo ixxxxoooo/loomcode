@@ -1653,7 +1653,7 @@ impl Workbench {
             .on_action(cx.listener(|this, _: &TogglePalette, window, cx| this.toggle_palette(window, cx)))
             .on_action(cx.listener(|this, _: &crate::ide::OpenCommandPalette, window, cx| this.toggle_palette(window, cx)))
             .on_action(cx.listener(|this, _: &crate::ide::ShowFileHistory, _, cx| {
-                if let Some(path) = this.editor.read(cx).tabs.active().map(crate::ide_diff::real_path) {
+                if let Some(path) = this.editor.read(cx).active_tab(cx).map(|p| crate::ide_diff::real_path(&p)) {
                     this.scm.update(cx, |s, cx| s.show_file_history(&path, cx));
                     this.panel.update(cx, |p, cx| p.set_tab(RightTab::Changes, cx));
                     this.right_open = true;

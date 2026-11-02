@@ -18,6 +18,8 @@ pub(crate) struct Split {
     /// 为真则上下排列(向下拆分),否则左右排列
     pub down: bool,
     _sub: Subscription,
+    /// 次组变化时让主组跟着重绘(状态栏光标、大纲等读主组的地方才会刷新)
+    _obs: Subscription,
 }
 
 impl IdeView {
@@ -62,7 +64,8 @@ impl IdeView {
                         cx.notify();
                     }
                 });
-                self.split = Some(Split { child: child.clone(), down, _sub: sub });
+                let obs = cx.observe(&child, |_, _, cx| cx.notify());
+                self.split = Some(Split { child: child.clone(), down, _sub: sub, _obs: obs });
                 child
             }
         };
@@ -85,6 +88,54 @@ impl IdeView {
                     child.update(cx, |c, cx| c.close_all(window, cx));
                 }
             });
+        });
+    }
+
+    /// 当前(最近点击的组里的)活动标签路径;外部读取「当前文件」的地方(大纲、文件树定位)用它。
+    pub fn active_tab(&self, cx: &App) -> Option<PathBuf> {
+        match self.focused_child() {
+            Some(c) => c.read(cx).tabs.active().map(Path::to_path_buf),
+            None => self.tabs.active().map(Path::to_path_buf),
+        }
+    }
+
+    /// 主组的标签全关了而次组还有标签:把次组的内容整体换给主组,并结束拆分(不丢未保存的修改)。
+    pub(crate) fn promote_second(&mut self, cx: &mut Context<Self>) {
+        let Some(sp) = self.split.take() else { return };
+        sp.child.update(cx, |c, _| {
+            std::mem::swap(&mut self.docs, &mut c.docs);
+            std::mem::swap(&mut self.tabs, &mut c.tabs);
+            std::mem::swap(&mut self.images, &mut c.images);
+            std::mem::swap(&mut self.sheets, &mut c.sheets);
+            std::mem::swap(&mut self.sheet_subs, &mut c.sheet_subs);
+            std::mem::swap(&mut self.diffs, &mut c.diffs);
+            std::mem::swap(&mut self.as_text, &mut c.as_text);
+            std::mem::swap(&mut self.md, &mut c.md);
+        });
+        self.active_second = false;
+        cx.notify();
+    }
+
+    /// 拖动标签落到本组:同组内是排序,跨组则把文件移到本组(源组里有未保存修改时保留一份,避免丢内容)。
+    ///
+    /// 参数:`d` 被拖的标签;`target` 落在哪个标签上(落在空白处为 `None`)。
+    pub(crate) fn drop_tab_on(&mut self, d: &crate::ide_chrome::DraggedTab, target: Option<&Path>, window: &mut Window, cx: &mut Context<Self>) {
+        if d.from == cx.weak_entity() {
+            if let Some(t) = target {
+                self.move_tab(&d.path, t, cx);
+            }
+            return;
+        }
+        let (src, path, dest) = (d.from.clone(), d.path.clone(), cx.weak_entity());
+        window.defer(cx, move |window, cx| {
+            let dirty = src.update(cx, |s, _| s.docs.get(&path).is_some_and(|x| !x.saved)).unwrap_or(true);
+            let _ = dest.update(cx, |t, cx| {
+                t.active_second = false;
+                t.open_inner(path.clone(), false, true, window, cx);
+            });
+            if !dirty {
+                let _ = src.update(cx, |s, cx| s.close_now(&[path], window, cx));
+            }
         });
     }
 

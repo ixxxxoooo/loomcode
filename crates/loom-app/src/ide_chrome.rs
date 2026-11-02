@@ -29,6 +29,8 @@ pub struct TabItem {
 /// 拖动标签时跟随鼠标的小浮标,同时携带被拖的路径。
 #[derive(Clone)]
 pub struct DraggedTab {
+    /// 来自哪个编辑器组
+    pub from: WeakEntity<IdeView>,
     pub path: PathBuf,
 }
 
@@ -59,7 +61,7 @@ pub fn tab_bar(items: Vec<TabItem>, scroll: ScrollHandle, root: &str, wrap: bool
             let group = SharedString::from(format!("tab-{i}"));
             let (p_click, p_close, p_mid) = (path.clone(), path.clone(), path.clone());
             let menu = tab_menu(cx.entity().downgrade(), path.clone(), pinned, root.to_string());
-            let (p_drag, p_drop) = (path.clone(), path.clone());
+            let (p_drag, p_drop, from) = (path.clone(), path.clone(), cx.weak_entity());
             let accent = t.accent;
             crate::tab_style::tab_shell(SharedString::from(format!("ide-tab-{i}")), group.clone(), active, cx)
                 .max_w(px(200.))
@@ -73,9 +75,9 @@ pub fn tab_bar(items: Vec<TabItem>, scroll: ScrollHandle, root: &str, wrap: bool
                     }
                 }))
                 .on_mouse_down(MouseButton::Middle, cx.listener(move |this, _, window, cx| this.close_tab(&p_mid, window, cx)))
-                .on_drag(DraggedTab { path: p_drag }, |d, _, _, cx| cx.new(|_| d.clone()))
+                .on_drag(DraggedTab { path: p_drag, from }, |d, _, _, cx| cx.new(|_| d.clone()))
                 .drag_over::<DraggedTab>(move |s, _, _, _| s.bg(accent))
-                .on_drop(cx.listener(move |this, d: &DraggedTab, _, cx| this.move_tab(&d.path, &p_drop, cx)))
+                .on_drop(cx.listener(move |this, d: &DraggedTab, window, cx| this.drop_tab_on(d, Some(&p_drop), window, cx)))
                 .context_menu(menu)
                 .child(if pinned { icon(IconName::Pin, 13., t.muted_foreground).into_any_element() } else if is_diff { icon(IconName::FileDiff, 13., t.muted_foreground).into_any_element() } else { crate::file_icons::file_icon_img(&name, false, false, 14.).into_any_element() })
                 .child(div().min_w_0().truncate().when(preview, |d| d.italic()).child(name))
@@ -96,7 +98,9 @@ pub fn tab_bar(items: Vec<TabItem>, scroll: ScrollHandle, root: &str, wrap: bool
                 )
         }))
         // 标签右侧的空白:双击新建临时记事本(对标 VS Code)
-        .child(div().id("ide-tabs-fill").flex_1().min_w(px(24.)).h(th).border_b_1().border_color(t.border).on_click(cx.listener(|this, ev: &ClickEvent, window, cx| {
+        .child(div().id("ide-tabs-fill").flex_1().min_w(px(24.)).h(th).border_b_1().border_color(t.border)
+            .drag_over::<DraggedTab>({ let accent = t.accent; move |s, _, _, _| s.bg(accent) })
+            .on_drop(cx.listener(|this, d: &DraggedTab, window, cx| this.drop_tab_on(d, None, window, cx))).on_click(cx.listener(|this, ev: &ClickEvent, window, cx| {
             if ev.click_count() >= 2 {
                 this.new_untitled(window, cx);
             }
@@ -159,7 +163,21 @@ fn tab_menu(view: WeakEntity<IdeView>, path: PathBuf, pinned: bool, root: String
         let pin = item(if pinned { "取消固定" } else { "固定标签" }, IconName::Pin).on_click(move |_, _, cx| {
             let _ = v.update(cx, |this, cx| this.toggle_pin_tab(&p, cx));
         });
-        let menu = menu.item(pin).separator().item(close).item(others).item(right).separator();
+        let (v, p) = (view.clone(), path.clone());
+        let split_r = item("向右拆分", IconName::PanelRight).on_click(move |_, window, cx| {
+            let _ = v.update(cx, |this, cx| {
+                this.activate(&p, window, cx);
+                this.split_active(false, window, cx);
+            });
+        });
+        let (v, p) = (view.clone(), path.clone());
+        let split_d = item("向下拆分", IconName::PanelBottom).on_click(move |_, window, cx| {
+            let _ = v.update(cx, |this, cx| {
+                this.activate(&p, window, cx);
+                this.split_active(true, window, cx);
+            });
+        });
+        let menu = menu.item(pin).separator().item(split_r).item(split_d).separator().item(close).item(others).item(right).separator();
         file_path_items(menu, &view, &path, &root)
     }
 }

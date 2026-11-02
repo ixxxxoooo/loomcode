@@ -230,7 +230,7 @@ impl TimelineView {
     }
 
     fn current_path(&self, cx: &App) -> Option<PathBuf> {
-        self.editor.read(cx).tabs.active().filter(|p| !crate::ide_diff::is_diff(p)).map(Path::to_path_buf)
+        self.editor.read(cx).active_tab(cx).filter(|p| !crate::ide_diff::is_diff(p))
     }
 
     fn sync_path(&mut self, cx: &mut Context<Self>) {

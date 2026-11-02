@@ -381,7 +381,7 @@ impl Render for IdeWindow {
             .on_action(cx.listener(|this, _: &ShowScm, window, cx| this.show_scm(window, cx)))
             .on_action(cx.listener(|this, _: &OpenCommandPalette, window, cx| this.toggle_quick(window, cx)))
             .on_action(cx.listener(|this, _: &ShowFileHistory, window, cx| {
-                if let Some(path) = this.ide.read(cx).tabs.active().map(crate::ide_diff::real_path) {
+                if let Some(path) = this.ide.read(cx).active_tab(cx).map(|p| crate::ide_diff::real_path(&p)) {
                     let scm = this.wb.read(cx).scm.clone();
                     scm.update(cx, |s, cx| s.show_file_history(&path, cx));
                     this.show_scm(window, cx);

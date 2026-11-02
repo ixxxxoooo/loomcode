@@ -224,7 +224,8 @@ impl Render for OutlineView {
         let t = cx.theme().clone();
         let hint = |text: &'static str| div().p_3().text_size(px(12.)).text_color(t.muted_foreground).child(text).into_any_element();
         let (items, cursor) = {
-            let ed = self.editor.read(cx);
+            let group = self.editor.read(cx).focused_child().unwrap_or_else(|| self.editor.clone());
+            let ed = group.read(cx);
             let Some(doc) = ed.tabs.active().filter(|p| !crate::ide_diff::is_diff(p)).and_then(|p| ed.docs.get(p)) else {
                 return hint("没有打开的文件");
             };
