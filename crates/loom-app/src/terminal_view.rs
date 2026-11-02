@@ -8,7 +8,6 @@ use crate::ui::MONO;
 use gpui_kit::component::ActiveTheme;
 use gpui_kit::prelude::FluentBuilder as _;
 use gpui_kit::*;
-use std::ops::Range;
 use std::sync::Arc;
 use loom_config::CursorShape;
 use loom_term::{Mods, Run, SelectKind, SpawnOptions, TermColor, Terminal, encode_key};
@@ -297,18 +296,17 @@ fn run_style(run: &Run, fg_default: Hsla, bg_default: Hsla, dark: bool) -> Optio
     })
 }
 
-/// 一行文字 → 文本与高亮区间。
-fn line_text(runs: &[Run], fg: Hsla, bg: Hsla, dark: bool) -> (String, Vec<(Range<usize>, HighlightStyle)>) {
-    let mut text = String::new();
-    let mut hl = Vec::new();
-    for r in runs {
-        let start = text.len();
-        text.push_str(&r.text);
-        if let Some(style) = run_style(r, fg, bg, dark) {
-            hl.push((start..text.len(), style));
-        }
-    }
-    (text, hl)
+/// 一个文字段 → 绝对定位在网格上的元素:背景块按格数画满,文字只带前景与样式。
+///
+/// 位置取 `列 × 格宽`,不依赖字体实际字宽,所以中文、emoji 等宽字符不会把同一行后面的内容挤歪,
+/// 背景块(如 opencode 右侧栏)也始终整列对齐。
+fn run_element(r: &Run, cell_w: Pixels, line_h: f32, fg: Hsla, bg: Hsla, dark: bool) -> Div {
+    let el = div().absolute().top_0().left(cell_w * r.col as f32).w(cell_w * r.cells as f32).h(px(line_h)).whitespace_nowrap();
+    let Some(style) = run_style(r, fg, bg, dark) else { return el.child(r.text.clone()) };
+    let fill = style.background_color;
+    let text_style = HighlightStyle { background_color: None, ..style };
+    let len = r.text.len();
+    el.when_some(fill, |d, c| d.bg(c)).child(StyledText::new(r.text.clone()).with_highlights(vec![(0..len, text_style)]))
 }
 
 impl Render for TerminalView {
@@ -334,10 +332,9 @@ impl Render for TerminalView {
         let snap = self.term.snapshot();
         let focused = self.focus.is_focused(window);
         let view = cx.entity();
+        let (fg, bg) = (t.foreground, t.background);
         let lines = snap.lines.iter().map(|runs| {
-            let (text, hl) = line_text(runs, t.foreground, t.background, dark);
-            let row = div().h(px(line_h)).whitespace_nowrap();
-            if text.is_empty() { row } else { row.child(StyledText::new(text).with_highlights(hl)) }
+            div().relative().h(px(line_h)).w(cell_w * snap.cols as f32).children(runs.iter().map(|r| run_element(r, cell_w, line_h, fg, bg, dark)))
         });
         div().id("terminal").key_context("Terminal").track_focus(&self.focus)
             .on_key_down(cx.listener(|this, ev: &KeyDownEvent, _, cx| this.on_key(ev, cx)))

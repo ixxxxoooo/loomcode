@@ -26,9 +26,14 @@ pub struct Style {
     pub strike: bool,
 }
 
-/// 一段样式相同的连续文字。
+/// 一段样式相同的连续文字。宽字符(中日韩、emoji)永远单独成段,
+/// 界面按 `col` 与 `cells` 把每段定位到网格上,不依赖字体的实际字宽。
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct Run {
+    /// 起始列(0 起始)
+    pub col: usize,
+    /// 占几格(宽字符为 2,普通文字等于字符数)
+    pub cells: usize,
     pub text: String,
     pub fg: TermColor,
     pub bg: TermColor,
@@ -78,12 +83,13 @@ pub(crate) fn convert_color(c: Color) -> TermColor {
 #[derive(Clone, Copy, PartialEq, Eq)]
 struct Cell {
     ch: char,
+    wide: bool,
     fg: TermColor,
     bg: TermColor,
     style: Style,
 }
 
-const BLANK: Cell = Cell { ch: ' ', fg: TermColor::Default, bg: TermColor::Default, style: Style { bold: false, italic: false, underline: false, inverse: false, dim: false, strike: false } };
+const BLANK: Cell = Cell { ch: ' ', wide: false, fg: TermColor::Default, bg: TermColor::Default, style: Style { bold: false, italic: false, underline: false, inverse: false, dim: false, strike: false } };
 
 /// 由终端状态生成快照。`'\0'` 用来标记宽字符占位格,合并时跳过。
 pub(crate) fn build<T: EventListener>(term: &Term<T>, title: String, exit_code: Option<u32>) -> Snapshot {
@@ -101,6 +107,7 @@ pub(crate) fn build<T: EventListener>(term: &Term<T>, title: String, exit_code: 
             Cell { ch: '\0', ..BLANK }
         } else {
             Cell {
+                wide: f.contains(Flags::WIDE_CHAR),
                 ch: if f.contains(Flags::HIDDEN) { ' ' } else { item.cell.c },
                 fg: convert_color(item.cell.fg),
                 bg: convert_color(item.cell.bg),
@@ -137,13 +144,19 @@ fn is_trailing_blank(c: &Cell) -> bool {
 }
 
 /// 把一行格子合并成样式相同的文字段,并裁掉行尾的默认空白。
+///
+/// 宽字符单独成段(占 2 格),其余样式相同且列连续的字符合并,每段记下起始列与格数。
 fn merge_runs(cells: Vec<Cell>) -> Vec<Run> {
     let end = cells.iter().rposition(|c| !is_trailing_blank(c)).map_or(0, |i| i + 1);
     let mut runs: Vec<Run> = Vec::new();
-    for c in cells.into_iter().take(end).filter(|c| c.ch != '\0') {
+    for (col, c) in cells.into_iter().take(end).enumerate().filter(|(_, c)| c.ch != '\0') {
+        let cells = if c.wide { 2 } else { 1 };
         match runs.last_mut() {
-            Some(r) if r.fg == c.fg && r.bg == c.bg && r.style == c.style => r.text.push(c.ch),
-            _ => runs.push(Run { text: c.ch.to_string(), fg: c.fg, bg: c.bg, style: c.style }),
+            Some(r) if !c.wide && r.cells == r.text.chars().count() && r.col + r.cells == col && r.fg == c.fg && r.bg == c.bg && r.style == c.style => {
+                r.text.push(c.ch);
+                r.cells += 1;
+            }
+            _ => runs.push(Run { col, cells, text: c.ch.to_string(), fg: c.fg, bg: c.bg, style: c.style }),
         }
     }
     runs
@@ -207,6 +220,14 @@ mod tests {
     fn 宽字符不产生占位字符() {
         let s = feed(10, 1, "中a");
         assert_eq!(s.text(), "中a");
+    }
+
+    #[test]
+    fn 宽字符单独成段并记下列位置() {
+        // "a中b😄c":宽字符各占 2 格且单独成段,后面的文字按网格列重新定位,不受字体字宽影响
+        let s = feed(20, 1, "a中b😄c");
+        let got: Vec<(usize, usize, &str)> = s.lines[0].iter().map(|r| (r.col, r.cells, r.text.as_str())).collect();
+        assert_eq!(got, vec![(0, 1, "a"), (1, 2, "中"), (3, 1, "b"), (4, 2, "😄"), (6, 1, "c")]);
     }
 
     /// 先按 80 列输出,再缩窄并加高:重排后每一行内容都必须还在画面里(只会多折行,不能被顶进历史)。
