@@ -8,7 +8,7 @@ use crate::{ide, term_actions, workbench};
 use gpui_kit::component::input::{Copy, Cut, GoToDefinition, Paste, Redo, Replace, Search, SelectAll, Undo};
 use gpui_kit::*;
 
-actions!(loomcode_app, [QuitApp, HideApp, HideOthers, ShowAll, MinimizeWindow, ZoomWindow, ToggleFullscreen, CloseWindow, NavBack, NavForward, AddProject, OpenLogs, OpenHomepage, ReportIssue]);
+actions!(loomcode_app, [QuitApp, HideApp, HideOthers, ShowAll, MinimizeWindow, ZoomWindow, ToggleFullscreen, CloseWindow, NavBack, NavForward, AddProject, OpenLogs, OpenHomepage, ReportIssue, CheckForUpdates]);
 
 /// 对当前激活的窗口执行一个窗口操作(没有激活窗口时忽略)。
 ///
@@ -60,6 +60,15 @@ pub fn install(cx: &mut App) {
             cx.reveal_path(dir);
         }
     });
+    cx.on_action(|_: &CheckForUpdates, cx| {
+        // 与托盘「检查更新」同一入口;工作台实体在应用更新期间不能回读,所以推迟到事件之后
+        cx.defer(|cx| {
+            let wb = cx.try_global::<crate::WorkbenchRef>().and_then(|r| r.0.upgrade());
+            if let Some(wb) = wb {
+                wb.update(cx, |wb, cx| wb.check_update(cx));
+            }
+        });
+    });
     cx.on_action(|_: &OpenHomepage, cx| cx.open_url("https://github.com/ixxxxoooo/loomcode"));
     cx.on_action(|_: &ReportIssue, cx| cx.open_url("https://github.com/ixxxxoooo/loomcode/issues/new"));
 
@@ -78,6 +87,7 @@ pub fn install(cx: &mut App) {
     let menu = |name: &str, items: Vec<MenuItem>| Menu { name: name.to_string().into(), items, disabled: false };
     cx.set_menus(vec![
         menu("LoomCode", vec![
+            MenuItem::action("检查更新…", CheckForUpdates),
             MenuItem::action("设置…", workbench::OpenSettings),
             MenuItem::separator(),
             MenuItem::os_submenu("服务", SystemMenuType::Services),
@@ -154,6 +164,7 @@ pub fn install(cx: &mut App) {
         menu("帮助", vec![
             MenuItem::action("命令面板", workbench::TogglePalette),
             MenuItem::separator(),
+            MenuItem::action("检查更新…", CheckForUpdates),
             MenuItem::action("项目主页", OpenHomepage),
             MenuItem::action("报告问题", ReportIssue),
             MenuItem::action("打开日志文件夹", OpenLogs),
