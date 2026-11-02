@@ -212,6 +212,8 @@ impl IdeView {
     /// 激活已有标签(点击标签栏)。
     pub fn activate(&mut self, path: &Path, window: &mut Window, cx: &mut Context<Self>) {
         self.tabs.activate(path);
+        // 点到被遮挡的标签:重新滚到完全可见
+        self.tabs_revealed = None;
         self.focus_active(window, cx);
         let line = self.cursor_line(path, cx);
         self.record_open(path, line);

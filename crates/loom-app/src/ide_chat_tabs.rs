@@ -226,13 +226,25 @@ impl IdeWindow {
             let running: Vec<String> = self.chat_tabs.iter().filter(|id| wb.live_sig(id).is_some_and(|s| s.turn)).cloned().collect();
             (active, running)
         };
+        // 当前标签或标签数变了(含新增):把当前标签滚到完全可见处
+        let sig = (active.clone(), self.chat_tabs.len());
+        if self.chat_revealed.borrow().as_ref() != Some(&sig) {
+            if let Some(ix) = active.as_ref().and_then(|a| self.chat_tabs.iter().position(|t| t == a)) {
+                self.chat_scroll.scroll_to_item(ix);
+            }
+            *self.chat_revealed.borrow_mut() = Some(sig);
+        }
         let tabs = self.chat_tabs.iter().cloned().map(|id| {
             let on = active.as_deref() == Some(id.as_str());
             let title = title_of(self.wb.read(cx), &id);
             let group = SharedString::from(format!("ct-g-{id}"));
             let (sel, close) = (id.clone(), id.clone());
             crate::tab_style::tab_shell(SharedString::from(format!("ct-{id}")), group.clone(), on, cx)
-                .on_mouse_down(MouseButton::Left, cx.listener(move |this, _, window, cx| this.activate_chat_tab(&sel, window, cx)))
+                .on_mouse_down(MouseButton::Left, cx.listener(move |this, _, window, cx| {
+                    // 点到被遮挡的标签:即使已是当前标签也重新滚到完全可见
+                    *this.chat_revealed.borrow_mut() = None;
+                    this.activate_chat_tab(&sel, window, cx)
+                }))
                 .on_mouse_down(MouseButton::Middle, cx.listener({ let id = id.clone(); move |this, _, window, cx| this.close_chat_tab(&id, window, cx) }))
                 .when(running.contains(&id), |d| d.child(crate::ui::breathe(div().id("chat-tab-run").size(px(6.)).rounded_full().bg(t.primary), "chat-tab-run-breath")))
                 .child(div().max_w(px(TAB_MAX_W)).truncate().child(title))
@@ -247,7 +259,11 @@ impl IdeWindow {
         h_flex().h(px(crate::tab_style::TAB_H)).w_full().flex_none().items_center().relative().bg(t.sidebar)
             // 底线先画、选中标签(带底色、占满高度)后画盖住它:选中标签与下方内容区融为一体
             .child(div().absolute().bottom_0().left_0().right_0().h(px(1.)).bg(t.border))
-            .child(div().id("ide-chat-tabs").h_full().flex_1().min_w_0().overflow_x_scroll().child(h_flex().h_full().children(tabs)))
+            .child(
+                h_flex().id("ide-chat-tabs").h_full().flex_1().min_w_0().overflow_x_scroll().track_scroll(&self.chat_scroll)
+                    .on_scroll_wheel(crate::tab_style::wheel_to_horizontal(self.chat_scroll.clone()))
+                    .children(tabs),
+            )
             .child(
                 h_flex().h_full().flex_none().px_1().gap_0p5().items_center()
                     .child(Button::new("ct-new").small().ghost().icon(IconName::Plus).tooltip("新会话")

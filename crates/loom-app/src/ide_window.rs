@@ -73,6 +73,9 @@ pub struct IdeWindow {
     /// 对话栏的历史会话选择器
     pub(crate) history_picker: Option<Entity<crate::history_picker::HistoryPicker>>,
     pub(crate) _history_sub: Option<Subscription>,
+    /// 对话标签条的滚动句柄,以及上次已滚到可见处的 (当前标签, 标签数)
+    pub(crate) chat_scroll: ScrollHandle,
+    pub(crate) chat_revealed: std::cell::RefCell<Option<(Option<String>, usize)>>,
 }
 
 impl IdeWindow {
@@ -187,7 +190,7 @@ impl IdeWindow {
             .detach();
         }
         // 此时工作台可能正处于更新中,不在这里回读它;首次渲染时再同步
-        Self { wb, panel, ide, panel_root: String::new(), focus, left_open: true, chat_open: true, left_narrow: false, left_before: true, chat_narrow: false, chat_before: true, synced: None, _subs: subs, search, search_open: false, quick: None, _quick_sub: None, term_open, term, chat_tabs: wb_tabs, pinned: None, seen_enter: 0, chat_last_active: None, chat_empty: false, chat_wide: std::env::var("LOOM_CHAT_WIDE").is_ok(), notice_open: false, branch_picker: None, _branch_sub: None, history_picker: None, _history_sub: None }
+        Self { wb, panel, ide, panel_root: String::new(), focus, left_open: true, chat_open: true, left_narrow: false, left_before: true, chat_narrow: false, chat_before: true, synced: None, _subs: subs, search, search_open: false, quick: None, _quick_sub: None, term_open, term, chat_tabs: wb_tabs, pinned: None, seen_enter: 0, chat_last_active: None, chat_empty: false, chat_wide: std::env::var("LOOM_CHAT_WIDE").is_ok(), notice_open: false, branch_picker: None, _branch_sub: None, history_picker: None, _history_sub: None, chat_scroll: ScrollHandle::new(), chat_revealed: Default::default() }
     }
 
     /// 让面板与根目录跟随工作台当前会话。

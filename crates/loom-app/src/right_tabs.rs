@@ -83,7 +83,10 @@ impl RightPanel {
                 .text_color(if on { t.foreground } else { t.muted_foreground })
                 .when(on, |d| d.bg(t.muted))
                 .hover(|d| d.bg(t.list_hover))
-                .on_mouse_down(MouseButton::Left, cx.listener(move |this, _, _, cx| this.open_tab(rt, cx)))
+                .on_mouse_down(MouseButton::Left, cx.listener(move |this, _, _, cx| {
+                    this.tabs_revealed.set(None);
+                    this.open_tab(rt, cx)
+                }))
                 // 中键关闭
                 .on_mouse_down(MouseButton::Middle, cx.listener(move |this, _, _, cx| this.close_tab(rt, cx)))
                 .child(icon(rt.icon(), 12., if on { t.foreground } else { t.muted_foreground }))
