@@ -26,6 +26,8 @@ pub struct LastState {
     pub explorer_hidden: Vec<String>,
     /// 资源管理器里折叠的区块键;`None` 表示从没记录过,用默认(时间线折叠)
     pub explorer_collapsed: Option<Vec<String>>,
+    /// 资源管理器区块设置的版本:2 起「打开的编辑器」默认隐藏(旧记录升级时补隐藏一次)
+    pub explorer_v: u32,
 }
 
 #[cfg(test)]

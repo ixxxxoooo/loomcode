@@ -58,9 +58,9 @@ pub struct SectionState {
 }
 
 impl Default for SectionState {
-    /// 默认:四个区块都显示;「时间线」默认折叠(和 VS Code 一样)。
+    /// 默认:「打开的编辑器」隐藏(上面已经有标签条,用不上;想要在 ··· 菜单里打开),其余显示;「时间线」默认折叠(和 VS Code 一样)。
     fn default() -> Self {
-        Self { hidden: [false; 4], collapsed: [false, false, false, true] }
+        Self { hidden: [true, false, false, false], collapsed: [false, false, false, true] }
     }
 }
 
@@ -86,6 +86,11 @@ impl SectionState {
         }
     }
 
+    /// 隐藏某区块(不改折叠状态)。
+    pub fn hide(&mut self, s: Section) {
+        self.hidden[s.ix()] = true;
+    }
+
     /// 排在最前面的可见区块(它的标题行放 `···` 菜单)。
     pub fn first_visible(&self) -> Option<Section> {
         Section::ALL.into_iter().find(|s| self.visible(*s))
@@ -97,10 +102,13 @@ impl SectionState {
         (pick(&self.hidden), pick(&self.collapsed))
     }
 
-    /// 从记忆还原;`collapsed` 为 `None`(从没记录过)用默认折叠。
+    /// 从记忆还原;`collapsed` 为 `None`(从没记录过)整套用默认。
     pub fn from_keys(hidden: &[String], collapsed: Option<&[String]>) -> Self {
         let mut s = Self::default();
         let has = |keys: &[String], sec: Section| keys.iter().any(|k| k == sec.key());
+        if collapsed.is_none() {
+            return s;
+        }
         for sec in Section::ALL {
             s.hidden[sec.ix()] = has(hidden, sec);
             if let Some(c) = collapsed {
@@ -328,9 +336,9 @@ mod tests {
     use super::*;
 
     #[::core::prelude::v1::test]
-    fn 默认时间线折叠_其余展开() {
+    fn 默认时间线折叠_打开的编辑器隐藏() {
         let s = SectionState::default();
-        assert!(s.open(Section::Folder) && s.open(Section::Outline) && s.open(Section::OpenEditors));
+        assert!(s.open(Section::Folder) && s.open(Section::Outline) && !s.visible(Section::OpenEditors));
         assert!(s.visible(Section::Timeline) && !s.open(Section::Timeline));
     }
 
@@ -341,8 +349,9 @@ mod tests {
         assert!(!s.visible(Section::Timeline));
         s.toggle_hidden(Section::Timeline);
         assert!(s.open(Section::Timeline));
-        s.toggle_hidden(Section::OpenEditors);
         assert_eq!(s.first_visible(), Some(Section::Folder));
+        s.toggle_hidden(Section::OpenEditors);
+        assert_eq!(s.first_visible(), Some(Section::OpenEditors));
     }
 
     #[::core::prelude::v1::test]

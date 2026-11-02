@@ -24,6 +24,7 @@ impl RightPanel {
         let (hidden, collapsed) = self.sections.to_keys();
         last.explorer_hidden = hidden;
         last.explorer_collapsed = Some(collapsed);
+        last.explorer_v = 2;
     }
 
     /// 按上次的状态恢复标签与树的收起状态;打开的文件由编辑器的标签记忆恢复。
@@ -37,6 +38,10 @@ impl RightPanel {
         }
         self.tree_collapsed = last.tree_collapsed;
         self.sections = crate::explorer_sections::SectionState::from_keys(&last.explorer_hidden, last.explorer_collapsed.as_deref());
+        // 旧版本默认显示「打开的编辑器」:升级时隐藏一次,之后用户在 ··· 菜单里想开就开
+        if last.explorer_v < 2 {
+            self.sections.hide(crate::explorer_sections::Section::OpenEditors);
+        }
     }
 }
 
