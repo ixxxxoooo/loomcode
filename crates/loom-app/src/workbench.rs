@@ -199,6 +199,8 @@ pub struct Workbench {
     pub forks: HashMap<String, String>,
     /// 历史加载完成后要打开的会话(调试用 `LOOM_SESSION`)
     pending_open: Option<String>,
+    /// 新窗口进程指定的启动项目是否已打开
+    startup_project_done: bool,
     /// 全工作台唯一的编辑器:Agent 的「文件」标签、融合 IDE、独立 IDE 窗口都嵌入它,标签与文档只有一份
     pub editor: Entity<crate::ide::IdeView>,
     /// 源代码管理视图(全工作台唯一,Agent 的「Git 更改」与 IDE 的「源代码管理」共用)
@@ -215,7 +217,9 @@ pub struct Workbench {
 
 impl Workbench {
     pub fn new(demo: bool, session: Option<String>, window: &mut Window, cx: &mut Context<Self>) -> Self {
-        crate::window_memory::track("main", window, cx);
+        if !crate::secondary::is() {
+            crate::window_memory::track("main", window, cx);
+        }
         let demo_root = loom_demo::workspace::default_root();
         // 演示沙盒与演示项目只在演示模式出现;真实模式的项目稍后从 Claude 历史里后台读取
         let projects = if demo {
@@ -330,6 +334,7 @@ impl Workbench {
             new_sessions: HashSet::new(),
             forks: HashMap::new(),
             pending_open: None,
+            startup_project_done: false,
             editor: editor.clone(),
             scm: scm.clone(),
             editor_mem_gen: 0,
@@ -367,9 +372,12 @@ impl Workbench {
             }
         } else {
             // 没指定会话时,恢复上次关闭时正在看的会话与右栏状态
-            let last = wb.ui_state.last.clone();
-            wb.panel.update(cx, |p, _| p.restore_last(&last));
-            wb.pending_open = session.or(last.session);
+            // 新窗口进程不恢复上次会话(同一会话不能在两个进程里同时跑)
+            if !crate::secondary::is() {
+                let last = wb.ui_state.last.clone();
+                wb.panel.update(cx, |p, _| p.restore_last(&last));
+                wb.pending_open = session.or(last.session);
+            }
             wb.reload_projects(window, cx);
         }
         window.focus(&wb.focus, cx);
@@ -382,7 +390,8 @@ impl Workbench {
         }
         cx.set_global(theme::Accent(wb.settings.accent.as_deref().and_then(theme::parse_hex)));
         theme::apply(kind, Some(window), cx);
-        crate::app_icon::set_tray_visible(wb.settings.tray_icon);
+        crate::app_icon::set_tray_visible(wb.settings.tray_icon && !crate::secondary::is());
+        crate::app_menu::set_menus(cx, &crate::project_add::existing_recent(&wb.settings.recent_projects));
         // 托盘:菜单点击交给这里处理;呼吸动画每 66ms 推进一帧(没有运行中会话时什么也不做)
         {
             let rx = crate::tray::commands();
@@ -820,12 +829,46 @@ impl Workbench {
         cx.notify();
     }
 
+    /// 保存设置。新窗口进程(`secondary`)不整份回写(会盖掉主窗口改过的设置),只把最近项目合并进磁盘上的设置。
+    pub(crate) fn save_settings(&self) {
+        let res = if crate::secondary::is() {
+            let mut disk = AppSettings::load(&self.settings_path);
+            disk.recent_projects = self.settings.recent_projects.clone();
+            disk.save(&self.settings_path)
+        } else {
+            self.settings.save(&self.settings_path)
+        };
+        if let Err(e) = res {
+            loom_diag::error!("保存设置失败:{e}");
+        }
+    }
+
+    /// 从菜单「打开最近的项目」打开:项目已在侧栏就打开它最近的会话(没有则新建),否则加入侧栏。
+    /// IDE 开着时顺带让 IDE 重新固定到这个项目。
+    pub fn open_recent_project(&mut self, path: String, window: &mut Window, cx: &mut Context<Self>) {
+        if !std::path::Path::new(&path).is_dir() {
+            loom_diag::warn!("最近项目已不存在:{path}");
+            return;
+        }
+        match self.projects.iter().position(|p| p.path == path) {
+            Some(pi) => {
+                self.update_settings(cx, |s| s.touch_project(&path));
+                self.open_project_from_palette(pi, window, cx);
+            }
+            None => self.register_project(path, window, cx),
+        }
+        if self.ide || self.ide_window.is_some() {
+            self.ide_enter += 1;
+        }
+    }
+
     /// 修改偏好:立即生效并落盘。
     pub fn update_settings(&mut self, cx: &mut Context<Self>, f: impl FnOnce(&mut AppSettings)) {
         let (old_theme, old_accent, old_expand) = (self.settings.theme, self.settings.accent.clone(), self.settings.expand_thinking);
         let old_density = self.settings.appearance.tool_density;
         let old_layout = (self.settings.appearance.chat_width, self.settings.appearance.timeline_font_pct, self.settings.appearance.scrollbar);
         let old_log = self.settings.log_level.clone();
+        let old_recent = self.settings.recent_projects.clone();
         f(&mut self.settings);
         if self.settings.theme != old_theme {
             // 换主题:旧主题的强调色记下,换入新主题自己的强调色(f 里同时改了强调色则以 f 为准)
@@ -840,8 +883,9 @@ impl Workbench {
                 loom_diag::info!("日志级别改为 {}", l.key());
             }
         }
-        if let Err(e) = self.settings.save(&self.settings_path) {
-            loom_diag::error!("保存设置失败:{e}");
+        self.save_settings();
+        if self.settings.recent_projects != old_recent {
+            crate::app_menu::set_menus(cx, &crate::project_add::existing_recent(&self.settings.recent_projects));
         }
         cx.set_global(crate::UiPrefs::from_settings(&self.settings));
         cx.set_global(crate::Prefs(self.settings.clone()));
@@ -1065,6 +1109,11 @@ impl Workbench {
             if let Some(pi) = self.projects.iter().position(|p| p.sessions.iter().any(|s| s.id == id)) {
                 self.open_session(pi, &id, window, cx);
             }
+        }
+        // 新窗口进程指定了项目:加载完历史后打开它(只一次)
+        if let Some(path) = crate::secondary::project().filter(|_| !self.startup_project_done) {
+            self.startup_project_done = true;
+            self.open_recent_project(path, window, cx);
         }
         cx.notify();
     }

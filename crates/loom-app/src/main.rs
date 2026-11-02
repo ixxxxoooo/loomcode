@@ -20,6 +20,7 @@ mod ask_cards;
 mod dock_cards;
 mod agent_group;
 mod mode_switch;
+mod secondary;
 mod subagent_card;
 mod task_dock;
 mod task_ui;
@@ -238,6 +239,8 @@ fn main() {
     let memory = std::env::var_os("HOME").and_then(|h| mode_switch::read_memory(std::path::Path::new(&h)));
     let demo = mode_switch::resolve_demo(&args, std::env::var("LOOM_DEMO").ok().as_deref(), is_dev, memory);
     let session_arg = std::env::var("LOOM_SESSION").ok();
+    // 新窗口进程(⇧⌘N 起的):从属、不抢主窗口的磁盘状态,见 `secondary`
+    secondary::init(secondary::parse_args(&args));
     // 更名前的数据目录 ~/.ucode 搬到 ~/.loomcode(只做一次)
     loom_config::legacy::migrate_home();
     // 诊断日志:~/.loomcode/logs/loomcode.log;崩溃信息也写进去
@@ -305,6 +308,10 @@ fn main() {
         options.window_bounds = Some(if std::env::var("LOOM_WINDOW_SIZE").is_ok() { WindowBounds::Windowed(Bounds::centered(None, size(px(w), px(h)), cx)) } else { window_memory::restore("main", (w, h), cx) });
         // 最小宽度放到 640:窗口窄于 780 时侧栏自动收起,不再被 900 的下限挡住
         options.window_min_size = Some(size(px(640.), px(480.)));
+        // 新窗口错开一点,免得正好盖在主窗口上
+        if secondary::is() && let Some(WindowBounds::Windowed(b)) = options.window_bounds {
+            options.window_bounds = Some(WindowBounds::Windowed(Bounds::new(b.origin + point(px(32.), px(32.)), b.size)));
+        }
         open_window(options, cx, move |window, cx| cx.new(|cx| Workbench::new(demo, session_arg, window, cx)))
             .expect("打开主窗口失败");
         cx.activate(true);

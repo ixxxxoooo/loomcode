@@ -8,7 +8,14 @@ use crate::{ide, term_actions, workbench};
 use gpui_kit::component::input::{Copy, Cut, GoToDefinition, Paste, Redo, Replace, Search, SelectAll, Undo};
 use gpui_kit::*;
 
-actions!(loomcode_app, [QuitApp, HideApp, HideOthers, ShowAll, MinimizeWindow, ZoomWindow, ToggleFullscreen, CloseWindow, NavBack, NavForward, AddProject, OpenLogs, OpenHomepage, ReportIssue, CheckForUpdates]);
+actions!(loomcode_app, [QuitApp, HideApp, HideOthers, ShowAll, MinimizeWindow, ZoomWindow, ToggleFullscreen, CloseWindow, NavBack, NavForward, AddProject, OpenLogs, OpenHomepage, ReportIssue, CheckForUpdates, NewWindow, NoRecent]);
+
+/// 菜单「打开最近的项目」里的一项。
+#[derive(Clone, PartialEq, Action)]
+#[action(namespace = loomcode_app, no_json)]
+pub struct OpenRecentProject {
+    pub path: String,
+}
 
 /// 对当前激活的窗口执行一个窗口操作(没有激活窗口时忽略)。
 ///
@@ -69,6 +76,22 @@ pub fn install(cx: &mut App) {
             }
         });
     });
+    // ⇧⌘N:再起一个窗口进程(Agent / IDE 里都生效),方便同时看别的项目
+    cx.on_action(|_: &NewWindow, cx| {
+        cx.defer(|cx| {
+            let demo = cx.try_global::<crate::WorkbenchRef>().and_then(|r| r.0.upgrade()).is_some_and(|wb| wb.read(cx).demo);
+            crate::secondary::spawn(demo, None);
+        });
+    });
+    cx.on_action(|a: &OpenRecentProject, cx| {
+        let path = a.path.clone();
+        on_active_window(cx, move |window, cx| {
+            if let Some(wb) = cx.try_global::<crate::WorkbenchRef>().and_then(|r| r.0.upgrade()) {
+                wb.update(cx, |wb, cx| wb.open_recent_project(path, window, cx));
+            }
+        });
+    });
+    cx.on_action(|_: &NoRecent, _| {});
     cx.on_action(|_: &OpenHomepage, cx| cx.open_url("https://github.com/ixxxxoooo/loomcode"));
     cx.on_action(|_: &ReportIssue, cx| cx.open_url("https://github.com/ixxxxoooo/loomcode/issues/new"));
 
@@ -80,10 +103,22 @@ pub fn install(cx: &mut App) {
         KeyBinding::new("cmd-m", MinimizeWindow, None),
         KeyBinding::new("ctrl-cmd-f", ToggleFullscreen, None),
         KeyBinding::new("cmd-w", CloseWindow, None),
+        KeyBinding::new("cmd-shift-n", NewWindow, None),
         KeyBinding::new("cmd-[", NavBack, None),
         KeyBinding::new("cmd-]", NavForward, None),
     ]);
 
+    set_menus(cx, &[]);
+}
+
+/// 重建菜单栏;`recent` 是「打开最近的项目」里列出的目录(调用方已过滤掉不存在的)。
+/// 最近项目变化时再调一次即可刷新。
+pub fn set_menus(cx: &mut App, recent: &[String]) {
+    let recent_items: Vec<MenuItem> = if recent.is_empty() {
+        vec![MenuItem::action("(暂无最近项目)", NoRecent)]
+    } else {
+        recent.iter().map(|p| MenuItem::action(loom_core::project_name_from_path(p), OpenRecentProject { path: p.clone() })).collect()
+    };
     let menu = |name: &str, items: Vec<MenuItem>| Menu { name: name.to_string().into(), items, disabled: false };
     cx.set_menus(vec![
         menu("LoomCode", vec![
@@ -100,7 +135,10 @@ pub fn install(cx: &mut App) {
         ]),
         menu("文件", vec![
             MenuItem::action("新建会话", workbench::NewSession),
+            MenuItem::action("新建窗口", NewWindow),
+            MenuItem::separator(),
             MenuItem::action("添加项目文件夹…", AddProject),
+            MenuItem::submenu(menu("打开最近的项目", recent_items)),
             MenuItem::separator(),
             MenuItem::action("保存", workbench::SaveFile),
             MenuItem::separator(),

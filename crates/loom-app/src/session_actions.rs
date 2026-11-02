@@ -23,6 +23,10 @@ impl Workbench {
 
     /// 保存 `state.json`;演示模式也写(落在沙盒目录里)。
     pub fn persist_ui_state(&self) {
+        // 新窗口进程不写,免得盖掉主窗口的界面状态(见 `secondary`)
+        if crate::secondary::is() {
+            return;
+        }
         if let Err(e) = self.ui_state.save(&self.ui_state_path) {
             loom_diag::error!("保存界面状态失败:{e}");
         }

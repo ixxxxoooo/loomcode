@@ -38,6 +38,10 @@ pub fn current_bundle() -> Option<PathBuf> {
 impl Workbench {
     /// 启动时的更新动作:恢复已暂存的更新、提示上次安装失败,并(按设置)自动检查。
     pub fn startup_update(&mut self, cx: &mut Context<Self>) {
+        // 新窗口进程不管更新(主窗口负责,免得两个进程同时下载 / 安装)
+        if crate::secondary::is() {
+            return;
+        }
         if let Some(why) = update::take_install_failure() {
             self.update = UpdateState::Failed(format!("上次更新安装失败({why});常见原因是应用所在目录不可写,可手动下载安装"));
             return;

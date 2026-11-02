@@ -48,7 +48,7 @@ impl Workbench {
                 this.width_save_pending = false;
                 this.settings.left_width = this.left_w;
                 this.settings.right_width = this.right_w;
-                if let Err(e) = this.settings.save(&this.settings_path) {
+                if !crate::secondary::is() && let Err(e) = this.settings.save(&this.settings_path) {
                     loom_diag::error!("保存栏宽失败:{e}");
                 }
             });
