@@ -22,3 +22,8 @@ opt-level = 1
 
 [profile.dev.package."*"]
 opt-level = 3
+
+# 补丁版 gpui-component:仅把 tree-sitter 高亮工厂 `input_highlighter_factory` 改为 pub(原为 pub(crate)),
+# 用于在语法高亮外包一层「括号按嵌套深度着字色」(见 vendor/README.md)。
+[patch.crates-io]
+gpui-component = { path = "vendor/gpui-component" }

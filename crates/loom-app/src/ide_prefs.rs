@@ -22,7 +22,10 @@ pub fn apply(ed: &mut EditorState, p: &EditorPrefs, window: &mut Window, cx: &mu
 /// 参数:`lang` 语言名;`text` 初始内容;`searchable` 是否带查找替换;`p` 偏好。返回:编辑器实体。
 pub fn new_editor<T: 'static>(lang: &'static str, text: String, searchable: bool, p: &EditorPrefs, window: &mut Window, cx: &mut Context<T>) -> Entity<EditorState> {
     let ed = cx.new(|cx| EditorState::new(window, cx).language(language(lang, p)).searchable(searchable).default_value(text));
-    ed.update(cx, |e, cx| apply(e, p, window, cx));
+    ed.update(cx, |e, cx| {
+        apply(e, p, window, cx);
+        crate::ide_rainbow::install(e, cx);
+    });
     ed
 }
 

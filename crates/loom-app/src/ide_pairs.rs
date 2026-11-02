@@ -1,30 +1,13 @@
-//! 括号配对着色与配对竖线(对标 VS Code 的 Bracket Pair Colorization / Bracket Pair Guides)。
+//! 括号配对扫描(供括号着色用,对标 VS Code 的 Bracket Pair Colorization / Zed 的 `colorize_brackets`)。
 //!
-//! - **配对扫描**:按语言的注释 / 字符串规则跳过它们里面的括号,用栈配出 `()` `[]` `{}`,每对记嵌套深度。
-//! - **着色**:编辑器库只支持给字符范围加底色 / 边框(不能按范围改字色),所以每个括号铺一块按深度循环取色
-//!   (金 / 紫 / 蓝)的半透明底色。只铺视口前后各 150 行,滚出范围或内容变化后再刷新。
-//! - **竖线**:跨行的配对在开括号所在行的缩进列上画一条竖线(从开括号的下一行到闭括号的上一行,
-//!   闭括号需独占行首),颜色同深度色;包住光标的最内层一对更亮。
-//!
-//! 扫描结果按「文本长度 + 编辑序号」缓存,滚动与移动光标不重扫。超过 512 KB 的文件不处理。
+//! 按语言的注释 / 字符串规则跳过它们里面的括号,用栈配出 `()` `[]` `{}`,每对记嵌套深度。
+//! 着色本身在 `ide_rainbow.rs`:包在语法高亮外面,直接改括号字符的字色(不铺底色)。
+//! 超过 512 KB 的文件不处理。
 //!
 //! @author ixxxxoooo
 
-use crate::ide::IdeDoc;
-use gpui_kit::component::input::{EditorState, RangeDecoration, RangeDecorationCollection, RangeDecorationStyle};
-use gpui_kit::component::RopeExt as _;
-use gpui_kit::*;
-use std::cell::RefCell;
-use std::sync::Arc;
-
-/// 超过这个字节数的文件不做配对(扫描与装饰都会变慢)。
-const MAX_BYTES: usize = 512 * 1024;
-/// 着色范围:视口前后各多铺的行数。
-const MARGIN_LINES: usize = 150;
-/// 一帧最多画的竖线数,嵌套极深时兜底。
-const MAX_GUIDES: usize = 120;
-/// 一次最多铺的括号底色块数。
-const MAX_MARKS: usize = 6000;
+/// 超过这个字节数的文件不做配对(扫描会变慢)。
+pub const MAX_BYTES: usize = 512 * 1024;
 
 /// 一对括号:开括号与闭括号的字节偏移,以及嵌套深度(最外层为 0)。
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -137,169 +120,6 @@ pub fn scan(text: &str, rules: &Rules) -> Vec<Pair> {
     pairs
 }
 
-/// 深度对应的颜色(金 / 紫 / 蓝循环,取 VS Code 的默认三色)。
-pub fn depth_color(depth: usize) -> Hsla {
-    [hsla(51. / 360., 1., 0.5, 1.), hsla(302. / 360., 0.59, 0.65, 1.), hsla(205. / 360., 1., 0.55, 1.)][depth % 3]
-}
-
-/// 文档的括号配对状态:扫描缓存与已铺的底色块。
-pub struct PairState {
-    rules: Option<Rules>,
-    /// 编辑序号,每次内容变化加一(和文本长度一起作缓存键)
-    rev: u64,
-    cache: RefCell<Option<((usize, u64), Arc<Vec<Pair>>)>>,
-    marks: Option<RangeDecorationCollection>,
-    /// 底色块对应的 (文本长度, 编辑序号, 起始行, 结束行)
-    marks_key: Option<(usize, u64, usize, usize)>,
-}
-
-impl PairState {
-    /// 新建;`lang` 是 `language_for` 给的语言名。
-    pub fn new(lang: &str) -> Self {
-        Self { rules: rules_for(lang), rev: 0, cache: RefCell::new(None), marks: None, marks_key: None }
-    }
-
-    /// 内容变了:让缓存与底色块失效。
-    pub fn bump(&mut self) {
-        self.rev += 1;
-    }
-
-    /// 当前内容的配对(带缓存);语言不支持或文件过大时为 `None`。
-    pub fn pairs(&self, ed: &EditorState) -> Option<Arc<Vec<Pair>>> {
-        let rules = self.rules.as_ref()?;
-        let len = ed.text().len();
-        if len > MAX_BYTES {
-            return None;
-        }
-        let key = (len, self.rev);
-        if let Some((k, p)) = self.cache.borrow().as_ref() {
-            if *k == key {
-                return Some(p.clone());
-            }
-        }
-        let p = Arc::new(scan(&ed.value(), rules));
-        *self.cache.borrow_mut() = Some((key, p.clone()));
-        Some(p)
-    }
-}
-
-/// 视口前后各 `MARGIN_LINES` 行的范围。
-fn window_of(vis: &std::ops::Range<usize>, lines: usize) -> (usize, usize) {
-    (vis.start.saturating_sub(MARGIN_LINES), (vis.end + MARGIN_LINES).min(lines))
-}
-
-/// 底色块是否需要刷新:开关变了、内容变了或视口走出了已铺的范围。渲染时用,很便宜。
-pub fn stale(doc: &IdeDoc, enabled: bool, cx: &App) -> bool {
-    let st = &doc.pairs;
-    let ed = doc.editor.read(cx);
-    let len = ed.text().len();
-    if !enabled || st.rules.is_none() || len > MAX_BYTES {
-        return st.marks.is_some();
-    }
-    let Some(vis) = ed.visible_row_range() else { return false };
-    match st.marks_key {
-        Some((l, g, s, e)) => (l, g) != (len, st.rev) || vis.start < s || vis.end.min(ed.text().lines_len()) > e,
-        None => true,
-    }
-}
-
-/// 刷新括号底色块:`enabled` 为假时清掉。
-pub fn refresh_colors(doc: &mut IdeDoc, enabled: bool, cx: &mut App) {
-    let editor = doc.editor.clone();
-    let st = &mut doc.pairs;
-    let (decos, key) = {
-        let ed = editor.read(cx);
-        let pairs = enabled.then(|| st.pairs(ed)).flatten();
-        let Some(pairs) = pairs else {
-            if let Some(m) = st.marks.take() {
-                m.dispose(cx);
-            }
-            st.marks_key = None;
-            return;
-        };
-        let Some(vis) = ed.visible_row_range() else { return };
-        let text = ed.text();
-        let (s, e) = window_of(&vis, text.lines_len());
-        let from = text.line_start_offset(s);
-        let to = if e >= text.lines_len() { text.len() } else { text.line_start_offset(e) };
-        let mut decos = Vec::new();
-        'all: for p in pairs.iter().filter(|p| p.open < to && p.close >= from) {
-            for at in [p.open, p.close] {
-                if (from..to).contains(&at) {
-                    if decos.len() >= MAX_MARKS {
-                        break 'all;
-                    }
-                    decos.push(RangeDecoration::new(at..at + 1).with_style(RangeDecorationStyle::Fill).with_color(depth_color(p.depth).opacity(0.3)));
-                }
-            }
-        }
-        (decos, (text.len(), st.rev, s, e))
-    };
-    st.marks_key = Some(key);
-    match &st.marks {
-        Some(c) => c.set(decos, cx),
-        None => st.marks = Some(editor.update(cx, |e, cx| e.create_range_decorations_collection(decos, cx))),
-    }
-}
-
-/// 配对竖线叠层(一个盖住编辑区的透明容器,里面每条线一个绝对定位的 1px 元素)。
-/// 光标行不在视口、没有跨行配对或功能关闭时返回 `None`。
-pub fn guides(doc: &IdeDoc, cx: &App) -> Option<AnyElement> {
-    let ed = doc.editor.read(cx);
-    let pairs = doc.pairs.pairs(ed)?;
-    let vis = ed.visible_row_range()?;
-    let tb = ed.text_bounds()?;
-    let text = ed.text();
-    let lines = text.lines_len();
-    let (from, to) = (text.line_start_offset(vis.start), if vis.end >= lines { text.len() } else { text.line_start_offset(vis.end) });
-    let cursor = ed.cursor();
-    // 包住光标的最内层一对
-    let active = pairs.iter().filter(|p| p.open < cursor && cursor <= p.close).max_by_key(|p| p.open).copied();
-    let line_of = |o: usize| text.offset_to_position(o).line as usize;
-    let mut lines_out: Vec<AnyElement> = Vec::new();
-    for p in pairs.iter().filter(|p| p.open < to && p.close >= from) {
-        if lines_out.len() >= MAX_GUIDES {
-            break;
-        }
-        let (ol, cl) = (line_of(p.open), line_of(p.close));
-        // 闭括号必须独占行首(只有缩进在它前面),否则不画
-        let close_line_start = text.line_start_offset(cl);
-        if cl <= ol + 1 || !text.slice(close_line_start..p.close).chars().all(char::is_whitespace) {
-            continue;
-        }
-        let (first, last) = ((ol + 1).max(vis.start), (cl - 1).min(vis.end.saturating_sub(1)));
-        if first > last {
-            continue;
-        }
-        // 竖线所在列:开括号那一行的缩进末端
-        let open_line = text.slice_line(ol);
-        let indent_bytes: usize = open_line.chars().take_while(|c| c.is_whitespace()).map(char::len_utf8).sum();
-        let at = text.line_start_offset(ol) + indent_bytes;
-        // 开括号所在行可能已滚出视口,x 改用块内第一条可见行的同列位置量
-        let x_ref = text.line_start_offset(first) + indent_bytes.min(text.slice_line(first).len().saturating_sub(1));
-        let Some(x) = ed.range_to_bounds(&(at..at)).or_else(|| ed.range_to_bounds(&(x_ref..x_ref))).map(|b| b.origin.x) else { continue };
-        let (Some(top), Some(bottom)) = (ed.range_to_bounds(&{
-            let o = text.line_start_offset(first);
-            o..o
-        }), ed.range_to_bounds(&{
-            let o = text.line_end_offset(last);
-            o..o
-        })) else {
-            continue;
-        };
-        let (y0, y1) = (top.origin.y.max(tb.top()), (bottom.origin.y + bottom.size.height).min(tb.bottom()));
-        if x < tb.left() || y1 <= y0 {
-            continue;
-        }
-        let alpha = if active == Some(*p) { 0.95 } else { 0.4 };
-        lines_out.push(div().absolute().left(x - tb.left() - px(0.5)).top(y0 - tb.top()).w(px(1.)).h(y1 - y0).bg(depth_color(p.depth).opacity(alpha)).into_any_element());
-    }
-    if lines_out.is_empty() {
-        return None;
-    }
-    Some(deferred(anchored().position(tb.origin).anchor(Anchor::TopLeft).child(div().relative().w(tb.size.width).h(tb.size.height).overflow_hidden().children(lines_out))).into_any_element())
-}
-
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -348,11 +168,5 @@ mod tests {
     fn 不认识的语言不做配对() {
         assert!(rules_for("markdown").is_none());
         assert!(rules_for("text").is_none());
-    }
-
-    #[::core::prelude::v1::test]
-    fn 深度循环取三种颜色() {
-        assert_eq!(depth_color(0), depth_color(3));
-        assert_ne!(depth_color(0), depth_color(1));
     }
 }
