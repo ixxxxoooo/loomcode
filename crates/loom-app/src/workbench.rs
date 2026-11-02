@@ -1542,11 +1542,12 @@ pub fn chat_panel_with_footer(parts: Option<(Entity<SessionModel>, Entity<Compos
     };
     let footer_row = |footer: AnyElement| div().w_full().flex().justify_center().px_4().child(div().w_full().max_w(px(crate::timeline::content_max_w(cx))).child(footer));
     if center_empty && model.read(cx).state.items.is_empty() {
-        // 新对话:输入框居中显示(上下各占一半空白),页脚紧贴输入框下方
-        return v_flex().size_full().bg(t.background)
+        // 新对话:输入框居中显示(上下各占一半空白),页脚紧贴输入框下方;默认宽度比对话态窄
+        let w = crate::timeline::content_max_w(cx).min(640.);
+        return v_flex().size_full().bg(t.background).items_center()
             .child(div().flex_1())
-            .child(composer)
-            .child(footer_row(footer))
+            .child(div().w_full().max_w(px(w)).child(composer))
+            .child(div().w_full().max_w(px(w)).px_4().child(footer))
             .child(div().flex_1())
             .into_any_element();
     }
