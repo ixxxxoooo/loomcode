@@ -43,7 +43,7 @@ impl Render for DraggedTab {
 
 /// 标签栏:预览标签用斜体;未保存显示圆点,悬停或当前标签显示关闭按钮;固定标签显示图钉;
 /// 中键关闭、双击固定预览,可拖动排序(固定与非固定之间不互拖)。
-pub fn tab_bar(items: Vec<TabItem>, scroll: ScrollHandle, cx: &mut Context<IdeView>) -> impl IntoElement {
+pub fn tab_bar(items: Vec<TabItem>, scroll: ScrollHandle, root: &str, cx: &mut Context<IdeView>) -> impl IntoElement {
     let t = cx.theme().clone();
     h_flex()
         .id("ide-tabs")
@@ -62,7 +62,7 @@ pub fn tab_bar(items: Vec<TabItem>, scroll: ScrollHandle, cx: &mut Context<IdeVi
             let name = if is_diff { crate::ide_diff::tab_title(&path) } else { path.file_name().map(|n| n.to_string_lossy().to_string()).unwrap_or_default() };
             let group = SharedString::from(format!("tab-{i}"));
             let (p_click, p_close, p_mid) = (path.clone(), path.clone(), path.clone());
-            let menu = tab_menu(cx.entity().downgrade(), path.clone(), pinned);
+            let menu = tab_menu(cx.entity().downgrade(), path.clone(), pinned, root.to_string());
             let (p_drag, p_drop) = (path.clone(), path.clone());
             let accent = t.accent;
             crate::tab_style::tab_shell(SharedString::from(format!("ide-tab-{i}")), group.clone(), active, cx)
@@ -99,7 +99,7 @@ pub fn tab_bar(items: Vec<TabItem>, scroll: ScrollHandle, cx: &mut Context<IdeVi
 }
 
 /// 标签右键菜单:关闭 / 关闭其他 / 关闭右侧 / 复制路径。
-fn tab_menu(view: WeakEntity<IdeView>, path: PathBuf, pinned: bool) -> impl Fn(PopupMenu, &mut Window, &mut Context<PopupMenu>) -> PopupMenu + 'static {
+fn tab_menu(view: WeakEntity<IdeView>, path: PathBuf, pinned: bool, root: String) -> impl Fn(PopupMenu, &mut Window, &mut Context<PopupMenu>) -> PopupMenu + 'static {
     move |menu, _, _| {
         let item = |label: &'static str, icon: IconName| PopupMenuItem::new(label).icon(icon);
         let (v, p) = (view.clone(), path.clone());
@@ -118,10 +118,41 @@ fn tab_menu(view: WeakEntity<IdeView>, path: PathBuf, pinned: bool) -> impl Fn(P
         let pin = item(if pinned { "取消固定" } else { "固定标签" }, IconName::Pin).on_click(move |_, _, cx| {
             let _ = v.update(cx, |this, cx| this.toggle_pin_tab(&p, cx));
         });
-        let p = path.clone();
-        let copy = item("复制路径", IconName::Copy).on_click(move |_, _, cx| cx.write_to_clipboard(ClipboardItem::new_string(p.display().to_string())));
-        menu.item(pin).separator().item(close).item(others).item(right).separator().item(copy)
+        let menu = menu.item(pin).separator().item(close).item(others).item(right).separator();
+        file_path_items(menu, &view, &path, &root)
     }
+}
+
+/// 在访达中显示。
+fn reveal_in_finder(path: &Path) {
+    let _ = std::process::Command::new("open").arg("-R").arg(path).spawn();
+}
+
+/// 面包屑右键菜单:在访达中显示 / 在资源管理器中定位 / 复制路径 / 复制相对路径。
+fn crumb_menu(view: WeakEntity<IdeView>, path: PathBuf, root: String) -> impl Fn(PopupMenu, &mut Window, &mut Context<PopupMenu>) -> PopupMenu + 'static {
+    move |menu, _, _| file_path_items(menu, &view, &path, &root)
+}
+
+/// 「在访达中显示 / 在资源管理器中定位 / 复制路径 / 复制相对路径」四项(标签菜单与面包屑菜单共用)。差异标签的伪路径没有对应文件,不加。
+fn file_path_items(menu: PopupMenu, view: &WeakEntity<IdeView>, path: &Path, root: &str) -> PopupMenu {
+    if crate::ide_diff::is_diff(path) {
+        return menu;
+    }
+    let item = |label: &'static str, ic: IconName| PopupMenuItem::new(label).icon(ic);
+    let p = path.to_path_buf();
+    let finder = item("在访达中显示", IconName::FolderOpen).on_click(move |_, _, _| reveal_in_finder(&p));
+    let (v, p) = (view.clone(), path.to_path_buf());
+    let tree = item("在资源管理器中定位", IconName::ListTree).on_click(move |_, _, cx| {
+        let _ = v.update(cx, |_, cx| cx.emit(crate::ide::IdeEvent::RevealInExplorer(p.clone())));
+    });
+    let p = path.to_path_buf();
+    let copy = item("复制路径", IconName::Copy).on_click(move |_, _, cx| cx.write_to_clipboard(ClipboardItem::new_string(p.display().to_string())));
+    let (p, r) = (path.to_path_buf(), root.to_string());
+    let copy_rel = item("复制相对路径", IconName::Copy).on_click(move |_, _, cx| {
+        let rel = p.strip_prefix(&r).unwrap_or(&p).display().to_string();
+        cx.write_to_clipboard(ClipboardItem::new_string(rel))
+    });
+    menu.item(finder).item(tree).separator().item(copy).item(copy_rel)
 }
 
 /// 面包屑:项目内的相对路径,最后一段为文件名;保存失败等提示显示在右侧。
@@ -142,7 +173,14 @@ pub fn breadcrumbs(path: &Path, root: &str, saved: bool, note: Option<String>, b
     };
     let segs: Vec<String> = rel.components().map(|c| c.as_os_str().to_string_lossy().to_string()).collect();
     let last = segs.len().saturating_sub(1);
+    // 每一段对应的绝对路径(从外到内):路径的祖先链倒数。差异标签的伪路径不可点
+    let clickable = !crate::ide_diff::is_diff(path);
+    let abs: Vec<PathBuf> = (0..segs.len()).map(|i| path.ancestors().nth(last - i).map(Path::to_path_buf).unwrap_or_default()).collect();
+    let file = path.to_path_buf();
+    let crumb_menu = crumb_menu(cx.entity().downgrade(), path.to_path_buf(), root.to_string());
     h_flex()
+        .id("ide-breadcrumbs")
+        .context_menu(crumb_menu)
         .h(px(26.))
         .w_full()
         .flex_none()
@@ -157,7 +195,20 @@ pub fn breadcrumbs(path: &Path, root: &str, saved: bool, note: Option<String>, b
             if i > 0 {
                 parts.push(icon(IconName::ChevronRight, 11., t.muted_foreground).into_any_element());
             }
-            parts.push(div().flex_none().whitespace_nowrap().when(i == last, |d| d.text_color(t.foreground)).child(s).into_any_element());
+            // 点某一段:弹出该段所在目录的内容(同级文件 / 目录),可搜索、进入子目录、切换文件
+            let dir = abs[i].parent().map(Path::to_path_buf).filter(|_| clickable);
+            let (cur, hover) = (file.clone(), t.list_hover);
+            parts.push(
+                div().id(SharedString::from(format!("crumb-seg-{i}"))).flex_none().whitespace_nowrap().px_1().rounded(px(4.)).when(i == last, |d| d.text_color(t.foreground))
+                    .when_some(dir, |d, dir| {
+                        d.cursor_pointer().hover(move |d| d.bg(hover)).on_click(cx.listener(move |this, ev: &ClickEvent, window, cx| {
+                            let pos = ev.position();
+                            this.open_crumb(dir.clone(), cur.clone(), point(pos.x - px(12.), pos.y + px(12.)), window, cx);
+                        }))
+                    })
+                    .child(s)
+                    .into_any_element(),
+            );
             parts
         })))
         .when_some(note, |d, n| d.child(div().text_color(t.warning).child(n)))

@@ -108,6 +108,20 @@ impl IdeWindow {
         subs.push(cx.observe(&wb, |this, _, cx| this.sync(cx)));
         // 编辑器光标移动 → 刷新状态栏(标签记忆由工作台统一保存)
         subs.push(cx.observe(&ide, |_, _, cx| cx.notify()));
+        // 标签 / 面包屑右键「在资源管理器中定位」:展开左栏的文件树并定位
+        subs.push(cx.subscribe(&ide, |this, _, ev: &crate::ide::IdeEvent, cx| {
+            let crate::ide::IdeEvent::RevealInExplorer(path) = ev;
+            this.left_open = true;
+            this.search_open = false;
+            let path = path.clone();
+            this.panel.update(cx, |p, cx| {
+                p.set_tab(RightTab::Files, cx);
+                p.tree_collapsed = false;
+                p.files.reveal(&path);
+                cx.notify();
+            });
+            cx.notify();
+        }));
         // 通知历史变化 → 刷新铃铛
         if let Some(store) = crate::notice::store(cx) {
             subs.push(cx.observe(&store, |_, _, cx| cx.notify()));

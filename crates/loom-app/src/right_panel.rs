@@ -117,6 +117,8 @@ pub struct RightPanel {
     pub tree_collapsed: bool,
     /// 右栏被放大到整窗(标签条左侧要给红绿灯留位置),由工作台渲染时同步
     pub zoomed: bool,
+    /// 文件树里复制 / 剪切的条目(路径, 是否剪切),「粘贴」用
+    pub file_clip: Option<(Vec<std::path::PathBuf>, bool)>,
     /// 「终端」标签里为单条 Claude 命令打开的只读标签(工具调用 id),以及当前选中的一个
     pub run_tabs: Vec<String>,
     pub active_run: Option<String>,
@@ -166,6 +168,7 @@ impl RightPanel {
             editor_elsewhere: false,
             tree_collapsed: false,
             zoomed: false,
+            file_clip: None,
             run_tabs: Vec::new(),
             active_run: None,
             show_tabs: true,

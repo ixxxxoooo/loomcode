@@ -146,7 +146,7 @@ pub fn trash_path(path: &Path) -> Result<(), String> {
 ///
 /// 参数:`panel` 文件面板弱引用;`path` 目标路径;`is_dir` 是否目录。
 pub fn row_menu(panel: WeakEntity<RightPanel>, path: PathBuf, is_dir: bool, root: PathBuf) -> impl Fn(PopupMenu, &mut Window, &mut Context<PopupMenu>) -> PopupMenu + 'static {
-    move |menu, _, _| {
+    move |menu, _, cx| {
         let item = |label: &'static str, icon: IconName| PopupMenuItem::new(label).icon(icon);
         // 新建的位置:目录自身,或文件所在目录
         let base: PathBuf = if is_dir { path.clone() } else { path.parent().map(Path::to_path_buf).unwrap_or_default() };
@@ -181,7 +181,58 @@ pub fn row_menu(panel: WeakEntity<RightPanel>, path: PathBuf, is_dir: bool, root
         let reveal = item("在访达中显示", IconName::ExternalLink).on_click(move |_, _, _| {
             let _ = std::process::Command::new("open").arg("-R").arg(&t).spawn();
         });
-        menu.item(new_file).item(new_dir).separator().item(rename).item(delete).separator().item(copy).item(copy_rel).item(reveal)
+        // 复制 / 剪切 / 粘贴(粘贴到目录里,或文件所在目录)
+        let (p, t) = (panel.clone(), path.clone());
+        let copy_f = item("复制", IconName::Copy).on_click(move |_, _, cx| { let _ = p.update(cx, |this, _| this.file_clip = Some((vec![t.clone()], false))); });
+        let (p, t) = (panel.clone(), path.clone());
+        let cut_f = item("剪切", IconName::Scissors).on_click(move |_, _, cx| { let _ = p.update(cx, |this, _| this.file_clip = Some((vec![t.clone()], true))); });
+        let can_paste = panel.upgrade().is_some_and(|p| p.read(cx).file_clip.is_some());
+        let (p, b) = (panel.clone(), if is_dir { path.clone() } else { path.parent().map(Path::to_path_buf).unwrap_or_default() });
+        let paste = item("粘贴", IconName::ClipboardPaste).disabled(!can_paste).on_click(move |_, window, cx| {
+            let b = b.clone();
+            let _ = p.update(cx, |this, cx| this.paste_files(&b, window, cx));
+        });
+        // 文件:Git 历史(在改动面板的图谱里按这个文件过滤)
+        let (p, t) = (panel.clone(), path.clone());
+        let history = item("Git 历史", IconName::Clock).on_click(move |_, _, cx| {
+            let _ = p.update(cx, |this, cx| {
+                this.scm.update(cx, |s, cx| s.show_file_history(&t, cx));
+                this.set_tab(crate::workbench::RightTab::Changes, cx);
+            });
+        });
+        let mut menu = menu.item(new_file).item(new_dir).separator().item(copy_f).item(cut_f).item(paste).separator().item(rename).item(delete).separator();
+        if !is_dir {
+            menu = menu.item(history).separator();
+        }
+        menu.item(copy).item(copy_rel).item(reveal)
+    }
+}
+
+/// 文件树空白处的右键菜单:在项目根新建文件 / 文件夹、粘贴、刷新、在访达中显示项目根。
+pub fn empty_menu(panel: WeakEntity<RightPanel>, root: PathBuf) -> impl Fn(PopupMenu, &mut Window, &mut Context<PopupMenu>) -> PopupMenu + 'static {
+    move |menu, _, cx| {
+        let item = |label: &'static str, icon: IconName| PopupMenuItem::new(label).icon(icon);
+        let (p, b) = (panel.clone(), root.clone());
+        let new_file = item("新建文件…", IconName::FilePlus).on_click(move |_, window, cx| {
+            let b = b.clone();
+            let _ = p.update(cx, |this, cx| this.new_entry_dialog(b, false, window, cx));
+        });
+        let (p, b) = (panel.clone(), root.clone());
+        let new_dir = item("新建文件夹…", IconName::FolderPlus).on_click(move |_, window, cx| {
+            let b = b.clone();
+            let _ = p.update(cx, |this, cx| this.new_entry_dialog(b, true, window, cx));
+        });
+        let can_paste = panel.upgrade().is_some_and(|p| p.read(cx).file_clip.is_some());
+        let (p, b) = (panel.clone(), root.clone());
+        let paste = item("粘贴", IconName::ClipboardPaste).disabled(!can_paste).on_click(move |_, window, cx| {
+            let b = b.clone();
+            let _ = p.update(cx, |this, cx| this.paste_files(&b, window, cx));
+        });
+        let p = panel.clone();
+        let refresh = item("刷新", IconName::RefreshCw).on_click(move |_, _, cx| { let _ = p.update(cx, |this, cx| this.reload_files(cx)); });
+        let r = root.clone();
+        let reveal = item("在访达中显示", IconName::ExternalLink).on_click(move |_, _, _| { let _ = std::process::Command::new("open").arg(&r).spawn(); });
+        menu.item(new_file).item(new_dir).item(paste).separator().item(refresh).item(reveal)
     }
 }
 

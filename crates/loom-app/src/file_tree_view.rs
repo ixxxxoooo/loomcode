@@ -112,7 +112,7 @@ impl RightPanel {
         v_flex().size_full().child(toolbar).child(if self.files.rows().is_empty() {
             empty_state(IconName::Folder, "目录为空", &root_display(&self.files), cx).into_any_element()
         } else {
-            tree.into_any_element()
+            tree.context_menu(crate::file_ops::empty_menu(cx.entity().downgrade(), root.clone())).into_any_element()
         }).into_any_element()
     }
 }

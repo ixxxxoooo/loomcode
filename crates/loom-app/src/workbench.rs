@@ -361,6 +361,24 @@ impl Workbench {
         });
         wb._subs.push(scm_sub);
         wb.apply_ui_state();
+        // 标签 / 面包屑右键「在资源管理器中定位」:Agent 模式下展开右栏的文件树并定位(IDE 显示时由 IdeWindow 处理)
+        let reveal_sub = cx.subscribe_in(&editor, window, |this, _, ev: &crate::ide::IdeEvent, _, cx| {
+            let crate::ide::IdeEvent::RevealInExplorer(path) = ev;
+            let ide_open = this.ide || this.ide_window.is_some_and(|h| cx.windows().contains(&h));
+            if ide_open {
+                return;
+            }
+            this.right_open = true;
+            let path = path.clone();
+            this.panel.update(cx, |p, cx| {
+                p.show_files_tab(cx);
+                p.tree_collapsed = false;
+                p.files.reveal(&path);
+                cx.notify();
+            });
+            cx.notify();
+        });
+        wb._subs.push(reveal_sub);
         let panel_sub = cx.subscribe_in(&wb.panel, window, |this, _, ev: &PanelEvent, window, cx| this.on_panel_event(ev, window, cx));
         wb._subs.push(panel_sub);
         if demo {

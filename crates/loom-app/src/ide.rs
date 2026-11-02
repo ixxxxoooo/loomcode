@@ -72,6 +72,8 @@ pub struct IdeView {
     pub(crate) tabs: TabModel,
     /// 鼠标当前悬停在哪个窗口里的编辑器上(⌘W 优先关悬停处的标签,见 `app_menu::close_tab_under_mouse`)
     pub(crate) hover_win: Option<WindowId>,
+    /// 面包屑下拉(打开时)
+    pub(crate) crumb: Option<(Entity<crate::crumb_picker::CrumbPicker>, Subscription)>,
     /// ⌘ 单击后的 (文件, 选区),抬起时据此补发「转到定义」(见 `ide_link`)
     pub(crate) cmd_click: Option<(PathBuf, std::ops::Range<usize>)>,
     /// 打不开文件或保存失败时的说明
@@ -125,7 +127,7 @@ pub struct IdeView {
 impl IdeView {
     /// 创建空的编辑器视图。
     pub fn new() -> Self {
-        Self { root: String::new(), docs: HashMap::new(), tabs: TabModel::default(), hover_win: None, cmd_click: None, note: None, images: Default::default(), sheets: HashMap::new(), sheet_subs: HashMap::new(), diffs: HashMap::new(), as_text: Default::default(), minimap_ui: Default::default(), applied: None, edit_gen: 0, nav: Default::default(), nav_quiet: false, fresh_open: false, recent: Vec::new(), pending_restore: None, md: HashMap::new(), blame_gutter: false, blame_ui: Default::default(), lsp_listening: false, hover_ui: Default::default(), overlay: None, cursor_msg: None, overlay_sub: None, tabs_scroll: ScrollHandle::new(), tabs_revealed: None }
+        Self { root: String::new(), docs: HashMap::new(), tabs: TabModel::default(), hover_win: None, crumb: None, cmd_click: None, note: None, images: Default::default(), sheets: HashMap::new(), sheet_subs: HashMap::new(), diffs: HashMap::new(), as_text: Default::default(), minimap_ui: Default::default(), applied: None, edit_gen: 0, nav: Default::default(), nav_quiet: false, fresh_open: false, recent: Vec::new(), pending_restore: None, md: HashMap::new(), blame_gutter: false, blame_ui: Default::default(), lsp_listening: false, hover_ui: Default::default(), overlay: None, cursor_msg: None, overlay_sub: None, tabs_scroll: ScrollHandle::new(), tabs_revealed: None }
     }
 
     /// 设置项目根目录(会话切换时由宿主调用)。
@@ -459,6 +461,31 @@ pub(crate) fn load(path: &Path, window: &mut Window, cx: &mut Context<IdeView>) 
     Ok(IdeDoc { editor, saved: true, crlf, mtime, stale: false, marks, minimap, mm_key: (theme, prefs.syntax_highlight), mm_gen: 0, hunks: Default::default(), pairs: crate::ide_pairs::PairState::new(language_for(path)), bracket_pair: None, bracket_marks: None, blame: Default::default(), blame_gen: 0, blame_fresh: false, lsp: None, lsp_gen: 0, diag: (0, 0), diag_marks: Default::default(), hover: None, _subs: vec![sub, sub2] })
 }
 
+/// 编辑器对宿主的通知。
+pub enum IdeEvent {
+    /// 请在资源管理器(文件树)里定位这个文件
+    RevealInExplorer(PathBuf),
+}
+
+impl EventEmitter<IdeEvent> for IdeView {}
+
+impl IdeView {
+    /// 弹出面包屑下拉:列出 `dir` 的内容,`current` 为当前文件,`pos` 为弹出位置。
+    pub(crate) fn open_crumb(&mut self, dir: PathBuf, current: PathBuf, pos: Point<Pixels>, window: &mut Window, cx: &mut Context<Self>) {
+        let picker = cx.new(|cx| crate::crumb_picker::CrumbPicker::new(dir, current, pos, window, cx));
+        let sub = cx.subscribe_in(&picker, window, |this: &mut Self, _, ev: &crate::crumb_picker::CrumbEvent, window, cx| {
+            this.crumb = None;
+            if let crate::crumb_picker::CrumbEvent::Open(path) = ev {
+                this.open(path.clone(), false, window, cx);
+            }
+            this.focus_active(window, cx);
+            cx.notify();
+        });
+        self.crumb = Some((picker, sub));
+        cx.notify();
+    }
+}
+
 impl Render for IdeView {
     fn render(&mut self, window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
         self.restore_pending(window, cx);
@@ -467,6 +494,7 @@ impl Render for IdeView {
         let root = v_flex()
             .key_context("IdeView")
             .id("ide-view")
+            .children(self.crumb.as_ref().map(|(p, _)| p.clone()))
             .on_hover({
                 let me = cx.entity().downgrade();
                 move |on, window, cx| {
@@ -496,17 +524,17 @@ impl Render for IdeView {
             self.reveal_active_tab(a);
         }
         if let Some(img_path) = active.clone().filter(|p| self.images.contains(p)) {
-            return root.child(tab_bar(self.tab_items(&img_path), self.tabs_scroll.clone(), cx)).child(breadcrumbs(&img_path, &self.root, true, None, None, cx)).child(
+            return root.child(tab_bar(self.tab_items(&img_path), self.tabs_scroll.clone(), &self.root, cx)).child(breadcrumbs(&img_path, &self.root, true, None, None, cx)).child(
                 div().flex_1().min_h_0().flex().items_center().justify_center().p_4().child(img(img_path).max_w_full().max_h_full()),
             ).into_any_element();
         }
         if let Some(diff_path) = active.clone().filter(|p| self.diffs.contains_key(p)) {
             let body = self.diff_view(&diff_path, cx);
-            return root.child(tab_bar(self.tab_items(&diff_path), self.tabs_scroll.clone(), cx)).child(div().flex_1().min_h_0().child(body)).into_any_element();
+            return root.child(tab_bar(self.tab_items(&diff_path), self.tabs_scroll.clone(), &self.root, cx)).child(div().flex_1().min_h_0().child(body)).into_any_element();
         }
         if let Some(sheet_path) = active.clone().filter(|p| self.sheets.contains_key(p)) {
             let view = self.sheets[&sheet_path].clone();
-            return root.child(tab_bar(self.tab_items(&sheet_path), self.tabs_scroll.clone(), cx)).child(breadcrumbs(&sheet_path, &self.root, true, None, None, cx)).child(div().flex_1().min_h_0().child(view)).into_any_element();
+            return root.child(tab_bar(self.tab_items(&sheet_path), self.tabs_scroll.clone(), &self.root, cx)).child(breadcrumbs(&sheet_path, &self.root, true, None, None, cx)).child(div().flex_1().min_h_0().child(view)).into_any_element();
         }
         let Some(path) = active.filter(|p| self.docs.contains_key(p)) else {
             if let Some(note) = self.note.clone() {
@@ -534,7 +562,7 @@ impl Render for IdeView {
         let overlay = self.overlay_element(cx);
         let doc = &self.docs[&path];
         let editor = doc.editor.clone();
-        root.child(tab_bar(self.tab_items(&path), self.tabs_scroll.clone(), cx))
+        root.child(tab_bar(self.tab_items(&path), self.tabs_scroll.clone(), &self.root, cx))
             .child(breadcrumbs(&path, &self.root, doc.saved, self.note.clone().or_else(|| doc.stale.then(|| "磁盘上的文件已被修改,点右侧刷新按钮载入(会丢弃你的修改)".to_string())), Some(self.blame_gutter), cx))
             .children(md_view.as_ref().map(|v| crate::ide_markdown::mode_bar(v, md_mode, cx)))
             .child({
