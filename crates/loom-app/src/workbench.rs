@@ -976,7 +976,16 @@ impl Workbench {
                 })
                 .await;
             let _ = this.update(cx, |this, cx| {
-                this.claude_info = Some(info.unwrap_or_else(|| "未找到 claude 命令".into()));
+                let text = info.unwrap_or_else(|| "未找到 claude 命令".into());
+                let hint = crate::workbench_compat::version_hint(&text);
+                if let Some(h) = &hint {
+                    loom_diag::warn!("claude 版本检查:{text} → {h}");
+                    crate::notice::post(cx, crate::notice::Kind::Warning, format!("Claude Code {text}:{h}"), None);
+                }
+                this.claude_info = Some(match hint {
+                    Some(h) => format!("{text}({h})"),
+                    None => text,
+                });
                 cx.notify();
             });
         })

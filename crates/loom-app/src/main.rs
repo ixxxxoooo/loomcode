@@ -176,6 +176,7 @@ mod worktree_actions;
 mod workspace_form;
 mod window_memory;
 mod workbench;
+mod workbench_compat;
 
 use gpui_kit::component::TitleBar;
 use gpui_kit::*;

@@ -170,7 +170,13 @@ impl Translator {
             "user" => self.user(v),
             "result" => self.result(v),
             "rate_limit_event" => self.rate_limit(v),
-            _ => Vec::new(),
+            other => {
+                // 历史 jsonl 里本来就有很多非事件记录(摘要、快照等),只在实时会话里记
+                if !self.replay {
+                    crate::compat::note_unknown("type", other);
+                }
+                Vec::new()
+            }
         }
     }
 
@@ -277,7 +283,12 @@ impl Translator {
                 };
                 vec![notice(NoticeLevel::Warning, &text)]
             }
-            _ => Vec::new(),
+            other => {
+                if !self.replay {
+                    crate::compat::note_unknown("system", other);
+                }
+                Vec::new()
+            }
         }
     }
 

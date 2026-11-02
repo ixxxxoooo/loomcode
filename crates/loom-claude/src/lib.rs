@@ -10,6 +10,7 @@
 //! - `history`:读取 `~/.claude/projects` 下的历史会话并回放。
 
 pub mod backend;
+pub mod compat;
 pub mod history;
 pub mod history_time;
 pub mod image_cache;
