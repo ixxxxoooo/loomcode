@@ -80,6 +80,7 @@ mod ide_watch;
 mod ide_chat_tabs;
 mod ide_blame;
 mod ide_hover;
+mod ide_link;
 mod lang_hl;
 mod diff_split;
 mod ide_md_sync;

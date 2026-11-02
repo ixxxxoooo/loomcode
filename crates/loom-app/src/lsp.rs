@@ -201,6 +201,7 @@ impl DefinitionProvider for LspProvider {
             }
             let resp: lsp_types::GotoDefinitionResponse = serde_json::from_value(v)?;
             let mut links = definition_links(resp);
+            loom_diag::debug!("LSP 定义:偏移 {offset} → {} 个结果", links.len());
             for l in &mut links {
                 if let Some(r) = l.origin_selection_range.as_mut() {
                     fix_range(r, &lines);

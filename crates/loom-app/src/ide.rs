@@ -72,6 +72,8 @@ pub struct IdeView {
     pub(crate) tabs: TabModel,
     /// 鼠标当前悬停在哪个窗口里的编辑器上(⌘W 优先关悬停处的标签,见 `app_menu::close_tab_under_mouse`)
     pub(crate) hover_win: Option<WindowId>,
+    /// ⌘ 单击后的 (文件, 选区),抬起时据此补发「转到定义」(见 `ide_link`)
+    pub(crate) cmd_click: Option<(PathBuf, std::ops::Range<usize>)>,
     /// 打不开文件或保存失败时的说明
     pub(crate) note: Option<String>,
     /// 以图片方式打开的标签(没有文本文档)
@@ -123,7 +125,7 @@ pub struct IdeView {
 impl IdeView {
     /// 创建空的编辑器视图。
     pub fn new() -> Self {
-        Self { root: String::new(), docs: HashMap::new(), tabs: TabModel::default(), hover_win: None, note: None, images: Default::default(), sheets: HashMap::new(), sheet_subs: HashMap::new(), diffs: HashMap::new(), as_text: Default::default(), minimap_ui: Default::default(), applied: None, edit_gen: 0, nav: Default::default(), nav_quiet: false, fresh_open: false, recent: Vec::new(), pending_restore: None, md: HashMap::new(), blame_gutter: false, blame_ui: Default::default(), lsp_listening: false, hover_ui: Default::default(), overlay: None, cursor_msg: None, overlay_sub: None, tabs_scroll: ScrollHandle::new(), tabs_revealed: None }
+        Self { root: String::new(), docs: HashMap::new(), tabs: TabModel::default(), hover_win: None, cmd_click: None, note: None, images: Default::default(), sheets: HashMap::new(), sheet_subs: HashMap::new(), diffs: HashMap::new(), as_text: Default::default(), minimap_ui: Default::default(), applied: None, edit_gen: 0, nav: Default::default(), nav_quiet: false, fresh_open: false, recent: Vec::new(), pending_restore: None, md: HashMap::new(), blame_gutter: false, blame_ui: Default::default(), lsp_listening: false, hover_ui: Default::default(), overlay: None, cursor_msg: None, overlay_sub: None, tabs_scroll: ScrollHandle::new(), tabs_revealed: None }
     }
 
     /// 设置项目根目录(会话切换时由宿主调用)。
@@ -544,6 +546,21 @@ impl Render for IdeView {
                 let hover = crate::ide_hover::hover_card(doc, &path, cx.weak_entity(), window, cx);
                 let cursor_msg = self.cursor_msg.as_ref().and_then(|m| crate::ide_message::message_element(doc, m, cx.weak_entity(), cx));
                 let ctx_menu = crate::ide_menu::editor_menu(&editor, cx.weak_entity());
+                // ⌘ 单击补强(见 `ide_link`)
+                let link_down = {
+                    let (p, ed) = (path.clone(), editor.clone());
+                    cx.listener(move |this, e: &MouseDownEvent, _, cx| {
+                        let sel = ed.read(cx).selected_range();
+                        this.link_mouse_down(&p, e, sel);
+                    })
+                };
+                let link_up = {
+                    let (p, ed) = (path.clone(), editor.clone());
+                    cx.listener(move |this, _: &MouseUpEvent, window, cx| {
+                        let sel = ed.read(cx).selected_range();
+                        this.link_mouse_up(&p, sel, window, cx);
+                    })
+                };
                 let ui = self.minimap_ui.clone();
                 // 编辑区太窄时自动隐藏迷你地图(宽度取自上一帧的测量)
                 let wide = ui.row_width.get() == 0. || ui.row_width.get() >= crate::ide_minimap::MIN_EDITOR_W;
@@ -555,6 +572,9 @@ impl Render for IdeView {
                     .child({
                         let hide = mm.is_some() && !prefs.soft_wrap;
                         div().flex_1().min_w_0().h_full().relative().overflow_hidden()
+                            .on_mouse_down(MouseButton::Left, link_down)
+                            .on_mouse_up(MouseButton::Left, link_up)
+                            .child(crate::ide_link::modifier_probe())
                             .child(div().absolute().top_0().left_0().bottom_0().right(px(if hide { -16. } else { 0. }))
                                 .child(div().size_full().context_menu(ctx_menu).child(Editor::new(&editor).bordered(false).appearance(false).size_full())))
                     })
