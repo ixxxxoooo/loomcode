@@ -32,7 +32,7 @@ thread_local! {
 }
 
 /// 取(或新建)某个容器的滚动句柄。
-fn handle_for(id: &SharedString) -> ScrollHandle {
+pub(crate) fn handle_for(id: &SharedString) -> ScrollHandle {
     HANDLES.with(|h| {
         let mut h = h.borrow_mut();
         // 会话很长时句柄会越攒越多,到上限就整体清掉(只丢滚动位置,下次渲染自动重建)

@@ -125,9 +125,31 @@ fn render_thinking(session: &Entity<SessionModel>, id: &str, text: &str, streami
                 })
                 .child(icon(if expanded { IconName::ChevronDown } else { IconName::ChevronRight }, 12., t.muted_foreground)),
         )
-        .when(expanded || streaming && text.len() < 400, |d| {
+        .when(expanded && !streaming, |d| {
             d.child(div().pl(px(20.)).text_size(px(13.)).text_color(t.muted_foreground).child(text.to_string()))
         })
+        // 流式中:固定高度的尾部窗口贴底跟随、顶部渐隐(对标 Cursor),不随字数忽现忽隐
+        .when(streaming && !text.trim().is_empty(), |d| d.child(thinking_tail(id, text, cx)))
+        .into_any_element()
+}
+
+/// 思考尾部窗口的高度(约 3 行)。
+const THINK_TAIL_H: f32 = 60.;
+
+/// 流式思考的尾部窗口:内容不足一窗时按实际高度,超出后限高、贴底滚动,顶部叠一层渐隐。
+///
+/// 参数:`id` 思考条目 id;`text` 当前已流出的思考文本。
+fn thinking_tail(id: &str, text: &str, cx: &App) -> AnyElement {
+    let t = cx.theme();
+    let sid = SharedString::from(format!("think-tail-{id}"));
+    let handle = crate::code_box::handle_for(&sid);
+    handle.scroll_to_bottom();
+    div().relative().pl(px(20.)).w_full()
+        .child(div().id(sid).w_full().max_h(px(THINK_TAIL_H)).overflow_y_scroll().track_scroll(&handle)
+            .text_size(px(13.)).line_height(px(20.)).text_color(t.muted_foreground.opacity(0.85)).child(text.to_string()))
+        // 估算超出一窗(约 3 行)才加渐隐,短内容不遮第一行
+        .when(text.lines().count() > 3 || text.chars().count() > 150, |d| d.child(div().absolute().top_0().left(px(20.)).right_0().h(px(18.))
+            .bg(linear_gradient(180., linear_color_stop(t.background, 0.), linear_color_stop(t.background.opacity(0.), 1.)))))
         .into_any_element()
 }
 
