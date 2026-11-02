@@ -107,9 +107,9 @@ pub struct Geo {
     pub panel_h: f32,
     /// 总行数
     pub rows: usize,
-    /// 编辑器视口的首行与行数
-    pub vis_start: usize,
-    pub vis_len: usize,
+    /// 编辑器视口的首行与行数(含小数:编辑器按像素平滑滚动,缩略图跟着连续移动才不会一行一行跳)
+    pub vis_start: f32,
+    pub vis_len: f32,
 }
 
 impl Geo {
@@ -117,10 +117,20 @@ impl Geo {
         self.rows as f32 * self.row_h
     }
 
+    /// 视口首行能滚动的总行数(总行数减去视口行数)。
+    fn span(&self) -> f32 {
+        (self.rows as f32 - self.vis_len).max(0.)
+    }
+
+    /// 夹到可滚动范围内的视口首行(编辑器末尾有留白 / 过度滚动时,首行可能略大于总行数减视口行数)。
+    pub fn start(&self) -> f32 {
+        self.vis_start.clamp(0., self.span())
+    }
+
     /// 编辑器滚动比例 0..=1。
     fn frac(&self) -> f32 {
-        let span = self.rows.saturating_sub(self.vis_len);
-        if span == 0 { 0. } else { (self.vis_start as f32 / span as f32).clamp(0., 1.) }
+        let span = self.span();
+        if span <= 0. { 0. } else { (self.start() / span).clamp(0., 1.) }
     }
 
     /// 缩略内容整体上移多少像素(内容不够长时为 0)。
@@ -131,18 +141,13 @@ impl Geo {
 
     /// 视口滑块在面板里的 (顶部, 高度)。
     pub fn slider(&self) -> (f32, f32) {
-        let h = (self.row_h * self.vis_len as f32).max(8.).min(self.panel_h);
-        (self.row_h * self.vis_start as f32 - self.offset(), h)
-    }
-
-    /// 缩略图里某一行(含小数)的面板纵坐标。
-    pub fn row_y(&self, row: f32) -> f32 {
-        row * self.row_h - self.offset()
+        let h = (self.row_h * self.vis_len).max(8.).min(self.panel_h);
+        (self.row_h * self.start() - self.offset(), h)
     }
 
     /// 反算:滑块顶部在面板里的位置 → 编辑器视口应当从第几行开始(含小数)。
     pub fn start_row_for_slider_top(&self, top: f32) -> f32 {
-        let span = self.rows.saturating_sub(self.vis_len) as f32;
+        let span = self.span();
         if self.content_h() <= self.panel_h {
             (top / self.row_h).clamp(0., span.max(0.))
         } else {
@@ -206,7 +211,7 @@ mod tests {
 
     #[::core::prelude::v1::test]
     fn 短文件滑块按行高定位且可反算() {
-        let g = Geo { row_h: 2., panel_h: 600., rows: 100, vis_start: 10, vis_len: 30 };
+        let g = Geo { row_h: 2., panel_h: 600., rows: 100, vis_start: 10., vis_len: 30. };
         assert_eq!(g.offset(), 0.);
         assert_eq!(g.slider(), (20., 60.));
         assert!((g.start_row_for_slider_top(20.) - 10.).abs() < 1e-4);
@@ -216,17 +221,35 @@ mod tests {
     fn 长文件缩略图按比例滚动且滑块像滚动条() {
         let rows = 2000;
         let panel = 600.;
-        for start in [0usize, 500, 1970] {
-            let g = Geo { row_h: 2., panel_h: panel, rows, vis_start: start, vis_len: 30 };
+        for start in [0f32, 500., 1970.] {
+            let g = Geo { row_h: 2., panel_h: panel, rows, vis_start: start, vis_len: 30. };
             let (top, h) = g.slider();
             // 滑块始终在面板内
             assert!(top >= -1e-3 && top + h <= panel + 1e-3, "start={start} top={top} h={h}");
             // 反算回到同一个起始行
-            assert!((g.start_row_for_slider_top(top) - start as f32).abs() < 0.5, "start={start}");
+            assert!((g.start_row_for_slider_top(top) - start).abs() < 0.5, "start={start}");
         }
         // 滚到底时滑块贴着面板底部
-        let g = Geo { row_h: 2., panel_h: panel, rows, vis_start: rows - 30, vis_len: 30 };
+        let g = Geo { row_h: 2., panel_h: panel, rows, vis_start: (rows - 30) as f32, vis_len: 30. };
         let (top, h) = g.slider();
         assert!((top + h - panel).abs() < 1e-3);
+    }
+
+    #[::core::prelude::v1::test]
+    fn 平滑滚动时滑块与缩略图连续移动() {
+        // 视口首行以 0.05 行为步长滚动:滑块顶部与缩略图偏移都应单调,且每步位移远小于一整行
+        let (rows, panel) = (2000usize, 600.);
+        let (mut last_top, mut last_off) = (f32::MIN, f32::MIN);
+        let mut start = 0.;
+        while start <= 1970. {
+            let g = Geo { row_h: 2., panel_h: panel, rows, vis_start: start, vis_len: 30. };
+            let (top, _) = g.slider();
+            assert!(top >= last_top - 1e-3 && g.offset() >= last_off - 1e-3, "start={start}");
+            if last_top > f32::MIN {
+                assert!(top - last_top < 0.2 && g.offset() - last_off < 0.2, "start={start} 位移过大");
+            }
+            (last_top, last_off) = (top, g.offset());
+            start += 0.05;
+        }
     }
 }

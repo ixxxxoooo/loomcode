@@ -76,11 +76,31 @@ pub fn build_for(text: &str, lang: &str, syntax: bool, theme: &HighlightTheme) -
     build(text, &styles)
 }
 
+/// 编辑器视口的 (首行, 行数),含小数。
+///
+/// 编辑器按像素平滑滚动,所以首行取「滚动偏移 ÷ 行高」的连续值,而不是 `visible_row_range` 的整数行;
+/// 行数取画布高度 ÷ 行高(画布与编辑器同高)。自动换行等原因使两者对不上时,退回整数行范围。
+/// 滚动偏移是实时状态,在绘制阶段读到的就是当帧值(不像布局信息要等编辑器自己绘制后才更新)。
+fn viewport(ed: &EditorState, panel_h: f32) -> Option<(f32, f32)> {
+    let vis = ed.visible_row_range()?;
+    let lh = f32::from(ed.line_height()?);
+    if lh <= 0. {
+        return None;
+    }
+    let start = (-f32::from(ed.scroll_offset().y) / lh).max(0.);
+    let len = (panel_h / lh).max(1.);
+    let consistent = (start - vis.start as f32).abs() <= 2.;
+    Some(if consistent { (start, len) } else { (vis.start as f32, vis.len().max(1) as f32) })
+}
+
 /// 缩略图高度已知时,由编辑器视口得到几何。
 fn geo_for(editor: &Entity<EditorState>, ui: &MinimapUi, rows: usize, cx: &App) -> Option<Geo> {
-    let vis = editor.read(cx).visible_row_range()?;
     let h = f32::from(ui.bounds.get().size.height);
-    (h > 0.).then(|| Geo { row_h: ROW_H, panel_h: h, rows, vis_start: vis.start, vis_len: vis.len().max(1) })
+    if h <= 0. {
+        return None;
+    }
+    let (vis_start, vis_len) = viewport(editor.read(cx), h)?;
+    Some(Geo { row_h: ROW_H, panel_h: h, rows, vis_start, vis_len })
 }
 
 /// 按住滑块拖动:鼠标纵坐标减去抓取偏移 = 滑块顶部,换算成编辑器的首行并滚动过去。
@@ -110,7 +130,6 @@ pub fn minimap(
 ) -> impl IntoElement {
     let t = cx.theme().clone();
     let rows = mm.rows.len();
-    let (vis_start, vis_len) = editor.read(cx).visible_row_range().map_or((0, 1), |r| (r.start, r.len().max(1)));
     let cursor_row = editor.read(cx).cursor_position().line as usize;
     // 选区覆盖的行范围(无选区为 None),在缩略图上画一条淡色带
     let sel_rows = {
@@ -123,8 +142,9 @@ pub fn minimap(
     let (width, col_w) = (opts.width, (opts.width - PAD * 2.) / MAX_COLS as f32);
     let show_slider = opts.slider_always || ui.hover.get() || ui.grab.get().is_some();
     let (bar, slider_fill, slider_edge) = (t.muted_foreground.opacity(0.5), t.foreground.opacity(if ui.grab.get().is_some() { 0.18 } else { 0.1 }), t.foreground.opacity(0.18));
+    let band = t.foreground.opacity(0.05);
     let (added, modified, deleted, cursor_c) = (t.success, t.warning, t.danger, t.primary);
-    let (ed_down, ed_move, ed_wheel) = (editor.clone(), editor.clone(), editor.clone());
+    let (ed_down, ed_move, ed_wheel, ed_paint) = (editor.clone(), editor.clone(), editor.clone(), editor.clone());
     let (ui_down, ui_move, ui_up, ui_hover, ui_wheel, ui_prepaint) = (ui.clone(), ui.clone(), ui.clone(), ui.clone(), ui.clone(), ui);
     div()
         .id("ide-minimap")
@@ -179,36 +199,47 @@ pub fn minimap(
         .child(
             canvas(
                 move |bounds, _, _| ui_prepaint.bounds.set(bounds),
-                move |bounds, _, window, _| {
+                move |bounds, _, window, cx| {
                     let h = f32::from(bounds.size.height);
+                    // 在绘制阶段读编辑器:与编辑器同一帧的滚动位置,缩略图不会比正文慢半拍
+                    let Some((vis_start, vis_len)) = viewport(ed_paint.read(cx), h) else { return };
                     let g = Geo { row_h: ROW_H, panel_h: h, rows, vis_start, vis_len };
-                    let off = g.offset();
+                    // 整体偏移对齐到设备像素(而不是逐行取整):行距保持均匀,滚动时按半像素连续移动
+                    let scale = window.scale_factor();
+                    let snap = |v: f32| (v * scale).round() / scale;
+                    let off = snap(g.offset());
+                    let row_y = |row: f32| row * ROW_H - off;
+                    // 视口带:缩略图上标出编辑器当前可见的范围(随连续位置移动,不再按行切换文字深浅)
+                    {
+                        let (y0, y1) = (row_y(vis_start).max(0.), row_y(vis_start + vis_len).min(h));
+                        if y1 > y0 {
+                            window.paint_quad(fill(Bounds::new(point(bounds.origin.x, bounds.origin.y + px(y0)), size(bounds.size.width, px(y1 - y0))), band));
+                        }
+                    }
                     // 只画落在面板内的行
                     let first = (off / ROW_H).floor().max(0.) as usize;
                     let last = (((off + h) / ROW_H).ceil() as usize + 1).min(rows);
                     for i in first..last {
-                        let y = bounds.origin.y + px(g.row_y(i as f32));
-                        // 视口内的行画得更实,视口外的淡一点,一眼看出当前位置
-                        let in_view = i >= vis_start && i < vis_start + vis_len;
-                        let alpha = if in_view { 0.95 } else { 0.7 };
+                        let y = bounds.origin.y + px(row_y(i as f32));
                         for r in &mm.rows[i] {
                             let x = bounds.origin.x + px(PAD + f32::from(r.start) * col_w);
                             // 墨量档位再叠一层深浅:标点淡、大写与符号浓
                             let w = r.weight.alpha();
-                            let color = r.color.map_or(bar.opacity(bar.a * w), |c| c.opacity(alpha * w));
+                            let color = r.color.map_or(bar.opacity(bar.a * w), |c| c.opacity(0.85 * w));
                             let rect = Bounds::new(point(x, y), size(px((f32::from(r.len) * col_w).max(1.)), px(ROW_H * 0.8)));
                             window.paint_quad(quad(rect, px(0.6), color, 0., transparent_black(), BorderStyle::default()));
                         }
                     }
                     // 选区色带:盖在文字下面一层,先画
                     if let Some((a, b)) = sel_rows {
-                        let (y0, y1) = (g.row_y(a as f32), g.row_y(b as f32 + 1.));
+                        let (y0, y1) = (row_y(a as f32), row_y(b as f32 + 1.));
                         if y1 >= 0. && y0 <= h {
                             window.paint_quad(fill(Bounds::new(point(bounds.origin.x + px(1.), bounds.origin.y + px(y0.max(0.))), size(bounds.size.width - px(2.), px((y1.min(h) - y0.max(0.)).max(2.)))), sel_c.opacity(0.22)));
                         }
                     }
                     if show_slider {
-                        let (top, sh) = g.slider();
+                        let sh = g.slider().1;
+                        let top = row_y(g.start());
                         let rect = Bounds::new(point(bounds.origin.x + px(1.), bounds.origin.y + px(top)), size(bounds.size.width - px(2.), px(sh)));
                         window.paint_quad(quad(rect, px(3.), slider_fill, 1., slider_edge, BorderStyle::default()));
                     }
@@ -219,7 +250,7 @@ pub fn minimap(
                             GitMark::Modified => modified,
                             GitMark::Deleted => deleted,
                         };
-                        let y = g.row_y(range.start as f32);
+                        let y = row_y(range.start as f32);
                         let hh = (ROW_H * range.len() as f32).max(2.);
                         if y + hh >= 0. && y <= h {
                             window.paint_quad(fill(Bounds::new(point(bounds.origin.x + bounds.size.width - px(3.), bounds.origin.y + px(y)), size(px(2.), px(hh))), color.opacity(0.9)));
@@ -227,14 +258,14 @@ pub fn minimap(
                     }
                     // 诊断刻度:错误红、警告黄,贴在 Git 刻度左边
                     for (row, is_err) in diag_marks.iter() {
-                        let y = g.row_y(*row as f32);
+                        let y = row_y(*row as f32);
                         if y >= -ROW_H && y <= h {
                             let c = if *is_err { diag_err } else { diag_warn };
                             window.paint_quad(fill(Bounds::new(point(bounds.origin.x + bounds.size.width - px(7.), bounds.origin.y + px(y)), size(px(3.), px(ROW_H.max(2.)))), c.opacity(0.95)));
                         }
                     }
                     // 光标所在行的刻度
-                    let cy = g.row_y(cursor_row as f32);
+                    let cy = row_y(cursor_row as f32);
                     if cy >= 0. && cy <= h {
                         window.paint_quad(quad(Bounds::new(point(bounds.origin.x + px(2.), bounds.origin.y + px(cy)), size(bounds.size.width - px(4.), px(1.5))), px(1.), cursor_c.opacity(0.8), 0., transparent_black(), BorderStyle::default()));
                     }
