@@ -37,5 +37,8 @@ uuid = { version = "1", features = ["v4"] }
 # Dock 图标随主题切换、菜单栏托盘(与 gpui 用同一版本的 objc2,不新增依赖树)
 [target.'cfg(target_os = "macos")'.dependencies]
 objc2 = "0.6"
-objc2-foundation = { version = "0.3.2", default-features = false, features = ["std", "NSData", "NSGeometry", "NSString"] }
+objc2-foundation = { version = "0.3.2", default-features = false, features = ["std", "NSData", "NSGeometry", "NSString", "NSError"] }
+# 系统通知:走 UserNotifications(通知归属本应用、图标取应用包的图标;osascript 会记在「脚本编辑器」名下)
+objc2-user-notifications = { version = "0.3.2", default-features = false, features = ["std", "block2", "UNNotificationContent", "UNNotificationRequest", "UNNotificationSound", "UNNotificationTrigger", "UNUserNotificationCenter"] }
+block2 = "0.6"
 objc2-app-kit = { version = "0.3.2", default-features = false, features = ["std", "NSApplication", "NSResponder", "NSImage", "NSMenu", "NSMenuItem", "NSStatusBar", "NSStatusItem", "NSStatusBarButton", "NSButton", "NSControl", "NSView", "NSImageView"] }

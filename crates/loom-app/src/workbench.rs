@@ -442,6 +442,14 @@ impl Workbench {
             })
             .detach();
         }
+        // 调试用:LOOM_NOTIFY_TEST=1 启动 4 秒后发一条系统通知(验证通知图标与归属)
+        if std::env::var("LOOM_NOTIFY_TEST").is_ok_and(|v| v == "1") {
+            cx.spawn_in(window, async move |_, cx| {
+                cx.background_executor().timer(std::time::Duration::from_secs(4)).await;
+                let _ = cx.update(|_, _| crate::app_icon::notify("通知测试", "图标应当是 LoomCode", "test"));
+            })
+            .detach();
+        }
         if let Ok(q) = std::env::var("LOOM_PALETTE") {
             wb.toggle_palette(window, cx);
             if let Some(p) = wb.palette.clone() {
@@ -1167,7 +1175,7 @@ impl Workbench {
                     // 窗口不在前台时发系统通知
                     if self.settings.notify_on_finish && cx.active_window().is_none() {
                         let title = owner.and_then(|(id, v)| self.projects.get(v.project_ix).and_then(|p| p.sessions.iter().find(|s| &s.id == id)).map(|s| s.title.clone()));
-                        crate::app_icon::notify("Claude 已完成", &title.unwrap_or_else(|| "会话回合已结束".into()));
+                        crate::app_icon::notify("Claude 已完成", &title.unwrap_or_else(|| "会话回合已结束".into()), owner.map_or("", |(id, _)| id.as_str()));
                     }
                     let path = owner.and_then(|(_, v)| self.projects.get(v.project_ix)).map(|p| p.path.clone());
                     // 一个回合结束,会话已经写进磁盘:之后再打开就是普通会话,不能再从源会话分叉

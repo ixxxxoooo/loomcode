@@ -42,6 +42,42 @@ mod mac {
             DOCK_DARK.set(Some(dark));
         }
     }
+
+    /// 经 UserNotifications 发一条通知;返回是否已提交(失败时调用方回退到 osascript)。
+    pub fn notify(title: &str, body: &str, thread: &str) -> bool {
+        use block2::RcBlock;
+        use objc2::runtime::Bool;
+        use objc2_foundation::{NSError, NSString};
+        use objc2_user_notifications::{UNAuthorizationOptions, UNMutableNotificationContent, UNNotificationRequest, UNNotificationSound, UNUserNotificationCenter};
+        use std::sync::atomic::{AtomicU64, Ordering};
+        static SEQ: AtomicU64 = AtomicU64::new(0);
+        let center = UNUserNotificationCenter::currentNotificationCenter();
+        // 授权请求幂等:已决定过不会再弹窗
+        let done = RcBlock::new(|granted: Bool, err: *mut NSError| {
+            if !granted.as_bool() {
+                // SAFETY: 系统回调传入的 NSError 指针要么为空,要么在回调期间有效
+                let why = unsafe { err.as_ref() }.map(|e| e.localizedDescription().to_string()).unwrap_or_default();
+                loom_diag::info!("系统通知权限未授予(可在 系统设置 → 通知 里开启){}", if why.is_empty() { String::new() } else { format!(":{why}") });
+            }
+        });
+        center.requestAuthorizationWithOptions_completionHandler(UNAuthorizationOptions::Alert | UNAuthorizationOptions::Sound, &done);
+        let content = UNMutableNotificationContent::new();
+        content.setTitle(&NSString::from_str(title));
+        content.setBody(&NSString::from_str(body));
+        if !thread.is_empty() {
+            content.setThreadIdentifier(&NSString::from_str(thread));
+        }
+        content.setSound(Some(&UNNotificationSound::defaultSound()));
+        let id = NSString::from_str(&format!("loom-{}-{}", std::process::id(), SEQ.fetch_add(1, Ordering::Relaxed)));
+        let request = UNNotificationRequest::requestWithIdentifier_content_trigger(&id, &content, None);
+        let added = RcBlock::new(|err: *mut NSError| {
+            if !err.is_null() {
+                loom_diag::warn!("系统通知提交失败(可能未授权通知权限)");
+            }
+        });
+        center.addNotificationRequest_withCompletionHandler(&request, Some(&added));
+        true
+    }
 }
 
 /// 从 PNG 字节创建 NSImage(托盘用)。
@@ -61,11 +97,24 @@ pub fn set_tray_visible(visible: bool) {
     crate::tray::set_visible(visible);
 }
 
-/// 发系统通知(经 osascript,不需要通知权限声明)。
+/// 发系统通知。
 ///
-/// 参数:`title` 标题;`body` 正文。
-pub fn notify(title: &str, body: &str) {
+/// 从 `.app` 包运行时走 UserNotifications:通知归属本应用,图标取应用包的图标(首次会请求通知授权)。
+/// 不在包里运行(裸二进制、`cargo run`)时 UserNotifications 不可用,回退到 osascript(通知会记在「脚本编辑器」名下)。
+///
+/// 参数:`title` 标题;`body` 正文;`thread` 分组标识(同一会话的通知折叠在一起,空串不分组)。
+pub fn notify(title: &str, body: &str, thread: &str) {
+    #[cfg(target_os = "macos")]
+    if in_app_bundle() && mac::notify(title, body, thread) {
+        return;
+    }
+    let _ = thread;
     let esc = |s: &str| s.replace('\\', "\\\\").replace('"', "\\\"");
     let script = format!("display notification \"{}\" with title \"LoomCode\" subtitle \"{}\"", esc(body), esc(title));
     let _ = std::process::Command::new("osascript").arg("-e").arg(script).spawn();
+}
+
+/// 是否从 `.app` 包里运行(UserNotifications 只在有包标识时可用)。
+fn in_app_bundle() -> bool {
+    std::env::current_exe().ok().is_some_and(|exe| exe.ancestors().any(|p| p.extension().is_some_and(|e| e == "app")))
 }
