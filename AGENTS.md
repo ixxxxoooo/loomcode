@@ -16,7 +16,7 @@ Rust + gpui-kit 0.8 的 Claude Code 工作台。只支持 Claude Code,直连本�
 | `loom-automation` | 自动化的计划、存储与运行器 |
 | `loom-browser` | 内置阅读模式浏览器的抓取与正文提取 |
 | `loom-lsp` | 语言服务器(LSP)客户端内核(不依赖 gpui):`framing`(Content-Length 帧)、`client`(读 / 写线程、按 id 配对请求、通知分发、服务端请求自动应答、`$/progress` 进度、`initialize` 握手与能力判断)、`hub`(按「项目根 + 服务器 id」复用,首次使用才启动,失败结果缓存;诊断经全局回调送出;`kill_all` 退出时结束全部)、`servers`(按扩展名选服务器:rust-analyzer / Pyright / gopls / SourceKit-LSP / clangd / typescript-language-server;在 PATH 与常见目录找可执行文件,rust-analyzer 优先找 rustup 工具链里的真实文件以绕开 `~/.cargo/bin` 代理;`project_root`)、`uri`、`position`(UTF-16 ↔ 字符列换算) |
-| `loom-term` | 伪终端内核:`portable-pty` 起 shell + `alacritty_terminal` 解析,输出画面快照与按键编码(与界面无关) |
+| `loom-term` | 伪终端内核:`portable-pty` 起 shell + `alacritty_terminal` 解析,输出画面快照(文字段带起始列 / 格数 / OSC 8 链接)、按键与鼠标编码(`mouse`)、颜色查询应答与主题(`theme` / `events`)、历史搜索(`search`),与界面无关 |
 | `loom-app` | gpui-kit 界面(二进制名 `loomcode`);`app_icon.rs` 管 Dock 图标(随主题切浅/深色)与菜单栏托盘 |
 
 图标源文件在 `assets/icon/`:`gen.py` 生成 SVG,`build.sh` 渲染出 PNG 与 `.icns`(产物已提交,改设计后重跑 `assets/icon/build.sh`)。

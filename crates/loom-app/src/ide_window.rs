@@ -375,6 +375,9 @@ impl Render for IdeWindow {
             .track_focus(&self.focus)
             .on_action(cx.listener(|this, _: &SaveFile, _, cx| this.save(cx)))
             .on_action(cx.listener(|this, a: &OpenPath, window, cx| this.open_path(&a.path, window, cx)))
+            .on_action(cx.listener(|this, a: &crate::term_links::OpenTermPath, window, cx| {
+                this.open_at(std::path::PathBuf::from(&a.path), a.line.max(1), window, cx);
+            }))
             .on_action(cx.listener(|this, _: &QuickOpen, window, cx| this.toggle_quick(window, cx)))
             .on_action(cx.listener(|this, _: &GoToLine, window, cx| this.goto_line_dialog(window, cx)))
             .on_action(cx.listener(|this, _: &NavBack, window, cx| this.ide_navigate(false, window, cx)))

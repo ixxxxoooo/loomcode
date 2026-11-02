@@ -2,25 +2,40 @@
 //!
 //! @author ixxxxoooo
 
-use crate::term_geom::{cell_at, selection_spans};
+use crate::term_geom::cell_at;
+use crate::term_paint::GridPaint;
 use crate::term_palette::indexed_rgb;
 use crate::ui::MONO;
 use gpui_kit::component::ActiveTheme;
 use gpui_kit::prelude::FluentBuilder as _;
 use gpui_kit::*;
 use std::sync::Arc;
-use loom_config::CursorShape;
-use loom_term::{Mods, Run, SelectKind, SpawnOptions, TermColor, Terminal, encode_key};
+use loom_term::{Mods, MouseButton as TermButton, SelectKind, SpawnOptions, TermEvent, Terminal, encode_key};
 
 /// 终端内容距边框的留白
 const PAD: f32 = 6.;
 
+/// 响铃时边框闪烁的时长
+const BELL_FLASH: std::time::Duration = std::time::Duration::from_millis(180);
+
 /// 一个终端的视图。
 pub struct TerminalView {
-    term: Arc<Terminal>,
-    focus: FocusHandle,
+    pub(crate) term: Arc<Terminal>,
+    pub(crate) focus: FocusHandle,
+    /// 启动目录(相对路径的链接按它解析)
+    pub(crate) cwd: String,
+    /// 程序接管鼠标时,当前被按住并已上报的键
+    pub(crate) reported: Option<TermButton>,
+    /// 最近一次上报鼠标移动时所在的格子 (行, 列),同一格内不重复发
+    pub(crate) last_cell: Option<(usize, usize)>,
+    /// 上次渲染时终端是否有焦点(焦点进出上报用)
+    pub(crate) last_focus: bool,
+    /// 搜索栏状态(⌘F);`None` 表示没打开
+    pub(crate) find: Option<crate::term_search::FindState>,
+    /// 响铃闪烁到什么时候
+    bell_until: Option<std::time::Instant>,
     /// 当前字号与行高(随设置变化,变了就重新量字宽)
-    metrics: (f32, f32),
+    pub(crate) metrics: (f32, f32),
     /// 等宽字体一个字符的宽度(第一次渲染时量出来)
     cell_w: Option<Pixels>,
     /// 当前终端的 (列, 行)
@@ -32,7 +47,7 @@ pub struct TerminalView {
     /// 这次按下之后鼠标是否移动过(没动过的单击要清掉选区)
     dragged: bool,
     /// 滚轮累计的未满一行的像素(平滑滚动 / 触控板每次只给几像素)
-    wheel_acc: f32,
+    pub(crate) wheel_acc: f32,
     /// 负责决定终端尺寸的窗口(同一个终端被两个窗口同时显示时,只听它的,避免 SIGWINCH 来回抖动)及其最近一次绘制时间
     size_owner: Option<(WindowId, std::time::Instant)>,
     /// 前台进程名的缓存(查询时间, 进程名),见 `label`
@@ -50,6 +65,7 @@ impl TerminalView {
         let (tx, rx) = async_channel::bounded::<()>(1);
         let tp = crate::prefs(cx).terminal;
         let cwd = if tp.start_in_project { cwd.to_string() } else { std::env::var("HOME").unwrap_or_else(|_| cwd.to_string()) };
+        let opts_cwd = cwd.clone();
         let opts = SpawnOptions {
             cwd: Some(cwd),
             command,
@@ -63,16 +79,19 @@ impl TerminalView {
         let term = Terminal::spawn(opts, move || {
             let _ = tx.try_send(());
         })?;
+        let term = Arc::new(term);
+        let start_cwd = opts_cwd.clone();
         Ok(cx.new(|cx| {
+            let events_term = term.clone();
             let pump = cx.spawn(async move |this, cx| {
                 while rx.recv().await.is_ok() {
-                    if this.update(cx, |_, cx| cx.notify()).is_err() {
+                    let evs = events_term.drain_events();
+                    if this.update(cx, |this: &mut Self, cx| this.on_term_events(evs, cx)).is_err() {
                         break;
                     }
                 }
             });
             // 调试用:LOOM_TERM_SELECT=起点行,起点列,终点行,终点列,一秒后自动选中这一段,方便截图检查高亮
-            let term = Arc::new(term);
             if let Some([r0, c0, r1, c1]) = std::env::var("LOOM_TERM_SELECT").ok().and_then(|v| v.split(',').map(|n| n.trim().parse::<usize>().ok()).collect::<Option<Vec<_>>>()).and_then(|v| <[usize; 4]>::try_from(v).ok()) {
                 let (t, ex) = (term.clone(), cx.background_executor().clone());
                 cx.spawn(async move |this, cx| {
@@ -83,7 +102,7 @@ impl TerminalView {
                 })
                 .detach();
             }
-            Self { term, focus: cx.focus_handle(), metrics: metrics_of(tp.font_size), cell_w: None, grid: (80, 24), bounds: None, size_owner: None, selecting: false, dragged: false, wheel_acc: 0., fg_cache: std::cell::RefCell::new((std::time::Instant::now() - std::time::Duration::from_secs(10), None)), _pump: pump }
+            Self { term, focus: cx.focus_handle(), cwd: start_cwd, reported: None, last_cell: None, last_focus: false, find: None, bell_until: None, metrics: metrics_of(tp.font_size), cell_w: None, grid: (80, 24), bounds: None, size_owner: None, selecting: false, dragged: false, wheel_acc: 0., fg_cache: std::cell::RefCell::new((std::time::Instant::now() - std::time::Duration::from_secs(10), None)), _pump: pump }
         }))
     }
 
@@ -149,10 +168,19 @@ impl TerminalView {
         }
     }
 
-    fn on_key(&mut self, ev: &KeyDownEvent, cx: &mut Context<Self>) {
+    fn on_key(&mut self, ev: &KeyDownEvent, window: &mut Window, cx: &mut Context<Self>) {
         let (k, m) = (&ev.keystroke, &ev.keystroke.modifiers);
         if m.platform {
             match k.key.as_str() {
+                // ⌘F 搜索;搜索栏开着时 ⌘G / ⌘⇧G 跳下一个 / 上一个
+                "f" => {
+                    self.toggle_find(window, cx);
+                    cx.stop_propagation();
+                }
+                "g" if self.find.is_some() => {
+                    self.step_find(if m.shift { -1 } else { 1 }, cx);
+                    cx.stop_propagation();
+                }
                 "v" => {
                     self.paste(cx);
                     cx.stop_propagation();
@@ -191,14 +219,14 @@ impl TerminalView {
     }
 
     /// 鼠标位置 → 终端格子;还没量出区域大小时返回 `None`。
-    fn cell_under(&self, pos: Point<Pixels>) -> Option<crate::term_geom::CellPos> {
+    pub(crate) fn cell_under(&self, pos: Point<Pixels>) -> Option<crate::term_geom::CellPos> {
         let (b, cell_w) = (self.bounds?, self.cell_w?);
         let (x, y) = (f32::from(pos.x - b.origin.x), f32::from(pos.y - b.origin.y));
         Some(cell_at(x, y, f32::from(cell_w), self.metrics.1, PAD, self.grid.0 as usize, self.grid.1 as usize))
     }
 
     /// 按下左键:单击拖动选字符,双击选单词,三击选整行。
-    fn begin_select(&mut self, ev: &MouseDownEvent, cx: &mut Context<Self>) {
+    pub(crate) fn begin_select(&mut self, ev: &MouseDownEvent, cx: &mut Context<Self>) {
         let Some(c) = self.cell_under(ev.position) else { return };
         let kind = match ev.click_count {
             0 | 1 => SelectKind::Simple,
@@ -212,7 +240,7 @@ impl TerminalView {
     }
 
     /// 按住左键拖动:更新选区终点。
-    fn drag_select(&mut self, ev: &MouseMoveEvent, cx: &mut Context<Self>) {
+    pub(crate) fn drag_select(&mut self, ev: &MouseMoveEvent, cx: &mut Context<Self>) {
         if !self.selecting || ev.pressed_button != Some(MouseButton::Left) {
             return;
         }
@@ -224,7 +252,7 @@ impl TerminalView {
     }
 
     /// 松开左键:没拖动过的单击不留选区。
-    fn end_select(&mut self, ev: &MouseUpEvent, cx: &mut Context<Self>) {
+    pub(crate) fn end_select(&mut self, ev: &MouseUpEvent, cx: &mut Context<Self>) {
         if self.selecting && !self.dragged && ev.click_count <= 1 {
             self.term.clear_selection();
         }
@@ -232,19 +260,22 @@ impl TerminalView {
         cx.notify();
     }
 
-    /// 滚轮回看:像素累计满一行才滚一行,余数留到下次,小步增量不会被吞掉。
-    ///
-    /// 参数:`ev` 滚轮事件;`cx` 视图上下文。
-    fn on_wheel(&mut self, ev: &ScrollWheelEvent, cx: &mut Context<Self>) {
-        let line_h = self.metrics.1;
-        self.wheel_acc += f32::from(ev.delta.pixel_delta(px(line_h)).y);
-        let lines = (self.wheel_acc / line_h).trunc();
-        cx.stop_propagation();
-        if lines != 0. {
-            self.wheel_acc -= lines * line_h;
-            self.term.scroll(lines as i32);
-            cx.notify();
+    /// 处理终端事件:响铃闪一下边框,OSC 52 写系统剪贴板。
+    fn on_term_events(&mut self, events: Vec<TermEvent>, cx: &mut Context<Self>) {
+        for ev in events {
+            match ev {
+                TermEvent::Bell => {
+                    self.bell_until = Some(std::time::Instant::now() + BELL_FLASH);
+                    cx.spawn(async move |this, cx| {
+                        cx.background_executor().timer(BELL_FLASH).await;
+                        let _ = this.update(cx, |_, cx| cx.notify());
+                    })
+                    .detach();
+                }
+                TermEvent::ClipboardStore(text) => cx.write_to_clipboard(ClipboardItem::new_string(text)),
+            }
         }
+        cx.notify();
     }
 }
 
@@ -261,58 +292,9 @@ fn metrics_of(font_size: u8) -> (f32, f32) {
     (fs, (fs * 4. / 3.).round())
 }
 
-/// 终端颜色 → 界面颜色;`Default` 用调用方给的默认色。
-fn to_hsla(c: TermColor, default: Hsla, dark: bool) -> Hsla {
-    let (r, g, b) = match c {
-        TermColor::Default => return default,
-        TermColor::Indexed(i) => indexed_rgb(i, dark),
-        TermColor::Rgb(r, g, b) => (r, g, b),
-    };
-    rgb(((r as u32) << 16) | ((g as u32) << 8) | b as u32).into()
-}
-
-/// 一段文字的高亮样式;和默认样式完全一样时返回 `None`(省掉一个区间)。
-fn run_style(run: &Run, fg_default: Hsla, bg_default: Hsla, dark: bool) -> Option<HighlightStyle> {
-    let s = run.style;
-    let plain = run.fg == TermColor::Default && run.bg == TermColor::Default && !(s.bold || s.italic || s.underline || s.inverse || s.dim || s.strike);
-    if plain {
-        return None;
-    }
-    let (mut fg, mut bg) = (to_hsla(run.fg, fg_default, dark), (run.bg != TermColor::Default).then(|| to_hsla(run.bg, bg_default, dark)));
-    if s.inverse {
-        (fg, bg) = (bg.unwrap_or(bg_default), Some(fg));
-    }
-    if s.dim {
-        fg = fg.opacity(0.6);
-    }
-    Some(HighlightStyle {
-        color: Some(fg),
-        background_color: bg,
-        font_weight: s.bold.then_some(FontWeight::BOLD),
-        font_style: s.italic.then_some(FontStyle::Italic),
-        underline: s.underline.then(|| UnderlineStyle { thickness: px(1.), color: None, wavy: false }),
-        strikethrough: s.strike.then(|| StrikethroughStyle { thickness: px(1.), color: None }),
-        ..Default::default()
-    })
-}
-
-/// 一个文字段 → 绝对定位在网格上的元素:背景块按格数画满,文字只带前景与样式。
-///
-/// 位置取 `列 × 格宽`,不依赖字体实际字宽,所以中文、emoji 等宽字符不会把同一行后面的内容挤歪,
-/// 背景块(如 opencode 右侧栏)也始终整列对齐。
-fn run_element(r: &Run, cell_w: Pixels, line_h: f32, fg: Hsla, bg: Hsla, dark: bool) -> Div {
-    let el = div().absolute().top_0().left(cell_w * r.col as f32).w(cell_w * r.cells as f32).h(px(line_h)).whitespace_nowrap();
-    let Some(style) = run_style(r, fg, bg, dark) else { return el.child(r.text.clone()) };
-    let fill = style.background_color;
-    let text_style = HighlightStyle { background_color: None, ..style };
-    let len = r.text.len();
-    el.when_some(fill, |d, c| d.bg(c)).child(StyledText::new(r.text.clone()).with_highlights(vec![(0..len, text_style)]))
-}
-
 impl Render for TerminalView {
     fn render(&mut self, window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
         let t = cx.theme().clone();
-        let dark = t.is_dark();
         let tp = crate::prefs(cx).terminal;
         let m = metrics_of(tp.font_size);
         if m != self.metrics {
@@ -329,48 +311,37 @@ impl Render for TerminalView {
         let cell_w = self.cell_w.unwrap_or(px(7.));
         // 把当前主题同步给终端,程序查询背景色时才答得对(浅色主题下 opencode 等才会用浅色)
         self.term.set_theme(term_theme(&t));
-        let snap = self.term.snapshot();
         let focused = self.focus.is_focused(window);
+        self.sync_focus_report(focused);
+        self.refresh_find(cx);
+        let snap = self.term.snapshot();
+        let matches = self.visible_matches(&snap);
+        let exit_code = snap.exit_code;
+        let grid = GridPaint {
+            snap, cell_w, line_h, font_size, pad: PAD, dark: t.is_dark(), fg: t.foreground, bg: t.background,
+            accent: t.primary, find: t.warning, cursor: tp.cursor, focused, matches,
+        };
+        let bell = self.bell_until.is_some_and(|b| b > std::time::Instant::now());
         let view = cx.entity();
-        let (fg, bg) = (t.foreground, t.background);
-        let lines = snap.lines.iter().map(|runs| {
-            div().relative().h(px(line_h)).w(cell_w * snap.cols as f32).children(runs.iter().map(|r| run_element(r, cell_w, line_h, fg, bg, dark)))
-        });
         div().id("terminal").key_context("Terminal").track_focus(&self.focus)
-            .on_key_down(cx.listener(|this, ev: &KeyDownEvent, _, cx| this.on_key(ev, cx)))
-            .on_mouse_down(MouseButton::Left, cx.listener(|this, ev: &MouseDownEvent, window, cx| {
-                window.focus(&this.focus, cx);
-                this.begin_select(ev, cx);
-            }))
-            .on_mouse_move(cx.listener(|this, ev: &MouseMoveEvent, _, cx| this.drag_select(ev, cx)))
-            .on_mouse_up(MouseButton::Left, cx.listener(|this, ev: &MouseUpEvent, _, cx| this.end_select(ev, cx)))
+            .on_key_down(cx.listener(|this, ev: &KeyDownEvent, window, cx| this.on_key(ev, window, cx)))
+            .on_mouse_down(MouseButton::Left, cx.listener(|this, ev: &MouseDownEvent, window, cx| this.mouse_down(MouseButton::Left, ev, window, cx)))
+            .on_mouse_down(MouseButton::Right, cx.listener(|this, ev: &MouseDownEvent, window, cx| this.mouse_down(MouseButton::Right, ev, window, cx)))
+            .on_mouse_down(MouseButton::Middle, cx.listener(|this, ev: &MouseDownEvent, window, cx| this.mouse_down(MouseButton::Middle, ev, window, cx)))
+            .on_mouse_move(cx.listener(|this, ev: &MouseMoveEvent, _, cx| this.mouse_move(ev, cx)))
+            .on_mouse_up(MouseButton::Left, cx.listener(|this, ev: &MouseUpEvent, _, cx| this.mouse_up(MouseButton::Left, ev, cx)))
+            .on_mouse_up(MouseButton::Right, cx.listener(|this, ev: &MouseUpEvent, _, cx| this.mouse_up(MouseButton::Right, ev, cx)))
+            .on_mouse_up(MouseButton::Middle, cx.listener(|this, ev: &MouseUpEvent, _, cx| this.mouse_up(MouseButton::Middle, ev, cx)))
             .on_scroll_wheel(cx.listener(|this, ev: &ScrollWheelEvent, _, cx| this.on_wheel(ev, cx)))
             .relative().size_full().overflow_hidden().bg(t.background).text_color(t.foreground)
             .font_family(MONO).text_size(px(font_size)).line_height(px(line_h))
-            .child(div().absolute().top(px(PAD)).left(px(PAD)).flex().flex_col().children(lines))
-            // 选区高亮:半透明色块盖在文字上
-            .children(snap.selection.into_iter().flat_map(|sel| selection_spans(sel, snap.cols)).map(|(row, from, to)| {
-                div().absolute().left(px(PAD) + cell_w * from as f32).top(px(PAD + line_h * row as f32))
-                    .w(cell_w * (to - from + 1) as f32).h(px(line_h)).bg(t.primary.opacity(0.28))
-            }))
-            .when_some(snap.cursor, |d, (row, col)| {
-                let (x, y) = (px(PAD) + cell_w * col as f32, px(PAD + line_h * row as f32));
-                // 失焦时统一画成空心块;聚焦时按光标形状画
-                let cursor = if !focused {
-                    div().absolute().left(x).top(y).w(cell_w).h(px(line_h)).border_1().border_color(t.primary)
-                } else {
-                    let c = div().absolute().bg(t.primary.opacity(0.7));
-                    match tp.cursor {
-                        CursorShape::Block => c.left(x).top(y).w(cell_w).h(px(line_h)).bg(t.primary.opacity(0.6)),
-                        CursorShape::Bar => c.left(x).top(y).w(px(2.)).h(px(line_h)),
-                        CursorShape::Underline => c.left(x).top(y + px(line_h - 2.)).w(cell_w).h(px(2.)),
-                    }
-                };
-                d.child(cursor)
-            })
-            .when_some(snap.exit_code, |d, code| d.child(
+            // 整个网格在一个画布里按格子坐标画出来
+            .child(canvas(|_, _, _| (), move |bounds, _, window, cx| grid.paint(bounds, window, cx)).absolute().size_full())
+            .when(bell, |d| d.child(div().absolute().size_full().border_2().border_color(t.warning.opacity(0.7))))
+            .when_some(exit_code, |d, code| d.child(
                 div().absolute().bottom_0().left_0().right_0().px_2().py_1().bg(t.muted).text_color(t.muted_foreground)
                     .child(format!("进程已退出(退出码 {code}),可以关闭这个终端标签"))))
+            .children(self.find_bar(cx))
             // 隐形的测量层:拿到容器尺寸后换算列数 / 行数
             .child(canvas(move |bounds, window, cx| { let (win, focused) = (window.window_handle().window_id(), view.read(cx).focus.is_focused(window)); view.update(cx, |v, cx| v.apply_bounds(bounds, win, focused, cx)) }, |_, _, _, _| {}).absolute().size_full())
     }

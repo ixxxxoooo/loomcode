@@ -1652,6 +1652,13 @@ impl Workbench {
             .on_action(cx.listener(|this, _: &crate::app_menu::NavBack, window, cx| this.navigate(false, window, cx)))
             .on_action(cx.listener(|this, _: &crate::app_menu::NavForward, window, cx| this.navigate(true, window, cx)))
             .on_action(cx.listener(|this, _: &ToggleRight, _, cx| { this.right_open = !this.right_open; this.right_zoom = false; cx.notify(); }))
+            .on_action(cx.listener(|this, a: &crate::term_links::OpenTermPath, window, cx| {
+                this.open_file(a.path.clone(), window, cx);
+                if a.line > 0 {
+                    let line = a.line;
+                    this.editor.update(cx, |v, cx| v.goto(line, 1, window, cx));
+                }
+            }))
             .on_action(cx.listener(|this, a: &ViewAgentRun, _, cx| {
                 this.right_open = true;
                 let id = a.id.clone();
