@@ -22,7 +22,7 @@ pub fn language_for(path: &Path) -> &'static str {
         "ts" | "mts" | "cts" => "typescript",
         "tsx" => "tsx",
         "sh" | "zsh" | "bash" | "command" => "bash",
-        "md" | "markdown" | "mdx" => "markdown",
+        "md" | "markdown" | "mdx" | "mdc" => "markdown",
         "toml" => "toml",
         "yml" | "yaml" => "yaml",
         "json" | "jsonc" | "json5" | "geojson" => "json",

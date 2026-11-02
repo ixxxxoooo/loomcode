@@ -18,7 +18,7 @@ fn 定义请求() {
     client.notify("textDocument/didOpen", json!({ "textDocument": { "uri": u, "languageId": "go", "version": 1, "text": text } }));
     let (l, c) = pos.split_once(':').unwrap();
     let position = json!({ "line": l.parse::<u32>().unwrap() - 1, "character": c.parse::<u32>().unwrap() - 1 });
-    for method in ["textDocument/definition", "textDocument/hover"] {
+    for method in ["textDocument/definition", "textDocument/hover", "textDocument/documentSymbol"] {
         let t = std::time::Instant::now();
         let r = client.request_blocking(method, json!({ "textDocument": { "uri": u }, "position": position }), Duration::from_secs(60));
         eprintln!("{method}({} ms) => {}", t.elapsed().as_millis(), format!("{r:?}").chars().take(600).collect::<String>());

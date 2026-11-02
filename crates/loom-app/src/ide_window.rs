@@ -81,6 +81,7 @@ impl IdeWindow {
         let scm_events = scm.clone();
         let panel = cx.new(|cx| RightPanel::new(_root.clone(), demo, None, scm, window, cx));
         panel.update(cx, |p, cx| {
+            p.attach_outline(ide.clone(), cx);
             p.show_tabs = false;
             p.set_tab(RightTab::Files, cx);
             p.reload_files(cx);

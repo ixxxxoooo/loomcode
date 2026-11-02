@@ -117,6 +117,11 @@ pub struct RightPanel {
     pub tree_collapsed: bool,
     /// 右栏被放大到整窗(标签条左侧要给红绿灯留位置),由工作台渲染时同步
     pub zoomed: bool,
+    /// 资源管理器里「项目文件夹」区与「大纲」区是否展开(对标 VS Code 的可折叠区块)
+    pub folder_open: bool,
+    pub outline_open: bool,
+    /// 大纲视图(有编辑器可读时才有)
+    pub outline: Option<Entity<crate::outline::OutlineView>>,
     /// 文件树里复制 / 剪切的条目(路径, 是否剪切),「粘贴」用
     pub file_clip: Option<(Vec<std::path::PathBuf>, bool)>,
     /// 「终端」标签里为单条 Claude 命令打开的只读标签(工具调用 id),以及当前选中的一个
@@ -161,6 +166,7 @@ impl RightPanel {
         });
         // 角标(改动数)随源代码管理状态变化
         let scm_obs = cx.observe(&scm, |_, _, cx| cx.notify());
+        let outline = editor.clone().map(|e| cx.new(|cx| crate::outline::OutlineView::new(e, cx)));
         Self {
             tab: RightTab::Changes,
             open: crate::right_tabs::DEFAULT_TABS.to_vec(),
@@ -168,6 +174,9 @@ impl RightPanel {
             editor_elsewhere: false,
             tree_collapsed: false,
             zoomed: false,
+            folder_open: true,
+            outline_open: true,
+            outline,
             file_clip: None,
             run_tabs: Vec::new(),
             active_run: None,
@@ -187,6 +196,11 @@ impl RightPanel {
             tabs_scroll: ScrollHandle::new(),
             tabs_revealed: std::cell::Cell::new(None),
         }
+    }
+
+    /// 接上编辑器,资源管理器下方才有大纲区。
+    pub fn attach_outline(&mut self, editor: Entity<crate::ide::IdeView>, cx: &mut Context<Self>) {
+        self.outline = Some(cx.new(|cx| crate::outline::OutlineView::new(editor, cx)));
     }
 
     /// 当前会话里 Claude 改动过的文件数(快捷竖条的圆点用)。

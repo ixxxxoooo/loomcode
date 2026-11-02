@@ -61,6 +61,9 @@ pub struct IdeDoc {
     pub(crate) diag_marks: std::rc::Rc<Vec<(usize, bool)>>,
     /// 悬停卡片(语言服务器的悬停结果,自己渲染)
     pub(crate) hover: Option<crate::ide_hover::HoverCard>,
+    /// 大纲(符号树)与刷新的防抖序号
+    pub(crate) outline: std::rc::Rc<Vec<crate::outline::OutlineItem>>,
+    pub(crate) outline_gen: u64,
     _subs: Vec<Subscription>,
 }
 
@@ -180,6 +183,7 @@ impl IdeView {
         self.refresh_marks(&path, cx);
         self.refresh_blame(&path, cx);
         self.lsp_attach(&path, cx);
+        self.refresh_outline(&path, cx);
         let line = self.cursor_line(&path, cx);
         self.record_open(&path, line);
         cx.notify();
@@ -361,6 +365,7 @@ impl IdeView {
             Ok(doc) => {
                 self.docs.insert(path.clone(), doc);
                 self.lsp_attach(&path, cx);
+                self.refresh_outline(&path, cx);
                 self.focus_active(window, cx);
             }
             Err(note) => self.note = Some(note),
@@ -433,6 +438,7 @@ pub(crate) fn load(path: &Path, window: &mut Window, cx: &mut Context<IdeView>) 
                 this.schedule_minimap(&key, cx);
                 this.schedule_blame(&key, cx);
                 this.schedule_lsp_sync(&key, cx);
+                this.schedule_outline(&key, cx);
                 this.schedule_autosave(&key, cx);
             }
             // 失焦自动保存:编辑器失去焦点(切标签 / 点到别处 / 窗口失焦)时写盘
@@ -458,7 +464,7 @@ pub(crate) fn load(path: &Path, window: &mut Window, cx: &mut Context<IdeView>) 
     });
     let marks = None;
     let mtime = meta.modified().ok();
-    Ok(IdeDoc { editor, saved: true, crlf, mtime, stale: false, marks, minimap, mm_key: (theme, prefs.syntax_highlight), mm_gen: 0, hunks: Default::default(), pairs: crate::ide_pairs::PairState::new(language_for(path)), bracket_pair: None, bracket_marks: None, blame: Default::default(), blame_gen: 0, blame_fresh: false, lsp: None, lsp_gen: 0, diag: (0, 0), diag_marks: Default::default(), hover: None, _subs: vec![sub, sub2] })
+    Ok(IdeDoc { editor, saved: true, crlf, mtime, stale: false, marks, minimap, mm_key: (theme, prefs.syntax_highlight), mm_gen: 0, hunks: Default::default(), pairs: crate::ide_pairs::PairState::new(language_for(path)), bracket_pair: None, bracket_marks: None, blame: Default::default(), blame_gen: 0, blame_fresh: false, lsp: None, lsp_gen: 0, diag: (0, 0), diag_marks: Default::default(), hover: None, outline: Default::default(), outline_gen: 0, _subs: vec![sub, sub2] })
 }
 
 /// 编辑器对宿主的通知。

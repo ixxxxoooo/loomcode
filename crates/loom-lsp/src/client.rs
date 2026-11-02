@@ -154,6 +154,7 @@ impl Client {
                     "synchronization": { "didSave": true, "dynamicRegistration": false },
                     "hover": { "contentFormat": ["markdown", "plaintext"] },
                     "definition": { "linkSupport": true },
+                    "documentSymbol": { "hierarchicalDocumentSymbolSupport": true },
                     "completion": {
                         "completionItem": { "snippetSupport": false, "documentationFormat": ["markdown", "plaintext"] },
                         "contextSupport": true

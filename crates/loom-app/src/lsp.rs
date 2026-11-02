@@ -442,6 +442,7 @@ impl IdeView {
         });
         loom_diag::info!("{} 已接入 {}(悬停 {} / 定义 {} / 补全 {})", path.display(), client.name, client.supports("hoverProvider"), client.supports("definitionProvider"), client.supports("completionProvider"));
         doc.lsp = Some(sync);
+        self.refresh_outline(path, cx);
         cx.notify();
     }
 

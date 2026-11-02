@@ -20,6 +20,8 @@ use std::path::PathBuf;
 const ROW_H: f32 = 28.;
 /// 每级缩进。
 const INDENT: f32 = 16.;
+/// 大纲区展开时的高度。
+const OUTLINE_H: f32 = 220.;
 
 impl RightPanel {
     /// 资源管理器视图。
@@ -28,8 +30,15 @@ impl RightPanel {
         let root = self.files.root_path().to_path_buf();
         let root_name = root.file_name().map(|n| n.to_string_lossy().to_string()).unwrap_or_default();
         let rows = self.files.rows();
-        let toolbar = h_flex().h(px(32.)).px_3().gap_1().items_center().text_size(px(12.)).text_color(t.muted_foreground)
-            .child(div().flex_1().min_w_0().truncate().child(root_name))
+        let (folder_open, outline_open) = (self.folder_open, self.outline_open);
+        // 区块标题行:左边是「展开箭头 + 名称」(点它折叠 / 展开),右边是操作按钮
+        let toolbar = h_flex().h(px(28.)).px_2().gap_1().items_center().text_size(px(11.)).text_color(t.muted_foreground)
+            .child(
+                h_flex().id("ft-folder-head").flex_1().min_w_0().h_full().gap_1().items_center().cursor_pointer()
+                    .on_click(cx.listener(|this, _, _, cx| { this.folder_open = !this.folder_open; cx.notify(); }))
+                    .child(icon(if folder_open { IconName::ChevronDown } else { IconName::ChevronRight }, 12., t.muted_foreground))
+                    .child(div().min_w_0().truncate().font_weight(FontWeight::SEMIBOLD).child(root_name.to_uppercase())),
+            )
             .children([
                 ("ft-refresh", IconName::RefreshCw, "刷新", 0u8),
                 ("ft-new-file", IconName::FilePlus, "新建文件", 1),
@@ -109,11 +118,27 @@ impl RightPanel {
                         .when(mark.is_some() && is_dir, |d| d.child(div().size(px(6.)).rounded_full().bg(color))),
                 )
             }));
-        v_flex().size_full().child(toolbar).child(if self.files.rows().is_empty() {
+        let body = if self.files.rows().is_empty() {
             empty_state(IconName::Folder, "目录为空", &root_display(&self.files), cx).into_any_element()
         } else {
             tree.context_menu(crate::file_ops::empty_menu(cx.entity().downgrade(), root.clone())).into_any_element()
-        }).into_any_element()
+        };
+        // 大纲区标题行
+        let outline_head = h_flex().id("ft-outline-head").h(px(28.)).px_2().gap_1().items_center().flex_none().cursor_pointer().border_t_1().border_color(t.border)
+            .text_size(px(11.)).text_color(t.muted_foreground)
+            .on_click(cx.listener(|this, _, _, cx| { this.outline_open = !this.outline_open; cx.notify(); }))
+            .child(icon(if outline_open { IconName::ChevronDown } else { IconName::ChevronRight }, 12., t.muted_foreground))
+            .child(div().font_weight(FontWeight::SEMIBOLD).child("大纲"));
+        v_flex().size_full()
+            .child(toolbar)
+            .when(folder_open, |d| d.child(v_flex().flex_1().min_h_0().child(body)))
+            // 项目文件夹收起后,大纲占满剩下的高度;否则固定一块高度放在树的下面
+            .when_some(self.outline.clone(), |d, outline| {
+                d.child(outline_head).when(outline_open, |d| {
+                    d.child(div().when(folder_open, |d| d.h(px(OUTLINE_H)).flex_none()).when(!folder_open, |d| d.flex_1()).min_h_0().child(outline))
+                })
+            })
+            .into_any_element()
     }
 }
 

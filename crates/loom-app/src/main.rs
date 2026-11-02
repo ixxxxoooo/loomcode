@@ -110,6 +110,7 @@ mod pair_scan;
 mod ide_rainbow;
 mod ide_chrome;
 mod crumb_picker;
+mod outline;
 mod tab_style;
 mod ide_close;
 mod ide_tabs;
