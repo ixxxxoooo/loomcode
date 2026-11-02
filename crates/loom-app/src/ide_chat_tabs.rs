@@ -235,7 +235,9 @@ impl IdeWindow {
                 )
         });
         let expanded = self.chat_wide;
-        h_flex().h(px(crate::tab_style::TAB_H)).w_full().flex_none().items_center().border_b_1().border_color(t.border).bg(t.sidebar)
+        h_flex().h(px(crate::tab_style::TAB_H)).w_full().flex_none().items_center().relative().bg(t.sidebar)
+            // 底线先画、选中标签(带底色、占满高度)后画盖住它:选中标签与下方内容区融为一体
+            .child(div().absolute().bottom_0().left_0().right_0().h(px(1.)).bg(t.border))
             .child(div().id("ide-chat-tabs").h_full().flex_1().min_w_0().overflow_x_scroll().child(h_flex().h_full().children(tabs)))
             .child(
                 h_flex().h_full().flex_none().px_1().gap_0p5().items_center()
