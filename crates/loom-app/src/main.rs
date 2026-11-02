@@ -26,6 +26,7 @@ mod task_dock;
 mod todo_view;
 mod flow_style;
 mod motion;
+mod perm_keys;
 mod task_ui;
 mod tasks_tab;
 mod subagent_tab;

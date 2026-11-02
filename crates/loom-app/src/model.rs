@@ -23,6 +23,8 @@ pub struct SessionModel {
     /// 提问向导每题的「其他」输入框(按提问 id)与键盘焦点句柄,见 `wizard_input`
     pub wizard_inputs: std::collections::HashMap<String, Vec<Entity<gpui_kit::component::input::InputState>>>,
     pub wizard_focus: Option<FocusHandle>,
+    /// 当前待处理权限请求的焦点句柄(请求 id, 句柄),用于键盘操作
+    pub perm_focus: Option<(String, FocusHandle)>,
     /// 一次滚轮手势里累计的垂直位移与防抖任务是否已排队(用来吸附误触的微小滚动)
     /// 显示行(连续工具调用折成一行)与「条目下标 → 行下标」映射
     pub rows: Vec<crate::row_groups::Row>,
@@ -83,6 +85,7 @@ impl SessionModel {
             wizard_draft: Default::default(),
             wizard_inputs: Default::default(),
             wizard_focus: None,
+            perm_focus: None,
             rows: Vec::new(),
             copied: None,
             motion: Default::default(),

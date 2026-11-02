@@ -21,6 +21,7 @@ fn pending_question(model: &Entity<SessionModel>, cx: &App) -> Option<QuestionRe
 ///
 /// 参数:`model` 会话模型。
 pub fn ensure(model: &Entity<SessionModel>, window: &mut Window, cx: &mut App) {
+    crate::perm_keys::ensure(model, window, cx);
     let Some(q) = pending_question(model, cx) else { return };
     if model.read(cx).wizard_inputs.contains_key(&q.id) {
         return;

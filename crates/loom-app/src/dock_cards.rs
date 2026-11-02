@@ -75,18 +75,32 @@ fn permission(session: &Entity<SessionModel>, req: &PermissionRequest, cx: &App)
     let t = cx.theme();
     let cmd = req.tool.input.get("command").and_then(|v| v.as_str()).map(str::to_string).filter(|c| *c != req.tool.title);
     let preview: Vec<AnyElement> = req.tool.content.iter().map(|c| render_content(c, None, "text", None, cx)).collect();
-    v_flex().w_full().p_3().gap_2().rounded(px(12.)).border_1().border_color(t.border).bg(t.background).shadow_sm()
+    let danger = crate::perm_keys::is_dangerous(&format!("{} {}", req.tool.title, cmd.as_deref().unwrap_or("")));
+    let focus = session.read(cx).perm_focus.clone().filter(|(id, _)| *id == req.id).map(|(_, f)| f);
+    let key_session = session.clone();
+    v_flex().w_full().p_3().gap_2().rounded(px(12.)).border_1().border_color(if danger { t.danger.opacity(0.7) } else { t.border }).bg(t.background).shadow_sm()
+        .key_context("PermissionCard")
+        .when_some(focus, |d, f| d.track_focus(&f))
+        // 键盘:⏎ 允许一次、数字键选对应选项、Esc 拒绝
+        .on_key_down(move |ev, _, cx| {
+            let m = ev.keystroke.modifiers;
+            if crate::perm_keys::on_key(&key_session, &ev.keystroke.key, !m.control && !m.platform && !m.alt, cx) {
+                cx.stop_propagation();
+            }
+        })
         .child(
             h_flex().gap_2().items_center()
-                .child(icon(tool_icon(req.tool.kind), 14., t.warning))
-                .child(div().text_size(px(13.)).font_weight(FontWeight::MEDIUM).child("需要你的许可")),
+                .child(icon(if danger { IconName::TriangleAlert } else { tool_icon(req.tool.kind) }, 14., if danger { t.danger } else { t.warning }))
+                .child(div().text_size(px(13.)).font_weight(FontWeight::MEDIUM).child(if danger { "需要你的许可 · 高风险操作" } else { "需要你的许可" })),
         )
         .child(div().text_size(px(12.)).font_family(MONO).max_h(px(72.)).overflow_hidden().child(req.tool.title.clone()))
         .when_some(cmd, |d, c| d.child(mono_box(cx).max_h(px(120.)).overflow_hidden().child(crate::code_hl::shell_text(&c, "$ ", cx))))
         .when(!preview.is_empty(), |d| d.child(v_flex().id(SharedString::from(format!("perm-prev-{}", req.id))).w_full().max_h(px(260.)).overflow_y_scroll().gap_2().children(preview)))
-        .child(h_flex().flex_wrap().gap_2().children(req.options.iter().map(|opt| {
+        .child(h_flex().flex_wrap().gap_2().children(req.options.iter().enumerate().map(|(i, opt)| {
             let (s, rid, oid) = (session.clone(), req.id.clone(), opt.id.clone());
-            let b = Button::new(SharedString::from(format!("{}-{}", req.id, opt.id))).small().label(opt.label.clone());
+            // 按钮后缀快捷键提示:允许一次 ⏎、拒绝 ⎋,其余用数字键
+            let hint = match opt.kind { PermissionOptionKind::AllowOnce => "⏎".to_string(), PermissionOptionKind::RejectOnce => "⎋".to_string(), _ => (i + 1).to_string() };
+            let b = Button::new(SharedString::from(format!("{}-{}", req.id, opt.id))).small().label(format!("{} {hint}", opt.label));
             let b = if opt.kind == PermissionOptionKind::AllowOnce { b.primary() } else { b };
             b.on_click(move |_, _, cx| {
                 s.update(cx, |m, cx| m.resolve_permission(&rid, &oid, cx));
