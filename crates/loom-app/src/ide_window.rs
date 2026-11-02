@@ -70,6 +70,9 @@ pub struct IdeWindow {
     /// 分支选择器(点状态栏分支名或 SCM 顶部分支名弹出)
     pub(crate) branch_picker: Option<Entity<crate::branch_picker::BranchPicker>>,
     pub(crate) _branch_sub: Option<Subscription>,
+    /// 对话栏的历史会话选择器
+    pub(crate) history_picker: Option<Entity<crate::history_picker::HistoryPicker>>,
+    pub(crate) _history_sub: Option<Subscription>,
 }
 
 impl IdeWindow {
@@ -142,6 +145,14 @@ impl IdeWindow {
             })
             .detach();
         }
+        // 调试用:LOOM_HISTORY=1 启动后自动打开对话栏的历史会话选择器
+        if std::env::var("LOOM_HISTORY").is_ok() {
+            cx.spawn_in(window, async move |this, cx| {
+                cx.background_executor().timer(std::time::Duration::from_millis(1200)).await;
+                let _ = this.update_in(cx, |this, window, cx| this.toggle_history(window, cx));
+            })
+            .detach();
+        }
         // 调试用:LOOM_BRANCH=1 启动后自动打开分支选择器(=查询词则预填)
         if let Ok(q) = std::env::var("LOOM_BRANCH") {
             cx.spawn_in(window, async move |this, cx| {
@@ -176,7 +187,7 @@ impl IdeWindow {
             .detach();
         }
         // 此时工作台可能正处于更新中,不在这里回读它;首次渲染时再同步
-        Self { wb, panel, ide, panel_root: String::new(), focus, left_open: true, chat_open: true, left_narrow: false, left_before: true, chat_narrow: false, chat_before: true, synced: None, _subs: subs, search, search_open: false, quick: None, _quick_sub: None, term_open, term, chat_tabs: wb_tabs, pinned: None, seen_enter: 0, chat_last_active: None, chat_empty: false, chat_wide: std::env::var("LOOM_CHAT_WIDE").is_ok(), notice_open: false, branch_picker: None, _branch_sub: None }
+        Self { wb, panel, ide, panel_root: String::new(), focus, left_open: true, chat_open: true, left_narrow: false, left_before: true, chat_narrow: false, chat_before: true, synced: None, _subs: subs, search, search_open: false, quick: None, _quick_sub: None, term_open, term, chat_tabs: wb_tabs, pinned: None, seen_enter: 0, chat_last_active: None, chat_empty: false, chat_wide: std::env::var("LOOM_CHAT_WIDE").is_ok(), notice_open: false, branch_picker: None, _branch_sub: None, history_picker: None, _history_sub: None }
     }
 
     /// 让面板与根目录跟随工作台当前会话。

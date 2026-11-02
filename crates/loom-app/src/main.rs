@@ -10,6 +10,7 @@
 mod ansi;
 mod ide_diff;
 mod branch_picker;
+mod history_picker;
 mod notice;
 mod prompt_queue;
 mod queue_card;

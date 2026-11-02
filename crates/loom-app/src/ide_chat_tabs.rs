@@ -8,13 +8,12 @@ use crate::ui::empty_state;
 use crate::workbench::Workbench;
 use gpui_kit::assets::IconName;
 use gpui_kit::component::button::{Button, ButtonVariants};
-use gpui_kit::component::menu::{DropdownMenu as _, PopupMenu, PopupMenuItem};
-use gpui_kit::component::{ActiveTheme, Sizable, h_flex};
+use gpui_kit::component::{ActiveTheme, Selectable, Sizable, h_flex};
 use gpui_kit::prelude::FluentBuilder as _;
 use gpui_kit::*;
 
 /// 历史菜单里最多列出的会话数。
-const MAX_HISTORY: usize = 40;
+const MAX_HISTORY: usize = 80;
 /// 标签标题最大宽度。
 const TAB_MAX_W: f32 = 150.;
 
@@ -189,33 +188,43 @@ impl IdeWindow {
         let _ = self.wb.update(cx, |wb, cx| wb.new_session(ix, window, cx));
     }
 
+    /// 打开 / 关闭历史会话选择器。
+    pub(crate) fn toggle_history(&mut self, window: &mut Window, cx: &mut Context<Self>) {
+        if self.history_picker.take().is_some() {
+            self._history_sub = None;
+            cx.notify();
+            return;
+        }
+        let items: Vec<crate::history_picker::HistoryItem> = {
+            let wb = self.wb.read(cx);
+            let ix = self.pinned_ix(wb).or_else(|| wb.active.as_ref().and_then(|id| project_of(wb, id)));
+            ix.and_then(|i| wb.projects.get(i)).map(|p| {
+                p.sessions.iter().filter(|s| !s.archived).take(MAX_HISTORY)
+                    .map(|s| crate::history_picker::HistoryItem { id: s.id.clone(), title: s.title.clone(), updated: s.updated.clone(), open: self.chat_tabs.contains(&s.id) })
+                    .collect()
+            }).unwrap_or_default()
+        };
+        let picker = cx.new(|cx| crate::history_picker::HistoryPicker::new(items, window, cx));
+        self._history_sub = Some(cx.subscribe_in(&picker, window, |this, _, ev: &crate::history_picker::HistoryEvent, window, cx| {
+            this.history_picker = None;
+            this._history_sub = None;
+            if let crate::history_picker::HistoryEvent::Open(id) = ev {
+                this.activate_chat_tab(id, window, cx);
+            }
+            cx.notify();
+        }));
+        self.history_picker = Some(picker);
+        cx.notify();
+    }
+
     /// 对话栏顶部标签条。
     pub(crate) fn chat_tabs_bar(&self, cx: &mut Context<Self>) -> impl IntoElement {
         let t = cx.theme().clone();
-        let (active, history, running) = {
+        let (active, running) = {
             let wb = self.wb.read(cx);
             let active = if self.chat_empty || self.active_is_foreign(wb) { None } else { wb.active.clone() };
-            let ix = self.pinned_ix(wb).or_else(|| wb.active.as_ref().and_then(|id| project_of(wb, id)));
-            let history: Vec<(String, String)> = ix.and_then(|i| wb.projects.get(i)).map(|p| {
-                p.sessions.iter().filter(|s| !s.archived).take(MAX_HISTORY).map(|s| (s.id.clone(), s.title.clone())).collect()
-            }).unwrap_or_default();
             let running: Vec<String> = self.chat_tabs.iter().filter(|id| wb.live_sig(id).is_some_and(|s| s.turn)).cloned().collect();
-            (active, history, running)
-        };
-        let open_ids = self.chat_tabs.clone();
-        let this = cx.entity().downgrade();
-        let menu = move |menu: PopupMenu, _: &mut Window, _: &mut Context<PopupMenu>| {
-            let mut menu = menu;
-            if history.is_empty() {
-                return menu.item(PopupMenuItem::new("暂无历史会话").disabled(true));
-            }
-            for (id, title) in history.clone() {
-                let (w, target) = (this.clone(), id.clone());
-                menu = menu.item(PopupMenuItem::new(title).checked(open_ids.contains(&id)).on_click(move |_, window, cx| {
-                    let _ = w.update(cx, |this, cx| this.activate_chat_tab(&target, window, cx));
-                }));
-            }
-            menu
+            (active, running)
         };
         let tabs = self.chat_tabs.iter().cloned().map(|id| {
             let on = active.as_deref() == Some(id.as_str());
@@ -243,7 +252,13 @@ impl IdeWindow {
                 h_flex().h_full().flex_none().px_1().gap_0p5().items_center()
                     .child(Button::new("ct-new").small().ghost().icon(IconName::Plus).tooltip("新会话")
                         .on_click(cx.listener(|this, _, window, cx| this.new_chat(window, cx))))
-                    .child(Button::new("ct-history").small().ghost().icon(IconName::Clock).tooltip("历史会话").dropdown_menu(menu))
+                    .child(
+                        div().relative()
+                            .child(Button::new("ct-history").small().ghost().icon(IconName::Clock).tooltip("历史会话").selected(self.history_picker.is_some())
+                                .on_click(cx.listener(|this, _, window, cx| this.toggle_history(window, cx))))
+                            // 向下悬浮、右缘对齐按钮;放进 deferred 保证盖在编辑区之上并优先命中
+                            .when_some(self.history_picker.clone(), |d, p| d.child(deferred(div().absolute().top(px(30.)).right_0().child(p)).with_priority(20))),
+                    )
                     .child(Button::new("ct-expand").small().ghost().icon(if expanded { IconName::Minimize2 } else { IconName::Maximize2 })
                         .tooltip(if expanded { "还原对话栏" } else { "展开对话栏" })
                         .on_click(cx.listener(|this, _, _, cx| { this.chat_wide = !this.chat_wide; cx.notify(); }))),
