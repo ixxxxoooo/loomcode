@@ -115,7 +115,7 @@ pub fn render_tool(session: &Entity<SessionModel>, tool: &ToolCall, cx: &App) ->
         .self_start()
         .max_w_full()
         .px_2()
-        .py(px(5.))
+        .min_h(px(crate::flow_style::ROW_H))
         .gap(px(7.))
         .items_center()
         .rounded(px(6.))

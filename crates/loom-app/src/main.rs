@@ -24,6 +24,7 @@ mod secondary;
 mod subagent_card;
 mod task_dock;
 mod todo_view;
+mod flow_style;
 mod task_ui;
 mod tasks_tab;
 mod subagent_tab;

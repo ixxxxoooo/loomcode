@@ -37,7 +37,7 @@ pub fn render_group(session: &Entity<SessionModel>, range: Range<usize>, window:
     let stalled = cards.iter().filter(|c| c.stalled(now)).count();
     let (s, k) = (session.clone(), key.clone());
     let chip = |n: usize, text: &str, color: Hsla| div().text_size(px(12.)).text_color(color).child(format!("{n} {text}"));
-    let header = h_flex().id(SharedString::from(format!("agrp-{}", first.id))).self_start().h(px(28.)).px_2().gap_2().items_center().rounded(px(6.)).cursor_pointer()
+    let header = h_flex().id(SharedString::from(format!("agrp-{}", first.id))).self_start().h(px(crate::flow_style::ROW_H)).px_2().gap_2().items_center().rounded(px(6.)).cursor_pointer()
         .hover(|d| d.bg(cx.theme().list_hover))
         .on_click(move |_, _, cx| { s.update(cx, |m, cx| m.toggle(&k, cx)); })
         .child(if running > 0 { Spinner::new().xsmall().into_any_element() } else { icon(IconName::Bot, 14., muted).into_any_element() })

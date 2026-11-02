@@ -47,7 +47,7 @@ pub fn render_digest(session: &Entity<SessionModel>, range: Range<usize>, window
     let (muted, fg, danger) = { let t = cx.theme(); (t.muted_foreground, t.foreground, t.danger) };
     let s = session.clone();
     let k = key.clone();
-    let header = h_flex().id(SharedString::from(format!("digest-{first_id}"))).group(SharedString::from(format!("dg-g-{first_id}"))).self_start().h(px(26.)).px_2().gap_1p5().items_center().rounded(px(6.)).cursor_pointer()
+    let header = h_flex().id(SharedString::from(format!("digest-{first_id}"))).group(SharedString::from(format!("dg-g-{first_id}"))).self_start().h(px(crate::flow_style::ROW_H)).px_2().gap_1p5().items_center().rounded(px(6.)).cursor_pointer()
         .on_click(move |_, _, cx| { s.update(cx, |m, cx| m.toggle(&k, cx)); })
         .child(div().text_size(px(13.)).text_color(if expanded { fg } else { muted }).child(format!("已工作 {}", work_text(secs))))
         .when(failed > 0, |d| d.child(div().text_size(px(12.)).text_color(danger).child(format!("{failed} 项失败"))))

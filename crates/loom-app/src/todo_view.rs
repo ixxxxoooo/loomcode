@@ -98,7 +98,7 @@ pub fn render_line(session: &Entity<SessionModel>, id: &str, items: &[TodoItem],
     let done = items.iter().filter(|i| i.status == TodoStatus::Completed).count();
     let changes = prev.map(|p| delta(p, items));
     let (s, key) = (session.clone(), id.to_string());
-    let mut head = h_flex().id(SharedString::from(format!("todo-line-{id}"))).self_start().max_w_full().h(px(26.)).px_2().gap_2().items_center().rounded(px(6.)).cursor_pointer()
+    let mut head = h_flex().id(SharedString::from(format!("todo-line-{id}"))).self_start().max_w_full().h(px(crate::flow_style::ROW_H)).px_2().gap_2().items_center().rounded(px(6.)).cursor_pointer()
         .hover(|d| d.bg(t.list_hover))
         .on_click(move |_, _, cx| { s.update(cx, |m, cx| m.toggle(&key, cx)); })
         .child(icon(IconName::ListTodo, 13., t.muted_foreground))

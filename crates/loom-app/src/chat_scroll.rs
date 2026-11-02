@@ -57,15 +57,15 @@ impl ChatScroll {
     /// 在已画范围之前就是滚到了上面。
     pub fn row_scrolled_past(&self, row: usize) -> bool {
         match self.probe.top_of(row) {
-            // 行内上方有 5px 间距,卡片顶边 = 行顶 + 5
-            Some(top) => top + 5. < f32::from(self.list.viewport_bounds().top()),
+            // 行内上方有语义间距,卡片顶边 = 行顶 + 间距(这里只用于用户消息行)
+            Some(top) => top + crate::flow_style::user_row_inset(row) < f32::from(self.list.viewport_bounds().top()),
             None => self.probe.is_before_painted(row),
         }
     }
 
     /// 指定行卡片顶边相对视口顶边的 Y(这一帧没画出来返回 None)。
     pub fn row_top(&self, row: usize) -> Option<f32> {
-        Some(self.probe.top_of(row)? + 5. - f32::from(self.list.viewport_bounds().top()))
+        Some(self.probe.top_of(row)? + crate::flow_style::user_row_inset(row) - f32::from(self.list.viewport_bounds().top()))
     }
 
     /// 会话流视口高度(像素,吸附层据此限制悬浮卡的最大高度)。

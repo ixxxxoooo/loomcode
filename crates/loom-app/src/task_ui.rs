@@ -80,7 +80,7 @@ pub fn render_note(session: &Entity<SessionModel>, task_id: &str, kind: TaskKind
         _ => t.muted_foreground,
     };
     let (s, id) = (session.clone(), task_id.to_string());
-    h_flex().id(SharedString::from(format!("tnote-{task_id}-{}", status.label()))).self_start().max_w_full().px_2().py(px(3.)).gap_1p5().items_center().rounded(px(6.)).cursor_pointer()
+    h_flex().id(SharedString::from(format!("tnote-{task_id}-{}", status.label()))).self_start().max_w_full().h(px(crate::flow_style::ROW_H)).px_2().gap_1p5().items_center().rounded(px(6.)).cursor_pointer()
         .hover(|d| d.bg(t.list_hover))
         .on_click(move |_, _, cx| { s.update(cx, |_, cx| cx.emit(UiRequest::OpenTasks(Some(id.clone())))); })
         .child(icon(kind_icon(kind), 12., t.muted_foreground))

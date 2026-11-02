@@ -19,9 +19,11 @@ pub fn content_max_w(cx: &App) -> f32 {
 
 /// 虚拟列表的一行:加上居中容器与垂直间距。
 pub fn render_row(session: &Entity<SessionModel>, ix: usize, window: &mut Window, cx: &mut App) -> AnyElement {
-    let (row, count) = {
+    let (row, count, gap) = {
         let m = session.read(cx);
-        (m.rows.get(ix).cloned(), m.rows.len())
+        let kind = |r: &crate::row_groups::Row| crate::flow_style::kind_of(r, &m.state.items);
+        let gap = m.rows.get(ix).map_or(0., |r| crate::flow_style::gap_before(ix.checked_sub(1).and_then(|p| m.rows.get(p)).map(kind), kind(r)));
+        (m.rows.get(ix).cloned(), m.rows.len(), gap)
     };
     let Some(row) = row else { return div().into_any_element() };
     let body = match row {
@@ -52,9 +54,9 @@ pub fn render_row(session: &Entity<SessionModel>, ix: usize, window: &mut Window
         .flex()
         .justify_center()
         .px_1()
-        .py(px(5.))
-        // 首行顶部、末行底部留白(不能用列表内边距,见 workbench 里的说明);要放在 py 之后才生效
-        .when(ix == 0, |d| d.pt(px(13.)))
+        // 语义间距:步骤之间紧凑、正文与步骤之间适中、新的用户消息前留大间距(见 flow_style)
+        .pt(px(if ix == 0 { crate::flow_style::FIRST_TOP } else { gap }))
+        // 末行底部留白(不能用列表内边距,见 workbench 里的说明)
         .when(ix + 1 == count, |d| d.pb(px(25.)))
         .child(div().w_full().max_w(px(content_max_w(cx))).child(body))
         .into_any_element()

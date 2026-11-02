@@ -43,7 +43,7 @@ pub fn render_group(session: &Entity<SessionModel>, range: Range<usize>, cx: &Ap
     let k = key.clone();
     let header = h_flex()
         .id(SharedString::from(format!("tgrp-{}", first.id)))
-        .h(px(26.)).px_2().gap_2().items_center().rounded(px(6.)).cursor_pointer().self_start()
+        .h(px(crate::flow_style::ROW_H)).px_2().gap_2().items_center().rounded(px(6.)).cursor_pointer().self_start()
         .hover(|d| d.bg(t.list_hover))
         .on_click(move |_, _, cx| { s.update(cx, |m, cx| m.toggle(&k, cx)); })
         .child(if running { Spinner::new().xsmall().into_any_element() } else { icon(IconName::Layers, 14., t.muted_foreground).into_any_element() })
