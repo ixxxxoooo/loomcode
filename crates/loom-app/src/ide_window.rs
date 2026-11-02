@@ -337,6 +337,7 @@ impl IdeWindow {
 
 impl Render for IdeWindow {
     fn render(&mut self, window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
+        crate::tab_style::set_compact(false);
         // 窗口里没有任何焦点时(刚切到 IDE、关掉了有焦点的终端…)把焦点放回根:否则 ⌃` 等快捷键找不到处理者
         if window.focused(cx).is_none() {
             window.focus(&self.focus, cx);

@@ -12,7 +12,6 @@ use gpui_kit::prelude::FluentBuilder as _;
 use gpui_kit::*;
 use std::path::{Path, PathBuf};
 
-use crate::tab_style::TAB_H;
 
 /// 标签栏上的一项。
 pub struct TabItem {
@@ -47,7 +46,7 @@ pub fn tab_bar(items: Vec<TabItem>, scroll: ScrollHandle, root: &str, cx: &mut C
     let t = cx.theme().clone();
     h_flex()
         .id("ide-tabs")
-        .h(px(TAB_H))
+        .h(px(crate::tab_style::tab_bar_h()))
         .w_full()
         .flex_none()
         .overflow_x_scroll()
