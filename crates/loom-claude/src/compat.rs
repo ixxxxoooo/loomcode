@@ -101,7 +101,8 @@ mod tests {
         let before = unknown_count();
         note_unknown("type", "测试用新事件");
         note_unknown("type", "测试用新事件");
-        assert_eq!(unknown_count(), before + 2);
+        // 计数是全局的,并行运行的翻译测试也会累加,所以只断言至少增加了 2
+        assert!(unknown_count() >= before + 2);
         assert!(SEEN.lock().unwrap().contains("type:测试用新事件"));
     }
 }
