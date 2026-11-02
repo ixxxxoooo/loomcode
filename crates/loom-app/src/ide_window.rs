@@ -60,6 +60,8 @@ pub struct IdeWindow {
     pub(crate) chat_empty: bool,
     /// 对话栏展开为占满窗口
     pub(crate) chat_wide: bool,
+    /// 通知面板(状态栏铃铛)是否展开
+    pub(crate) notice_open: bool,
 }
 
 impl IdeWindow {
@@ -92,13 +94,37 @@ impl IdeWindow {
         subs.push(cx.observe(&wb, |this, _, cx| this.sync(cx)));
         // 编辑器光标移动 → 刷新状态栏(标签记忆由工作台统一保存)
         subs.push(cx.observe(&ide, |_, _, cx| cx.notify()));
+        // 通知历史变化 → 刷新铃铛
+        if let Some(store) = crate::notice::store(cx) {
+            subs.push(cx.observe(&store, |_, _, cx| cx.notify()));
+        }
         let focus = cx.focus_handle();
         window.focus(&focus, cx);
         let term = cx.new(|cx| crate::ide_terminal::BottomTerminal::new(panel.clone(), cx));
         // 调试用:LOOM_IDE_TERM=1 启动时就展开底部终端面板,方便截图
         let term_open = std::env::var("LOOM_IDE_TERM").is_ok_and(|v| v == "1");
+        // 调试用:LOOM_NOTICES=1 启动后弹出一组示例通知(=open 同时展开通知面板),验证右下角提示与铃铛
+        if let Ok(v) = std::env::var("LOOM_NOTICES") {
+            cx.spawn_in(window, async move |this, cx| {
+                cx.background_executor().timer(std::time::Duration::from_millis(800)).await;
+                let _ = this.update_in(cx, |this, window, cx| {
+                    crate::notice::success(window, cx, "已提交 3 个文件的更改");
+                    crate::notice::warning(window, cx, "语言服务器 rust-analyzer 仍在索引,部分跳转可能不完整");
+                    crate::notice::error(window, cx, "拉取失败:无法连接到远端 origin");
+                    crate::notice::post(cx, crate::notice::Kind::Info, "发现新版本 v9.9.9", Some(crate::notice::NoticeAction { label: "下载更新".into(), run: std::rc::Rc::new(|_, _| {}) }));
+                    if v == "open" {
+                        this.notice_open = true;
+                        if let Some(s) = crate::notice::store(cx) {
+                            s.update(cx, |s, cx| { s.mark_all_read(); cx.notify(); });
+                        }
+                        cx.notify();
+                    }
+                });
+            })
+            .detach();
+        }
         // 此时工作台可能正处于更新中,不在这里回读它;首次渲染时再同步
-        Self { wb, panel, ide, panel_root: String::new(), focus, left_open: true, chat_open: true, left_narrow: false, left_before: true, chat_narrow: false, chat_before: true, synced: None, _subs: subs, search, search_open: false, quick: None, _quick_sub: None, term_open, term, chat_tabs: wb_tabs, chat_last_active: None, chat_empty: false, chat_wide: std::env::var("LOOM_CHAT_WIDE").is_ok() }
+        Self { wb, panel, ide, panel_root: String::new(), focus, left_open: true, chat_open: true, left_narrow: false, left_before: true, chat_narrow: false, chat_before: true, synced: None, _subs: subs, search, search_open: false, quick: None, _quick_sub: None, term_open, term, chat_tabs: wb_tabs, chat_last_active: None, chat_empty: false, chat_wide: std::env::var("LOOM_CHAT_WIDE").is_ok(), notice_open: false }
     }
 
     /// 让面板与根目录跟随工作台当前会话。
@@ -260,6 +286,7 @@ impl Render for IdeWindow {
         if window.focused(cx).is_none() {
             window.focus(&self.focus, cx);
         }
+        crate::notice::mark_ide(window, true, cx);
         self.sync_state(cx);
         self.sync_chat_tabs(cx);
         self.apply_responsive(f32::from(window.viewport_size().width));
@@ -277,6 +304,7 @@ impl Render for IdeWindow {
         }
         let chat_col = v_flex().size_full().child(self.chat_tabs_bar(cx)).child(div().flex_1().min_h_0().child(if self.chat_empty { self.chat_empty_view(cx) } else { chat_panel(parts, branch.clone(), demo, cx) })).into_any_element();
         v_flex()
+            .relative()
             .key_context("IdeWindow")
             // 平滑滚动拦截层:必须是第一个子元素
             .child(crate::smooth_scroll::layer())
@@ -333,7 +361,41 @@ impl Render for IdeWindow {
                     ),
             )
             .when_some(self.quick.clone(), |d, p| d.child(p))
-            .child(ide_status::status_bar(project_name, branch, self.ide.read(cx).cursor_info(cx), self.ide.read(cx).lsp_summary(), mode, demo, cx))
+            .child(ide_status::status_bar(project_name, branch, self.ide.read(cx).cursor_info(cx), self.ide.read(cx).lsp_summary(), mode, demo, self.bell(cx), cx))
+            .when(self.notice_open, |d| d.child(self.notice_panel(cx)))
+    }
+}
+
+impl IdeWindow {
+    /// 状态栏最右的铃铛:有未读时带数字角标;点击展开 / 收起通知面板。
+    fn bell(&self, cx: &mut Context<Self>) -> AnyElement {
+        use gpui_kit::component::ActiveTheme as _;
+        let t = cx.theme().clone();
+        let unread = crate::notice::store(cx).map_or(0, |s| s.read(cx).unread());
+        let open = self.notice_open;
+        h_flex().id("status-bell").h_full().px_2().gap_1().items_center().cursor_pointer()
+            .hover(|d| d.bg(t.list_hover))
+            .when(open, |d| d.bg(t.list_hover))
+            .on_mouse_down(MouseButton::Left, |_, _, cx| cx.stop_propagation())
+            .on_click(cx.listener(|this, _, _, cx| {
+                this.notice_open = !this.notice_open;
+                if this.notice_open && let Some(s) = crate::notice::store(cx) {
+                    s.update(cx, |s, cx| { s.mark_all_read(); cx.notify(); });
+                }
+                cx.notify();
+            }))
+            .child(icon(if unread > 0 { IconName::BellDot } else { IconName::Bell }, 12., if unread > 0 { t.foreground } else { t.muted_foreground }))
+            .when(unread > 0, |d| d.child(div().text_size(px(11.)).text_color(t.foreground).child(unread.to_string())))
+            .into_any_element()
+    }
+
+    /// 通知面板:贴着右下角,位于状态栏之上。
+    fn notice_panel(&self, cx: &mut Context<Self>) -> impl IntoElement {
+        let Some(store) = crate::notice::store(cx) else { return div().into_any_element() };
+        let this = cx.entity();
+        // 点铃铛本身会先触发「点外部」再触发点击而反复开合:关闭只在点击落在面板外且不是铃铛时发生(铃铛 mouse_down 已拦截)
+        let panel = crate::notice::panel(&store, move |_, cx| { this.update(cx, |t, cx| { t.notice_open = false; cx.notify(); }); }, cx);
+        deferred(div().absolute().right(px(8.)).bottom(px(30.)).child(panel)).with_priority(5).into_any_element()
     }
 }
 

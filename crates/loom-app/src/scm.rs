@@ -12,7 +12,6 @@ use crate::diff::{self, DiffLine};
 use crate::scm_model::{self, Group, Groups};
 use gpui_kit::component::WindowExt as _;
 use gpui_kit::component::input::{InputEvent, TextareaState};
-use gpui_kit::component::notification::Notification;
 use gpui_kit::*;
 use loom_core::git::{self, StatusEntry};
 use loom_core::git_log;
@@ -337,12 +336,12 @@ impl ScmView {
                 match result {
                     Ok(()) => {
                         if let Some(m) = ok {
-                            window.push_notification(Notification::success(m), cx);
+                            crate::notice::success(window, cx, m);
                         }
                     }
                     Err(e) => {
                         loom_diag::warn!("源代码管理:{busy}失败:{e}");
-                        window.push_notification(Notification::error(format!("{busy}失败:{e}")), cx);
+                        crate::notice::error(window, cx, format!("{busy}失败:{e}"));
                     }
                 }
                 done(this, window, cx);
@@ -421,13 +420,13 @@ impl ScmView {
         }
         let message = self.message.read(cx).value().trim().to_string();
         if message.is_empty() && !self.amend {
-            window.push_notification(Notification::warning("请先输入提交消息"), cx);
+            crate::notice::warning(window, cx, "请先输入提交消息");
             self.message.update(cx, |i, cx| i.focus(window, cx));
             return;
         }
         let (staged, changes) = (self.groups.staged.len(), self.groups.changes.len() + self.groups.conflicts.len());
         if staged == 0 && changes == 0 && !self.amend {
-            window.push_notification(Notification::warning("没有可提交的更改"), cx);
+            crate::notice::warning(window, cx, "没有可提交的更改");
             return;
         }
         if staged == 0 && !self.amend {
@@ -561,7 +560,7 @@ impl ScmView {
         let Some(top) = self.top.clone() else { return };
         if self.generating || self.groups.distinct() == 0 {
             if self.groups.distinct() == 0 {
-                window.push_notification(Notification::warning("没有可生成说明的更改"), cx);
+                crate::notice::warning(window, cx, "没有可生成说明的更改");
             }
             return;
         }
@@ -600,10 +599,10 @@ impl ScmView {
                         }
                         if let Some(why) = why.filter(|w| !w.is_empty()) {
                             loom_diag::warn!("生成提交说明:模型不可用,已用启发式:{why}");
-                            window.push_notification(Notification::warning(format!("模型生成失败,已按改动内容简单生成:{why}")), cx);
+                            crate::notice::warning(window, cx, format!("模型生成失败,已按改动内容简单生成:{why}"));
                         }
                     }
-                    Err(e) => window.push_notification(Notification::error(format!("生成提交说明失败:{e}")), cx),
+                    Err(e) => crate::notice::error(window, cx, format!("生成提交说明失败:{e}")),
                 }
                 cx.notify();
             });
@@ -616,7 +615,7 @@ impl ScmView {
     /// 储藏当前所有改动(含未跟踪文件)。
     pub(crate) fn stash_push(&mut self, window: &mut Window, cx: &mut Context<Self>) {
         if self.groups.distinct() == 0 {
-            window.push_notification(Notification::warning("没有可储藏的更改"), cx);
+            crate::notice::warning(window, cx, "没有可储藏的更改");
             return;
         }
         self.run("储藏", Some("已储藏更改".into()), window, cx, |top, _| git_log::stash_push(top, ""));

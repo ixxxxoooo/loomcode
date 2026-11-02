@@ -9,7 +9,6 @@ use crate::palette_search::collect_files;
 use gpui_kit::assets::IconName;
 use gpui_kit::component::WindowExt as _;
 use gpui_kit::component::input::{Input, InputState};
-use gpui_kit::component::notification::Notification;
 use gpui_kit::*;
 use std::cell::Cell;
 use std::path::PathBuf;
@@ -77,7 +76,7 @@ impl IdeWindow {
                         true
                     }
                     None => {
-                        window.push_notification(Notification::warning("请输入行号,例如 42 或 42:7"), cx);
+                        crate::notice::warning(window, cx, "请输入行号,例如 42 或 42:7");
                         false
                     }
                 }

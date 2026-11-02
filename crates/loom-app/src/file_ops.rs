@@ -6,7 +6,6 @@ use crate::right_panel::RightPanel;
 use gpui_kit::assets::IconName;
 use gpui_kit::component::input::{Input, InputState};
 use gpui_kit::component::menu::{PopupMenu, PopupMenuItem};
-use gpui_kit::component::notification::Notification;
 use gpui_kit::component::WindowExt as _;
 use gpui_kit::*;
 use std::cell::Cell;
@@ -96,7 +95,7 @@ impl RightPanel {
                 match result {
                     Ok(Ok(())) => true,
                     Ok(Err(msg)) => {
-                        window.push_notification(Notification::warning(msg), cx);
+                        crate::notice::warning(window, cx, msg);
                         false
                     }
                     Err(_) => true,
@@ -125,7 +124,7 @@ impl RightPanel {
                                 cx.notify();
                             });
                         }
-                        Err(e) => window.push_notification(Notification::error(format!("移到废纸篓失败:{e}")), cx),
+                        Err(e) => crate::notice::error(window, cx, format!("移到废纸篓失败:{e}")),
                     }
                     true
                 })

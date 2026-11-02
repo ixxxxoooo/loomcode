@@ -66,6 +66,7 @@ impl Workbench {
                     }
                     UpdateResult::Available(info) => {
                         loom_diag::info!("检查更新:发现新版本");
+                        this.announce_update(format!("发现新版本 v{}", info.version), "下载更新", Self::download_update, cx);
                         UpdateState::Available(info)
                     }
                     UpdateResult::Failed(e) => {
@@ -79,6 +80,16 @@ impl Workbench {
         .detach();
     }
 
+    /// 把更新进展发到通知中心(IDE 右下角弹出并留在铃铛历史里,带动作按钮);Agent 窗口不显示。
+    fn announce_update(&self, message: String, label: &'static str, run: fn(&mut Workbench, &mut Context<Workbench>), cx: &mut Context<Self>) {
+        let wb = cx.entity().downgrade();
+        let action = crate::notice::NoticeAction {
+            label: label.into(),
+            run: std::rc::Rc::new(move |_, cx| { let _ = wb.update(cx, |w, cx| run(w, cx)); }),
+        };
+        crate::notice::post(cx, crate::notice::Kind::Info, message, Some(action));
+    }
+
     /// 后台下载并校验新版本,完成后进入「可重启更新」。
     pub fn download_update(&mut self, cx: &mut Context<Self>) {
         let UpdateState::Available(info) = self.update.clone() else { return };
@@ -90,6 +101,7 @@ impl Workbench {
                 this.update = match result {
                     Ok(staged) => {
                         loom_diag::info!("更新包下载并校验完成");
+                        this.announce_update(format!("v{} 已下载并校验,重启即可更新", staged.version), "重启更新", Self::install_update, cx);
                         UpdateState::Ready(staged)
                     }
                     Err(e) => {

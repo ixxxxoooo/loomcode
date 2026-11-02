@@ -8,6 +8,7 @@
 #![recursion_limit = "512"]
 
 mod ansi;
+mod notice;
 mod prompt_queue;
 mod queue_card;
 mod live_sig;
@@ -258,6 +259,7 @@ fn main() {
 
     application().with_assets(gpui_kit::assets::AllAssets).run(move |cx| {
         init(cx);
+        notice::init(cx);
         // 正常退出(⌘Q、托盘退出、更新重启等)时删除运行标记,下次启动才不会误判为异常退出
         cx.on_app_quit(|_| async {
             loom_lsp::hub::kill_all();

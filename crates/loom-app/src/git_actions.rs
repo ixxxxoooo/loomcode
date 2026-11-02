@@ -6,7 +6,6 @@ use crate::ui::dialog_footer;
 use crate::workbench::Workbench;
 use gpui_kit::component::WindowExt as _;
 use gpui_kit::component::input::{Input, InputState};
-use gpui_kit::component::notification::Notification;
 use gpui_kit::*;
 use std::cell::Cell;
 use loom_core::git::{self, GitSnapshot};
@@ -46,8 +45,8 @@ impl Workbench {
             let result = cx.background_spawn(async move { op(&target) }).await;
             let _ = this.update_in(cx, |this, window, cx| {
                 match result {
-                    Ok(()) => window.push_notification(Notification::success(ok_msg), cx),
-                    Err(e) => window.push_notification(Notification::error(format!("Git 操作失败:{e}")), cx),
+                    Ok(()) => crate::notice::success(window, cx, ok_msg),
+                    Err(e) => crate::notice::error(window, cx, format!("Git 操作失败:{e}")),
                 }
                 this.refresh_git(dir.clone(), cx);
                 this.refresh_branches(&dir, cx);
@@ -85,7 +84,7 @@ impl Workbench {
                 let name = input.read(cx).value().trim().to_string();
                 // 名称不合法就留在对话框里并提示原因
                 if let Err(e) = git::validate_branch_name(&name) {
-                    window.push_notification(Notification::warning(e), cx);
+                    crate::notice::warning(window, cx, e);
                     return false;
                 }
                 let _ = wb.update(cx, |this, cx| {

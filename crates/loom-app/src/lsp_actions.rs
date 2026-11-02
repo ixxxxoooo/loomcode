@@ -7,8 +7,7 @@ use crate::ide::IdeView;
 use crate::lsp::{DocSync, definition_links, fix_pos, fix_range, split_lines, to_lsp_pos};
 use anyhow::{Result, anyhow};
 use gpui_kit::component::RopeExt as _;
-use gpui_kit::component::notification::Notification;
-use gpui_kit::component::{Rope, WindowExt as _};
+use gpui_kit::component::Rope;
 use gpui_kit::*;
 use serde_json::json;
 use std::path::PathBuf;
@@ -95,7 +94,7 @@ impl IdeView {
             let _ = this.update_in(cx, |this, window, cx| match res {
                 Ok(Some((path, line, col))) => this.open_at(path, line, col, window, cx),
                 Ok(None) => this.show_cursor_message(format!("未找到{what}"), cx),
-                Err(e) => window.push_notification(Notification::error(format!("转到{what}失败:{e}")), cx),
+                Err(e) => crate::notice::error(window, cx, format!("转到{what}失败:{e}")),
             });
         })
         .detach();
@@ -133,12 +132,12 @@ impl IdeView {
                                 doc.editor.update(cx, |e, cx| e.replace_all(new, window, cx));
                             }
                         } else {
-                            window.push_notification(Notification::info("文档已经是格式化好的"), cx);
+                            crate::notice::info(window, cx, "文档已经是格式化好的");
                         }
                     }
-                    Ok(Some(_)) => window.push_notification(Notification::warning("格式化期间文档被修改,已放弃本次结果"), cx),
-                    Ok(None) => window.push_notification(Notification::info("语言服务器没有返回格式化结果"), cx),
-                    Err(e) => window.push_notification(Notification::error(format!("格式化失败:{e}")), cx),
+                    Ok(Some(_)) => crate::notice::warning(window, cx, "格式化期间文档被修改,已放弃本次结果"),
+                    Ok(None) => crate::notice::info(window, cx, "语言服务器没有返回格式化结果"),
+                    Err(e) => crate::notice::error(window, cx, format!("格式化失败:{e}")),
                 }
             });
         })

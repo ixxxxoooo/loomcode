@@ -10,8 +10,7 @@ use crate::lsp::{split_lines, to_lsp_pos, fix_pos, fix_range};
 use crate::lsp_actions::apply_edits;
 use anyhow::{Result, anyhow};
 use gpui_kit::component::input::{InputEvent, InputState};
-use gpui_kit::component::notification::Notification;
-use gpui_kit::component::{ActiveTheme as _, Rope, RopeExt as _, WindowExt as _};
+use gpui_kit::component::{ActiveTheme as _, Rope, RopeExt as _};
 use gpui_kit::*;
 use serde_json::{Value, json};
 use std::collections::HashMap;
@@ -46,10 +45,6 @@ pub fn replace_word(text: &str, old: &str, new: &str) -> String {
 }
 
 impl IdeView {
-    fn notify_ui(window: &mut Window, cx: &mut App, n: Notification) {
-        window.push_notification(n, cx);
-    }
-
     /// 查找光标处符号的所有引用:一处直接跳转,多处弹出引用预览窗(对标 VS Code 的 Peek References)。
     pub(crate) fn find_references(&mut self, window: &mut Window, cx: &mut Context<Self>) {
         let Some((_, sync, full, rope, offset)) = self.lsp_context_pub(cx) else { return };
@@ -97,7 +92,7 @@ impl IdeView {
                     this.set_overlay(Overlay::Refs(st), cx);
                 }
                 Ok(_) => this.set_overlay(Overlay::Refs(PeekState::new(vec![], offset, false, cx)), cx),
-                Err(e) => Self::notify_ui(window, cx, Notification::error(format!("查找引用失败:{e}"))),
+                Err(e) => crate::notice::error(window, cx, format!("查找引用失败:{e}")),
             });
         })
         .detach();
@@ -155,8 +150,8 @@ impl IdeView {
                 })
                 .await;
             let _ = this.update_in(cx, |this, window, cx| match res.and_then(|v| if v.is_null() { Err(anyhow!("服务器不允许在这里重命名")) } else { Ok(serde_json::from_value::<lsp_types::WorkspaceEdit>(v)?) }).and_then(|e| this.apply_workspace_edit(e, window, cx)) {
-                Ok(n) => Self::notify_ui(window, cx, Notification::success(format!("已重命名,修改了 {n} 个文件"))),
-                Err(e) => Self::notify_ui(window, cx, Notification::error(format!("重命名失败:{e}"))),
+                Ok(n) => crate::notice::success(window, cx, format!("已重命名,修改了 {n} 个文件")),
+                Err(e) => crate::notice::error(window, cx, format!("重命名失败:{e}")),
             });
         })
         .detach();
@@ -236,7 +231,7 @@ impl IdeView {
             let _ = this.update_in(cx, |this, window, cx| match res {
                 Ok(items) if !items.is_empty() => this.set_overlay(Overlay::Actions { title, items }, cx),
                 Ok(_) => this.show_cursor_message(format!("没有可用的{title}"), cx),
-                Err(e) => Self::notify_ui(window, cx, Notification::error(format!("获取{title}失败:{e}"))),
+                Err(e) => crate::notice::error(window, cx, format!("获取{title}失败:{e}")),
             });
         })
         .detach();
@@ -262,10 +257,10 @@ impl IdeView {
             let _ = this.update_in(cx, |this, window, cx| match res {
                 Ok(Some(edit)) => match this.apply_workspace_edit(edit, window, cx) {
                     Ok(_) => {}
-                    Err(e) => Self::notify_ui(window, cx, Notification::error(format!("应用失败:{e}"))),
+                    Err(e) => crate::notice::error(window, cx, format!("应用失败:{e}")),
                 },
-                Ok(None) => Self::notify_ui(window, cx, Notification::info("这个操作需要执行服务器命令,暂不支持")),
-                Err(e) => Self::notify_ui(window, cx, Notification::error(format!("执行失败:{e}"))),
+                Ok(None) => crate::notice::info(window, cx, "这个操作需要执行服务器命令,暂不支持"),
+                Err(e) => crate::notice::error(window, cx, format!("执行失败:{e}")),
             });
         })
         .detach();

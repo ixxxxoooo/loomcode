@@ -6,7 +6,6 @@ use crate::ui::dialog_footer;
 use crate::workbench::Workbench;
 use gpui_kit::component::WindowExt as _;
 use gpui_kit::component::input::{Input, InputState};
-use gpui_kit::component::notification::Notification;
 use gpui_kit::*;
 use std::cell::Cell;
 use std::path::PathBuf;
@@ -38,7 +37,7 @@ impl Workbench {
             dialog.title("新建 Worktree").child(Input::new(&input.clone())).footer(dialog_footer("创建")).on_ok(move |_, window, cx| {
                 let branch = input.read(cx).value().trim().to_string();
                 if let Err(e) = git::validate_branch_name(&branch) {
-                    window.push_notification(Notification::warning(e), cx);
+                    crate::notice::warning(window, cx, e);
                     return false;
                 }
                 let _ = wb.update(cx, |this, cx| this.create_worktree(&dir, &root, &branch, window, cx));
@@ -67,11 +66,11 @@ impl Workbench {
                 .await;
             let _ = this.update_in(cx, |this, window, cx| match result {
                 Ok(path) => {
-                    window.push_notification(Notification::success("已创建 worktree"), cx);
+                    crate::notice::success(window, cx, "已创建 worktree");
                     this.refresh_git(dir, cx);
                     this.register_project(path.to_string_lossy().to_string(), window, cx);
                 }
-                Err(e) => window.push_notification(Notification::error(format!("创建 worktree 失败:{e}")), cx),
+                Err(e) => crate::notice::error(window, cx, format!("创建 worktree 失败:{e}")),
             });
         })
         .detach();
@@ -109,11 +108,11 @@ impl Workbench {
                 .await;
             let _ = this.update_in(cx, |this, window, cx| match result {
                 Ok(main) => {
-                    window.push_notification(Notification::success("已移除 worktree"), cx);
+                    crate::notice::success(window, cx, "已移除 worktree");
                     this.remove_project(&path, cx);
                     this.refresh_git(main, cx);
                 }
-                Err(e) => window.push_notification(Notification::error(format!("移除 worktree 失败:{e}")), cx),
+                Err(e) => crate::notice::error(window, cx, format!("移除 worktree 失败:{e}")),
             });
         })
         .detach();

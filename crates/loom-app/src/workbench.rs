@@ -1497,6 +1497,8 @@ impl Workbench {
         // 融合模式的 IDE:整窗替换 Agent 布局(标题栏、侧栏、状态栏都是 IDE 的)
         let ide_shell = self.ide_shell.clone().filter(|_| self.ide && !full_settings);
         let show_ide = ide_shell.is_some();
+        // 融合模式下同一个窗口在 Agent / IDE 布局间切换:通知中心据此决定右下角弹出与否
+        crate::notice::mark_ide(window, show_ide, cx);
         let center = match self.page {
             Page::Chat => self.chat_view(window, cx),
             Page::Settings => settings::render(self, window, cx),

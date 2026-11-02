@@ -4,9 +4,7 @@
 //! @author ixxxxoooo
 
 use crate::right_panel::RightPanel;
-use gpui_kit::component::notification::Notification;
 use gpui_kit::component::{ActiveTheme, h_flex};
-use gpui_kit::component::WindowExt as _;
 use gpui_kit::*;
 use std::path::{Path, PathBuf};
 
@@ -75,7 +73,7 @@ impl RightPanel {
             }
         }
         if !failures.is_empty() {
-            window.push_notification(Notification::error(failures.join("\n")), cx);
+            crate::notice::error(window, cx, failures.join("\n"));
         }
         self.files.expand_dirs(&[dir.to_string_lossy().to_string()]);
         self.reload_files(cx);

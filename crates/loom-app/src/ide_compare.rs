@@ -5,8 +5,6 @@
 use crate::diff::compute;
 use crate::ide::IdeView;
 use crate::ide_overlay::Overlay;
-use gpui_kit::component::notification::Notification;
-use gpui_kit::component::WindowExt as _;
 use gpui_kit::*;
 
 impl IdeView {
@@ -21,7 +19,7 @@ impl IdeView {
                 let lang = crate::file_tree::language_for(&path);
                 self.set_overlay(Overlay::Diff { title: "已保存 ↔ 当前(左:磁盘上的版本,右:编辑器里的内容)".into(), lines, lang }, cx);
             }
-            Err(e) => window.push_notification(Notification::error(format!("读取已保存文件失败:{e}")), cx),
+            Err(e) => crate::notice::error(window, cx, format!("读取已保存文件失败:{e}")),
         }
     }
 
@@ -30,7 +28,7 @@ impl IdeView {
         let Some(path) = self.tabs.active().map(|p| p.to_path_buf()) else { return };
         let Some(doc) = self.docs.get(&path) else { return };
         let Some(clip) = cx.read_from_clipboard().and_then(|c| c.text()) else {
-            window.push_notification(Notification::info("剪贴板里没有文本"), cx);
+            crate::notice::info(window, cx, "剪贴板里没有文本");
             return;
         };
         let ed = doc.editor.read(cx);
