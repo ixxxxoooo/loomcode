@@ -20,8 +20,8 @@ pub(crate) const ROW_H: f32 = 22.;
 /// `click` 点击处理。
 pub(crate) fn chip(id: &'static str, label: &'static str, tip: &'static str, on: bool, underline: bool, cx: &App, click: impl Fn(&ClickEvent, &mut Window, &mut App) + 'static) -> AnyElement {
     let t = cx.theme();
-    div().id(id).flex_none().size(px(20.)).flex().items_center().justify_center().rounded(px(4.)).border_1().cursor_pointer()
-        .text_size(px(11.)).font_weight(FontWeight::MEDIUM)
+    div().id(id).flex_none().w(px(24.)).h(px(22.)).flex().items_center().justify_center().rounded(px(4.)).border_1().cursor_pointer()
+        .text_size(px(13.))
         .when(underline, |d| d.underline())
         .when(on, |d| d.bg(t.primary.opacity(0.2)).border_color(t.primary).text_color(t.foreground))
         .when(!on, |d| d.border_color(gpui_kit::gpui::transparent_black()).text_color(t.muted_foreground).hover(|d| d.bg(t.list_hover)))

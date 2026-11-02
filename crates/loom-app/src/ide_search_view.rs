@@ -8,10 +8,23 @@ use crate::ide_search_model::{self as model, Row};
 use crate::ide_search_rows::{chip, file_row, match_row};
 use gpui_kit::assets::IconName;
 use gpui_kit::component::button::{Button, ButtonVariants};
-use gpui_kit::component::input::Input;
+use gpui_kit::component::input::{Input, InputState};
 use gpui_kit::component::{ActiveTheme, Disableable, Selectable, Sizable, h_flex, v_flex};
 use gpui_kit::prelude::FluentBuilder as _;
 use gpui_kit::*;
+
+/// 输入框外壳:1px 细边框,聚焦时换成主题聚焦色(没有发光环),对标 VS Code。Input 自带的外观与聚焦环都关掉,由外壳统一绘制。
+///
+/// 参数:`state` 输入状态;`suffix` 框内右侧控件(开关等);`window` / `cx` 用来判断是否聚焦并取主题色。
+fn field(state: &Entity<InputState>, suffix: Option<AnyElement>, window: &Window, cx: &App) -> Div {
+    let t = cx.theme();
+    let focused = state.read(cx).focus_handle(cx).contains_focused(window, cx);
+    let mut input = Input::new(state).small().appearance(false);
+    if let Some(s) = suffix {
+        input = input.suffix(s);
+    }
+    div().w_full().rounded(px(5.)).border_1().border_color(if focused { t.ring } else { t.input }).bg(t.background).child(input)
+}
 
 impl SearchPanel {
     /// 标题栏:「搜索」+ 刷新 / 清除结果 / 全部折叠。
@@ -28,18 +41,18 @@ impl SearchPanel {
     }
 
     /// 搜索框(带 Aa / ab / .* 三个开关)、替换行与「包含 / 排除文件」。
-    fn inputs(&self, cx: &mut Context<Self>) -> impl IntoElement {
+    fn inputs(&self, window: &Window, cx: &mut Context<Self>) -> impl IntoElement {
         let t = cx.theme().clone();
         let (case, word, regex) = (self.case, self.word, self.regex);
         let toggles = h_flex().gap_0p5()
             .child(chip("sr-case", "Aa", "区分大小写(⌥⌘C)", case, false, cx, cx.listener(|this, _, _, cx| this.toggle_case(cx))))
             .child(chip("sr-word", "ab", "全字匹配(⌥⌘W)", word, true, cx, cx.listener(|this, _, _, cx| this.toggle_word(cx))))
             .child(chip("sr-regex", ".*", "使用正则表达式(⌥⌘R)", regex, false, cx, cx.listener(|this, _, _, cx| this.toggle_regex(cx))));
-        let search = Input::new(&self.input).small().suffix(toggles);
+        let search = field(&self.input, Some(toggles.into_any_element()), window, cx);
         let replace = self.replace_open.then(|| {
             let preserve = chip("sr-preserve", "AB", "保留大小写(⌥⌘P)", self.preserve_case, false, cx, cx.listener(|this, _, _, cx| this.toggle_preserve_case(cx)));
             h_flex().gap_1().items_center()
-                .child(div().flex_1().min_w_0().child(Input::new(&self.replace_input).small().suffix(preserve)))
+                .child(div().flex_1().min_w_0().child(field(&self.replace_input, Some(preserve), window, cx)))
                 .child(Button::new("sr-replace-all").xsmall().ghost().icon(IconName::Replace).disabled(self.files.is_empty()).tooltip("全部替换(⌘⌥↩)")
                     .on_click(cx.listener(|this, _, window, cx| this.confirm_replace_all(window, cx))))
         });
@@ -48,9 +61,9 @@ impl SearchPanel {
             let ignore_on = self.use_ignore;
             v_flex().gap_1()
                 .child(label("要包含的文件"))
-                .child(Input::new(&self.include_input).small())
+                .child(field(&self.include_input, None, window, cx))
                 .child(label("要排除的文件"))
-                .child(Input::new(&self.exclude_input).small())
+                .child(field(&self.exclude_input, None, window, cx))
                 .child(h_flex().id("sr-use-ignore").gap_1p5().items_center().cursor_pointer().py_0p5().text_size(px(11.5)).text_color(t.muted_foreground)
                     .on_click(cx.listener(|this, _, _, cx| this.toggle_use_ignore(cx)))
                     .child(div().size(px(14.)).rounded(px(3.)).border_1().border_color(if ignore_on { t.primary } else { t.border }).when(ignore_on, |d| d.bg(t.primary)).flex().items_center().justify_center()
@@ -93,7 +106,7 @@ impl SearchPanel {
 }
 
 impl Render for SearchPanel {
-    fn render(&mut self, _window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
+    fn render(&mut self, window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
         let t = cx.theme().clone();
         let list = uniform_list("search-rows", self.rows.len(), cx.processor(|this, range: std::ops::Range<usize>, _, cx| {
             range.filter_map(|i| this.rows.get(i).copied()).map(|row| match row {
@@ -109,7 +122,7 @@ impl Render for SearchPanel {
             .on_action(cx.listener(|this, _: &ToggleReplace, _, cx| this.toggle_replace(cx)))
             .on_action(cx.listener(|this, _: &ReplaceAllMatches, window, cx| if this.replace_open { this.confirm_replace_all(window, cx) }))
             .child(self.header(cx))
-            .child(self.inputs(cx))
+            .child(self.inputs(window, cx))
             .children(self.status_line(cx))
             .child(div().h(px(4.)).flex_none())
             .child(list)
