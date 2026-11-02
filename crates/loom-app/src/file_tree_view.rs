@@ -187,7 +187,7 @@ impl RightPanel {
             }
             menu
         };
-        h_flex().h(px(28.)).px_2().gap_1().items_center().flex_none().text_size(px(11.)).text_color(t.muted_foreground)
+        h_flex().h(px(crate::tab_style::TAB_H)).px_2().gap_1().items_center().flex_none().text_size(px(11.)).text_color(t.muted_foreground)
             .when(!first, |d| d.border_t_1().border_color(t.border))
             .child(
                 h_flex().id(SharedString::from(format!("sec-head-{}", sec.key()))).flex_1().min_w_0().h_full().gap_1().items_center().cursor_pointer()
