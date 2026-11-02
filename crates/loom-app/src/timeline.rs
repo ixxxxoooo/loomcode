@@ -92,7 +92,7 @@ pub fn render_item(session: &Entity<SessionModel>, item: &TimelineItem, depth: u
         TimelineItem::Permission(req) => crate::ask_cards::render_permission(req, cx),
         TimelineItem::Question(req) => crate::ask_cards::render_question(req, cx),
         TimelineItem::PlanApproval(plan) => crate::ask_cards::render_plan(plan, cx),
-        TimelineItem::Notice { level, text, .. } => cards::render_notice(*level, text, cx),
+        TimelineItem::Notice { id, level, text } => cards::render_notice(session, id, *level, text, cx),
         TimelineItem::Canvas { id, title } => cards::render_canvas(session, id, title, cx),
         TimelineItem::Changes { files, .. } => cards::render_changes(session, files, cx),
         TimelineItem::TaskNote { task_id, kind, status, text, .. } => crate::task_ui::render_note(session, task_id, *kind, *status, text, cx),

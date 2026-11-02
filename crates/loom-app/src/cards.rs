@@ -42,12 +42,15 @@ pub fn render_changes(session: &Entity<SessionModel>, files: &[ChangedFile], cx:
         .into_any_element()
 }
 
-/// 提示行。
-pub fn render_notice(level: NoticeLevel, text: &str, cx: &App) -> AnyElement {
+/// 提示行(对标 Cursor 的错误卡):正文用中性色便于阅读,级别色只用在图标与左侧色条;
+/// 最近一个回合里的错误带「重试」(原样重发本回合的用户消息)与「复制」。
+///
+/// 参数:`session` 会话;`id` 条目 id;`level` 级别;`text` 文案。
+pub fn render_notice(session: &Entity<SessionModel>, id: &str, level: NoticeLevel, text: &str, cx: &App) -> AnyElement {
     let t = cx.theme();
     // 「已中断」:用户自己的操作,只是一行灰字(对标 Claude Code 的 Interrupted 标记)
     if text == INTERRUPTED_TEXT {
-        return h_flex().h(px(24.)).px_2().gap_1p5().items_center().text_size(px(12.)).text_color(t.muted_foreground)
+        return h_flex().h(px(crate::flow_style::ROW_H)).px_2().gap_1p5().items_center().text_size(px(12.)).text_color(t.muted_foreground)
             .child(icon(IconName::CirclePause, 12., t.muted_foreground))
             .child(format!("{text} · 可以直接输入新的指示"))
             .into_any_element();
@@ -57,9 +60,37 @@ pub fn render_notice(level: NoticeLevel, text: &str, cx: &App) -> AnyElement {
         NoticeLevel::Warning => (IconName::TriangleAlert, t.warning),
         NoticeLevel::Error => (IconName::CircleX, t.danger),
     };
-    h_flex().w_full().gap_2().px_3().py_1p5().rounded(px(8.)).bg(t.muted).items_start()
+    // 重试只给最近一个回合、且当前空闲时的错误:找本条之前最近的用户消息,之后不能再有新的用户消息
+    let retry_target = (level == NoticeLevel::Error).then(|| {
+        let m = session.read(cx);
+        let pos = m.state.items.iter().position(|i| i.id() == id)?;
+        let later_user = m.state.items[pos..].iter().any(|i| matches!(i, TimelineItem::User { .. }));
+        let idle = m.state.phase != Phase::Running;
+        let user = m.state.items[..pos].iter().rev().find_map(|i| if let TimelineItem::User { id, .. } = i { Some(id.clone()) } else { None });
+        user.filter(|_| idle && !later_user)
+    }).flatten();
+    let copied = session.read(cx).copied.as_deref() == Some(&format!("n-{id}"));
+    let action = |key: &str, ic: IconName, label: &'static str| {
+        h_flex().id(SharedString::from(format!("notice-{key}-{id}"))).h(px(22.)).px_1p5().gap_1().items_center().rounded(px(5.)).cursor_pointer()
+            .text_size(px(12.)).text_color(t.muted_foreground).hover(|d| d.bg(t.list_hover).text_color(t.foreground))
+            .child(icon(ic, 12., t.muted_foreground)).child(label)
+    };
+    h_flex().w_full().gap_2().pl_3().pr_2().py_1p5().rounded(px(8.)).bg(t.muted).items_start()
+        .border_l_2().border_color(color)
         .child(div().mt(px(2.)).child(icon(ic, 14., color)))
         // min_w_0:长英文报错在卡片内折行,不再溢出右侧
-        .child(div().flex_1().min_w_0().text_size(px(13.)).text_color(color).child(text.to_string()))
+        .child(div().flex_1().min_w_0().text_size(px(13.)).text_color(t.foreground).child(text.to_string()))
+        .when(level == NoticeLevel::Error, |d| d.child(h_flex().flex_none().gap_0p5()
+            .when_some(retry_target, |d, uid| {
+                let s = session.clone();
+                d.child(action("retry", IconName::RotateCcw, "重试").on_click(move |_, _, cx| { s.update(cx, |m, cx| m.retry_user(&uid, cx)); }))
+            })
+            .child({
+                let (s, nid, txt) = (session.clone(), id.to_string(), text.to_string());
+                action("copy", if copied { IconName::Check } else { IconName::Copy }, if copied { "已复制" } else { "复制" }).on_click(move |_, _, cx| {
+                    cx.write_to_clipboard(ClipboardItem::new_string(txt.clone()));
+                    s.update(cx, |m, cx| m.mark_copied(&format!("n-{nid}"), cx));
+                })
+            })))
         .into_any_element()
 }
