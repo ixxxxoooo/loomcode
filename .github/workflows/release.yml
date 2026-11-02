@@ -13,11 +13,24 @@ jobs:
       - uses: actions/checkout@v4
         with:
           fetch-depth: 0
-      - uses: dtolnay/rust-toolchain@stable
+      # scripts/publish.sh 在本机已创建同名 Release 时整体跳过:不用 --clobber 覆盖,
+      # 否则 appcast 与 dmg 可能来自两次不同的构建,sha256 对不上,应用内更新会拒绝安装
+      - name: 检查是否已发布
+        id: check
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          if gh release view "${{ github.ref_name }}" >/dev/null 2>&1; then
+            echo "Release 已存在(由 scripts/publish.sh 发布),跳过"
+            echo "exists=true" >> "$GITHUB_OUTPUT"
+          fi
       - uses: Swatinem/rust-cache@v2
+        if: steps.check.outputs.exists != 'true'
       - name: 打包
+        if: steps.check.outputs.exists != 'true'
         run: scripts/package.sh --dmg
       - name: 生成 appcast
+        if: steps.check.outputs.exists != 'true'
         env:
           TAG: ${{ github.ref_name }}
           REPO: ${{ github.repository }}
@@ -37,6 +50,14 @@ jobs:
           json.dump(feed, open("dist/appcast.json", "w"), ensure_ascii=False, indent=2)
           PY
       - name: 发布 Release
+        if: steps.check.outputs.exists != 'true'
         env:
           GH_TOKEN: ${{ github.token }}
-        run: gh release create "${{ github.ref_name }}" --title "LoomCode ${{ github.ref_name }}" --generate-notes --latest dist/LoomCode-*.dmg dist/appcast.json
+        # publish.sh 先推 tag 再建 Release,开头检查时可能还没建好,构建完再查一次
+        run: |
+          TAG="${{ github.ref_name }}"
+          if gh release view "$TAG" >/dev/null 2>&1; then
+            echo "Release $TAG 已在构建期间由 scripts/publish.sh 发布,跳过上传"
+          else
+            gh release create "$TAG" --title "LoomCode $TAG" --generate-notes --latest dist/LoomCode-*.dmg dist/appcast.json
+          fi
