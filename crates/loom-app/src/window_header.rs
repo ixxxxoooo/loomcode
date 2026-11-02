@@ -30,7 +30,7 @@ pub fn apply_traffic_light(options: &mut WindowOptions) {
 }
 /// 给 macOS 红绿灯留的左边距。
 #[cfg(target_os = "macos")]
-const TRAFFIC_PAD: f32 = 80.;
+pub(crate) const TRAFFIC_PAD: f32 = 80.;
 #[cfg(not(target_os = "macos"))]
 const TRAFFIC_PAD: f32 = 12.;
 
@@ -131,9 +131,16 @@ impl Workbench {
     /// 参数:`cx` 视图上下文。返回:按钮组。
     pub fn right_buttons(&self, cx: &mut Context<Self>) -> impl IntoElement {
         let ide_icon = if self.settings.fused_ide { IconName::Code } else { IconName::ExternalLink };
+        let zoomed = self.right_zoom && self.right_visible();
         h_flex().gap_1().items_center()
+            .when(self.right_visible(), |d| d.child(no_drag(
+                Button::new("hd-right-zoom").small().ghost()
+                    .icon(if zoomed { IconName::Minimize2 } else { IconName::Maximize2 })
+                    .tooltip(if zoomed { "还原右侧面板" } else { "放大右侧面板" })
+                    .on_click(cx.listener(|this, _, _, cx| { this.right_zoom = !this.right_zoom; cx.notify(); })),
+            )))
             .child(no_drag(Button::new("hd-right").small().ghost().icon(IconName::PanelRight).tooltip("右侧面板(⌥⌘B)")
-                .on_click(cx.listener(|this, _, _, cx| { this.right_open = !this.right_open; cx.notify(); }))))
+                .on_click(cx.listener(|this, _, _, cx| { this.right_open = !this.right_open; this.right_zoom = false; cx.notify(); }))))
             .child(no_drag(mode_switch("hd-ide", "IDE", ide_icon, false).tooltip("切换到 IDE(⇧⌘E)")
                 .on_click(cx.listener(|this, _, window, cx| this.toggle_ide(window, cx)))))
     }

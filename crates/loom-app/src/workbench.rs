@@ -126,6 +126,8 @@ pub struct Workbench {
     pub live: HashMap<String, crate::live_sig::LiveSig>,
     pub left_open: bool,
     pub right_open: bool,
+    /// 右栏放大:右栏撑满整个窗口(临时隐藏侧栏与对话区),不落盘
+    pub right_zoom: bool,
     pub left_w: f32,
     pub right_w: f32,
     /// 三栏拖动调宽的状态(侧栏 | 对话 | 右面板)
@@ -289,6 +291,7 @@ impl Workbench {
             live: HashMap::new(),
             left_open: true,
             right_open: settings.right_open,
+            right_zoom: false,
             left_w: crate::layout_rules::clamp_left(settings_widths.0),
             right_w: crate::layout_rules::clamp_right(settings_widths.1),
             split: cx.new(|_| gpui_kit::component::resizable::ResizableState::default()),
@@ -1558,6 +1561,14 @@ impl Workbench {
             }
         });
         let t = cx.theme().clone();
+        // 右栏放大:只在聊天页且右栏开着时有效;同步给面板,让标签条给红绿灯让位
+        let zoomed = self.right_zoom && self.right_visible() && !self.ide;
+        self.panel.update(cx, |p, cx| {
+            if p.zoomed != zoomed {
+                p.zoomed = zoomed;
+                cx.notify();
+            }
+        });
         // 托盘跟着会话状态走(内容没变不会重建菜单)
         crate::tray::set_snapshot(self.tray_snapshot(cx));
         // 窗口太窄时自动收起侧栏(变宽后恢复)
@@ -1585,7 +1596,7 @@ impl Workbench {
             .on_action(cx.listener(|this, _: &ToggleLeft, _, cx| { this.left_open = !this.left_open; cx.notify(); }))
             .on_action(cx.listener(|this, _: &crate::app_menu::NavBack, window, cx| this.navigate(false, window, cx)))
             .on_action(cx.listener(|this, _: &crate::app_menu::NavForward, window, cx| this.navigate(true, window, cx)))
-            .on_action(cx.listener(|this, _: &ToggleRight, _, cx| { this.right_open = !this.right_open; cx.notify(); }))
+            .on_action(cx.listener(|this, _: &ToggleRight, _, cx| { this.right_open = !this.right_open; this.right_zoom = false; cx.notify(); }))
             .on_action(cx.listener(|this, a: &ViewAgentRun, _, cx| {
                 this.right_open = true;
                 let id = a.id.clone();
@@ -1635,7 +1646,8 @@ impl Workbench {
             // 平滑滚动拦截层:必须是第一个子元素
             .child(crate::smooth_scroll::layer())
             .when_some(ide_shell, |d, shell| d.child(div().flex_1().min_h_0().w_full().child(shell)))
-            .when(!show_ide, |d| d
+            .when(!show_ide && zoomed, |d| d.child(div().flex_1().min_h_0().w_full().child(self.panel.clone())))
+            .when(!show_ide && !zoomed, |d| d
                 .child(
                     h_flex().flex_1().min_h_0().w_full().child(
                         h_resizable("agent-split").with_state(&self.split)

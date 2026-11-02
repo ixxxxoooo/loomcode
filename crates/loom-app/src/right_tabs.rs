@@ -97,7 +97,8 @@ impl RightPanel {
                         .child(icon(IconName::X, 10., t.muted_foreground)),
                 )
         });
-        crate::window_header::draggable(h_flex().id("rt-tabbar").h(px(crate::window_header::HEADER_H)).w_full().min_w_0().flex_none().px_2().gap_0p5().items_center())
+        crate::window_header::draggable(h_flex().id("rt-tabbar").h(px(crate::window_header::HEADER_H)).w_full().min_w_0().flex_none().px_2()
+            .when(self.zoomed, |d| d.pl(px(crate::window_header::TRAFFIC_PAD))).gap_0p5().items_center())
             // 标签放不下时横向滚动,「+」与右侧按钮始终固定可见
             .child(
                 h_flex().id("rt-tabs-scroll").min_w_0().flex_shrink(1.).h_full().gap_0p5().items_center().overflow_x_scroll()

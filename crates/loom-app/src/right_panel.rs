@@ -115,6 +115,8 @@ pub struct RightPanel {
     pub editor_elsewhere: bool,
     /// 右侧文件树是否收起
     pub tree_collapsed: bool,
+    /// 右栏被放大到整窗(标签条左侧要给红绿灯留位置),由工作台渲染时同步
+    pub zoomed: bool,
     /// 「终端」标签里为单条 Claude 命令打开的只读标签(工具调用 id),以及当前选中的一个
     pub run_tabs: Vec<String>,
     pub active_run: Option<String>,
@@ -163,6 +165,7 @@ impl RightPanel {
             editor,
             editor_elsewhere: false,
             tree_collapsed: false,
+            zoomed: false,
             run_tabs: Vec::new(),
             active_run: None,
             show_tabs: true,
