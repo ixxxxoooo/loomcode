@@ -102,13 +102,7 @@ fn editing_row(session: &Entity<SessionModel>, eid: &str, cx: &App) -> Option<us
 ///
 /// 参数:`session` 会话;`scroller` 滚动状态。
 pub fn render(session: &Entity<SessionModel>, scroller: &Entity<ChatScroll>, cx: &App) -> Option<AnyElement> {
-    let t = cx.theme();
     let max_w = px(crate::timeline::content_max_w(cx));
-    let bg = t.background;
-    let backdrop = |h: f32| {
-        div().absolute().top_0().left_0().right_0().h(px(h))
-            .bg(linear_gradient(0., linear_color_stop(bg.opacity(0.), 0.), linear_color_stop(bg, 1.)))
-    };
     let sc = scroller.read(cx);
     // 悬浮编辑:编辑卡盖在消息原来的位置上向下展开(滚出顶部时盖在顶部),不推挤会话流。
     // 可以同时有多张,各在各自消息的位置上,互不影响;后打开的盖在上面
@@ -121,14 +115,32 @@ pub fn render(session: &Entity<SessionModel>, scroller: &Entity<ChatScroll>, cx:
                 .into_any_element(),
         )
     }).collect();
-    if !pinned.is_empty() {
-        return Some(div().absolute().top_0().left_0().right_0().children(pinned).into_any_element());
+    // 吸顶卡照常显示:打开某条消息的编辑卡不影响顶部的吸顶卡(只有吸顶的正是这条被编辑的消息时,编辑卡已盖在顶部,才不画)
+    let editing_ids = crate::user_message::pinned_edit_ids(session, cx);
+    let sticky = sticky_card(session, sc, &editing_ids, cx);
+    if pinned.is_empty() {
+        return sticky;
     }
+    Some(div().absolute().top_0().left_0().right_0().children(sticky).children(pinned).into_any_element())
+}
+
+/// 吸顶的那张用户消息卡;没有消息到顶、或吸顶的消息正在编辑(编辑卡已盖在顶部)时返回 None。
+fn sticky_card(session: &Entity<SessionModel>, sc: &ChatScroll, editing_ids: &[String], cx: &App) -> Option<AnyElement> {
+    let t = cx.theme();
+    let max_w = px(crate::timeline::content_max_w(cx));
+    let bg = t.background;
+    let backdrop = |h: f32| {
+        div().absolute().top_0().left_0().right_0().h(px(h))
+            .bg(linear_gradient(0., linear_color_stop(bg.opacity(0.), 0.), linear_color_stop(bg, 1.)))
+    };
     let top = sc.max_painted().unwrap_or(0);
     let target = {
         let m = session.read(cx);
         resolve(&m.rows, &m.state.items, top, |r| sc.row_scrolled_past(r))
     }?;
+    if editing_ids.contains(&target.id) {
+        return None;
+    }
     let push = push_offset(target.next.and_then(|n| sc.row_top(n)), card_height(&target.text));
     let Target { id, text, .. } = target;
     let edit = {

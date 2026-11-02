@@ -217,10 +217,12 @@ pub(crate) fn render_editor(session: &Entity<SessionModel>, id: &str, input: &En
     let t = cx.theme();
     let running = session.read(cx).state.phase == loom_core::Phase::Running;
     let has_text = !input.read(cx).value().trim().is_empty();
-    let (s_cancel, s_send, s_esc) = (session.clone(), session.clone(), session.clone());
+    let (s_cancel, s_send, s_esc, s_out) = (session.clone(), session.clone(), session.clone(), session.clone());
+    let id_out = id.to_string();
     let (id_cancel, id_send, id_esc) = (id.to_string(), id.to_string(), id.to_string());
     v_flex().id(SharedString::from(format!("umsg-editor-{id}"))).w_full().gap_2().px(px(14.)).py(px(10.)).rounded(px(12.)).bg(t.popover).border_1().border_color(t.border).shadow_sm()
-        // 多条消息可以同时处于编辑中,点别处不会收起它们;只有取消 / 发送 / Esc(焦点在这张卡里)才关闭这一张
+        // 点编辑卡以外的任何地方:收起这张编辑卡(未发送的修改丢弃);取消 / 发送 / Esc 同样关闭
+        .on_mouse_down_out(move |_, _, cx| { s_out.update(cx, |m, cx| m.end_edit(&id_out, cx)); })
         .on_action(move |_: &crate::workbench::Escape, _, cx| { s_esc.update(cx, |m, cx| m.end_edit(&id_esc, cx)); })
         // 正文区(附件 + 文本框):悬浮时限制最大高度,超出在框内滚动;横向不外溢
         .child(
