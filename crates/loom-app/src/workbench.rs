@@ -128,6 +128,8 @@ pub struct Workbench {
     pub right_open: bool,
     /// 右栏放大:右栏撑满整个窗口(临时隐藏侧栏与对话区),不落盘
     pub right_zoom: bool,
+    /// 鼠标当前悬停在哪个窗口里的右栏上(⌘W 优先关右栏标签)
+    pub right_hover: Option<WindowId>,
     pub left_w: f32,
     pub right_w: f32,
     /// 三栏拖动调宽的状态(侧栏 | 对话 | 右面板)
@@ -292,6 +294,7 @@ impl Workbench {
             left_open: true,
             right_open: settings.right_open,
             right_zoom: false,
+            right_hover: None,
             left_w: crate::layout_rules::clamp_left(settings_widths.0),
             right_w: crate::layout_rules::clamp_right(settings_widths.1),
             split: cx.new(|_| gpui_kit::component::resizable::ResizableState::default()),
@@ -1561,6 +1564,16 @@ impl Workbench {
             }
         });
         let t = cx.theme().clone();
+        let wb_weak = cx.entity().downgrade();
+        let right_host = move |panel: Entity<RightPanel>| {
+            let wb = wb_weak.clone();
+            div().id("right-host").size_full()
+                .on_hover(move |on, window, cx| {
+                    let id = on.then(|| window.window_handle().window_id());
+                    let _ = wb.update(cx, |this, _| this.right_hover = id);
+                })
+                .child(panel)
+        };
         // 右栏放大:只在聊天页且右栏开着时有效;同步给面板,让标签条给红绿灯让位
         let zoomed = self.right_zoom && self.right_visible() && !self.ide;
         self.panel.update(cx, |p, cx| {
@@ -1646,7 +1659,7 @@ impl Workbench {
             // 平滑滚动拦截层:必须是第一个子元素
             .child(crate::smooth_scroll::layer())
             .when_some(ide_shell, |d, shell| d.child(div().flex_1().min_h_0().w_full().child(shell)))
-            .when(!show_ide && zoomed, |d| d.child(div().flex_1().min_h_0().w_full().child(self.panel.clone())))
+            .when(!show_ide && zoomed, |d| d.child(div().flex_1().min_h_0().w_full().child(right_host(self.panel.clone()))))
             .when(!show_ide && !zoomed, |d| d
                 .child(
                     h_flex().flex_1().min_h_0().w_full().child(
@@ -1662,7 +1675,7 @@ impl Workbench {
                                 .child(sidebar::render(self, cx)))
                             .child(resizable_panel().size_range(px(CENTER_MIN)..Pixels::MAX).child(div().size_full().child(v_flex().size_full().when(!full_settings, |d| d.child(self.center_header(cx))).child(div().flex_1().min_h_0().w_full().child(center)))))
                             .child(resizable_panel().size(px(self.right_w)).size_range(px(RIGHT_MIN)..px(RIGHT_MAX)).flex_none().visible(self.right_visible())
-                                .child(div().size_full().child(self.panel.clone()))),
+                                .child(div().size_full().child(right_host(self.panel.clone())))),
                     ),
                 ))
             .when(!show_ide && !self.right_open && self.page == Page::Chat, |d| {

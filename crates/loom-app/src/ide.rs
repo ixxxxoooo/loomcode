@@ -70,6 +70,8 @@ pub struct IdeView {
     pub(crate) root: String,
     pub(crate) docs: HashMap<PathBuf, IdeDoc>,
     pub(crate) tabs: TabModel,
+    /// 鼠标当前悬停在哪个窗口里的编辑器上(⌘W 优先关悬停处的标签,见 `app_menu::close_tab_under_mouse`)
+    pub(crate) hover_win: Option<WindowId>,
     /// 打不开文件或保存失败时的说明
     pub(crate) note: Option<String>,
     /// 以图片方式打开的标签(没有文本文档)
@@ -121,7 +123,7 @@ pub struct IdeView {
 impl IdeView {
     /// 创建空的编辑器视图。
     pub fn new() -> Self {
-        Self { root: String::new(), docs: HashMap::new(), tabs: TabModel::default(), note: None, images: Default::default(), sheets: HashMap::new(), sheet_subs: HashMap::new(), diffs: HashMap::new(), as_text: Default::default(), minimap_ui: Default::default(), applied: None, edit_gen: 0, nav: Default::default(), nav_quiet: false, fresh_open: false, recent: Vec::new(), pending_restore: None, md: HashMap::new(), blame_gutter: false, blame_ui: Default::default(), lsp_listening: false, hover_ui: Default::default(), overlay: None, cursor_msg: None, overlay_sub: None, tabs_scroll: ScrollHandle::new(), tabs_revealed: None }
+        Self { root: String::new(), docs: HashMap::new(), tabs: TabModel::default(), hover_win: None, note: None, images: Default::default(), sheets: HashMap::new(), sheet_subs: HashMap::new(), diffs: HashMap::new(), as_text: Default::default(), minimap_ui: Default::default(), applied: None, edit_gen: 0, nav: Default::default(), nav_quiet: false, fresh_open: false, recent: Vec::new(), pending_restore: None, md: HashMap::new(), blame_gutter: false, blame_ui: Default::default(), lsp_listening: false, hover_ui: Default::default(), overlay: None, cursor_msg: None, overlay_sub: None, tabs_scroll: ScrollHandle::new(), tabs_revealed: None }
     }
 
     /// 设置项目根目录(会话切换时由宿主调用)。
@@ -462,6 +464,14 @@ impl Render for IdeView {
         let t = cx.theme().clone();
         let root = v_flex()
             .key_context("IdeView")
+            .id("ide-view")
+            .on_hover({
+                let me = cx.entity().downgrade();
+                move |on, window, cx| {
+                    let id = on.then(|| window.window_handle().window_id());
+                    let _ = me.update(cx, |this, _| this.hover_win = id);
+                }
+            })
             .size_full()
             .bg(t.background)
             .on_action(cx.listener(|this, _: &CloseTab, window, cx| this.close_active(window, cx)))

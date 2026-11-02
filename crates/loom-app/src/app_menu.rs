@@ -35,8 +35,45 @@ fn on_active_window(cx: &mut App, f: impl FnOnce(&mut Window, &mut App) + 'stati
     });
 }
 
+/// ⌘W 优先关标签:鼠标悬停在编辑器上且有文件标签 → 关当前文件标签;悬停在右栏上 →
+/// 「文件」标签里还有文件标签就关它,否则关右栏当前标签。没有可关的标签返回 false,由调用方走关窗口。
+///
+/// 参数:`cx` 应用上下文。返回:是否已处理(已推迟执行关闭)。
+fn close_tab_under_mouse(cx: &mut App) -> bool {
+    use crate::workbench::RightTab;
+    let Some(active) = cx.active_window() else { return false };
+    let Some(wb) = cx.try_global::<crate::WorkbenchRef>().and_then(|r| r.0.upgrade()) else { return false };
+    let wid = active.window_id();
+    let (editor, panel) = {
+        let w = wb.read(cx);
+        (w.editor.clone(), w.panel.clone())
+    };
+    let editor_hover = editor.read(cx).hover_win == Some(wid);
+    let has_file_tab = editor.read(cx).tabs.active().is_some();
+    let right_hover = wb.read(cx).right_hover == Some(wid);
+    let (p, elsewhere) = { let p = panel.read(cx); ((p.tab, !p.open.is_empty()), p.editor_elsewhere) };
+    let close_file = has_file_tab && !elsewhere && (editor_hover || (right_hover && p.0 == RightTab::Files));
+    if close_file {
+        cx.defer(move |cx| {
+            let _ = active.update(cx, |_, window, cx| editor.update(cx, |v, cx| v.close_active(window, cx)));
+        });
+        return true;
+    }
+    if right_hover && p.1 {
+        cx.defer(move |cx| {
+            let tab = p.0;
+            panel.update(cx, |pn, cx| pn.close_tab(tab, cx));
+        });
+        return true;
+    }
+    false
+}
+
 /// 关闭窗口(⌘W):独立窗口(IDE)真正关闭;主窗口关掉后托盘无法重建,所以改为隐藏应用(点 Dock 图标即恢复)。
 fn close_window(cx: &mut App) {
+    if close_tab_under_mouse(cx) {
+        return;
+    }
     let Some(active) = cx.active_window() else { return };
     let ide = cx.try_global::<crate::WorkbenchRef>().and_then(|r| r.0.upgrade()).and_then(|wb| wb.read(cx).ide_window);
     if ide.is_some_and(|h| h.window_id() == active.window_id()) {
