@@ -54,8 +54,6 @@ pub fn tab_bar(items: Vec<TabItem>, scroll: ScrollHandle, root: &str, cx: &mut C
         // 鼠标竖向滚轮也横向滚动标签(触控板横滑原生支持)
         .on_scroll_wheel(crate::tab_style::wheel_to_horizontal(scroll.clone()))
         .bg(t.sidebar)
-        .border_b_1()
-        .border_color(t.border)
         .children(items.into_iter().enumerate().map(|(i, TabItem { path, dirty, preview, active, pinned })| {
             let is_diff = crate::ide_diff::is_diff(&path);
             let name = if is_diff { crate::ide_diff::tab_title(&path) } else if let Some(n) = crate::ide_untitled::title(&path) { n } else { path.file_name().map(|n| n.to_string_lossy().to_string()).unwrap_or_default() };
@@ -66,6 +64,8 @@ pub fn tab_bar(items: Vec<TabItem>, scroll: ScrollHandle, root: &str, cx: &mut C
             let accent = t.accent;
             crate::tab_style::tab_shell(SharedString::from(format!("ide-tab-{i}")), group.clone(), active, cx)
                 .max_w(px(200.))
+                // 底线只画在未选中的标签上:选中标签与下方内容区融为一体
+                .when(!active, |d| d.border_b_1())
                 .on_click(cx.listener(move |this, ev: &ClickEvent, window, cx| {
                     this.activate(&p_click, window, cx);
                     if ev.click_count() >= 2 {
@@ -96,7 +96,7 @@ pub fn tab_bar(items: Vec<TabItem>, scroll: ScrollHandle, root: &str, cx: &mut C
                 )
         }))
         // 标签右侧的空白:双击新建临时记事本(对标 VS Code)
-        .child(div().id("ide-tabs-fill").flex_1().min_w(px(24.)).h_full().on_click(cx.listener(|this, ev: &ClickEvent, window, cx| {
+        .child(div().id("ide-tabs-fill").flex_1().min_w(px(24.)).h_full().border_b_1().border_color(t.border).on_click(cx.listener(|this, ev: &ClickEvent, window, cx| {
             if ev.click_count() >= 2 {
                 this.new_untitled(window, cx);
             }
