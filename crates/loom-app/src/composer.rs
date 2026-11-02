@@ -396,13 +396,14 @@ impl Render for Composer {
         let mode_color = crate::mode_style::mode_color(mode, cx);
         let this = cx.entity();
 
-        let chip = |id: &'static str, label: String, color: Hsla, kind: Pick, lead: Option<AnyElement>, this: Entity<Self>| {
-            h_flex().id(id).h(px(24.)).px_2().gap_1().items_center().rounded(px(6.)).cursor_pointer().text_size(px(12.))
+        // 窄时 chip 收缩、文字截断(`min_w` 即收缩下限,见 `layout_rules::COMPOSER_MIN_W`),图标与箭头不动,按钮不会被挤出框外
+        let chip = |id: &'static str, label: String, color: Hsla, kind: Pick, lead: Option<AnyElement>, min_w: f32, this: Entity<Self>| {
+            h_flex().id(id).h(px(24.)).min_w(px(min_w)).flex_shrink(1.).overflow_hidden().px_2().gap_1().items_center().rounded(px(6.)).cursor_pointer().text_size(px(12.))
                 .text_color(color).hover(|d| d.bg(t.list_hover))
                 .on_click(move |_, _, cx| { this.update(cx, |c, cx| c.toggle(kind, cx)); })
-                .when_some(lead, |d, l| d.child(l))
-                .child(label)
-                .child(icon(IconName::ChevronDown, 10., color))
+                .when_some(lead, |d, l| d.child(div().flex_none().child(l)))
+                .child(div().flex_1().min_w_0().truncate().child(label))
+                .child(div().flex_none().child(icon(IconName::ChevronDown, 10., color)))
         };
 
         let popup = self.open.map(|kind| match kind {
@@ -528,9 +529,9 @@ impl Render for Composer {
                             false
                         })))
                         .child(
-                            h_flex().h(px(36.)).px_2().gap_1().items_center()
-                                .child(chip("chip-mode", mode.label().to_string(), mode_color, Pick::Mode, Some(icon(crate::mode_style::mode_icon(mode), 13., mode_color).into_any_element()), this.clone()))
-                                .child(chip("chip-model", format!("{model_name} · {}", effort.label()), t.foreground, Pick::Model, Some(crate::brand_icons::brand_icon(&model_id, &model_name, 13., t.foreground)), this.clone()))
+                            h_flex().h(px(36.)).px_2().gap_1().items_center().overflow_hidden()
+                                .child(chip("chip-mode", mode.label().to_string(), mode_color, Pick::Mode, Some(icon(crate::mode_style::mode_icon(mode), 13., mode_color).into_any_element()), crate::layout_rules::MODE_CHIP_MIN, this.clone()))
+                                .child(chip("chip-model", format!("{model_name} · {}", effort.label()), t.foreground, Pick::Model, Some(crate::brand_icons::brand_icon(&model_id, &model_name, 13., t.foreground)), crate::layout_rules::MODEL_CHIP_MIN, this.clone()))
                                 .when(queued > 0, |d| {
                                     // 点击撤回:排队消息退回输入框
                                     let this = this.clone();
@@ -546,7 +547,7 @@ impl Render for Composer {
                                     let this = this.clone();
                                     crate::composer_pop::context_ring(&usage, move |cx| { this.update(cx, |c, cx| c.toggle(Pick::Context, cx)); }, cx)
                                 })
-                                .when_some(self.optimize_error.clone(), |d, e| d.child(div().text_size(px(11.)).text_color(t.danger).truncate().child(e)))
+                                .when_some(self.optimize_error.clone(), |d, e| d.child(div().min_w_0().text_size(px(11.)).text_color(t.danger).truncate().child(e)))
                                 .child(optimize_btn)
                                 .child(send_btn),
                         ),

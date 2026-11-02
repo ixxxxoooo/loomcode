@@ -11,6 +11,29 @@ pub const RIGHT_MAX: f32 = 900.;
 /// 中间对话区的最小宽度。
 pub const CENTER_MIN: f32 = 400.;
 
+/// 输入框(`Composer`)的最小宽度:IDE 对话栏等放输入框的栏,下限就是它。
+///
+/// 由各部分的固定宽度加起来(见 [`composer_floor`]),工具栏里的模式 / 模型 chip 在窄时收缩并截断文字,
+/// 其余控件固定宽度,所以不会出现按钮被挤出框外。
+pub const COMPOSER_MIN_W: f32 = 280.;
+/// 输入框外层左右内边距(各 16)。
+pub const COMPOSER_OUTER_PAD: f32 = 32.;
+/// 工具栏内边距(各 8)与框线(各 1)。
+pub const COMPOSER_BAR_PAD: f32 = 18.;
+/// 模式 chip 收缩后的最小宽度(图标 + 下拉箭头 + 内边距)。
+pub const MODE_CHIP_MIN: f32 = 44.;
+/// 模型 chip 收缩后的最小宽度(品牌图标 + 一小段文字 + 下拉箭头)。
+pub const MODEL_CHIP_MIN: f32 = 80.;
+/// 上下文环、提示词优化、发送三个固定控件的宽度。
+pub const COMPOSER_FIXED: f32 = 26. + 28. + 28.;
+/// 工具栏里 5 个控件之间的间距(gap_1 = 4,共 4 处)。
+pub const COMPOSER_GAPS: f32 = 16.;
+
+/// 输入框各部分固定宽度之和:`COMPOSER_MIN_W` 不得小于它。
+pub fn composer_floor() -> f32 {
+    COMPOSER_OUTER_PAD + COMPOSER_BAR_PAD + MODE_CHIP_MIN + MODEL_CHIP_MIN + COMPOSER_FIXED + COMPOSER_GAPS
+}
+
 /// 窗口窄于这个宽度时自动收起侧栏。
 pub const NARROW_BELOW: f32 = 780.;
 /// 窗口宽于这个宽度时恢复侧栏(比收起阈值大一截,避免在临界宽度来回闪)。
@@ -50,6 +73,13 @@ pub fn is_narrow(was_narrow: bool, width: f32) -> bool {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn 输入框最小宽度容得下所有控件() {
+        assert!(COMPOSER_MIN_W >= composer_floor(), "工具栏控件的固定宽度之和 {} 超过了最小宽度 {COMPOSER_MIN_W}", composer_floor());
+        // 对话区的下限也不能比输入框还窄
+        assert!(CENTER_MIN >= COMPOSER_MIN_W);
+    }
 
     #[test]
     fn 窄窗口判断带滞回() {

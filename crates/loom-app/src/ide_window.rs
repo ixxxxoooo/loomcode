@@ -326,7 +326,7 @@ impl Render for IdeWindow {
                                         .child(resizable_panel().size(px(260.)).size_range(px(120.)..px(600.)).flex_none().visible(self.term_open)
                                             .child(div().size_full().child(self.term.clone()))),
                                 ))
-                                .child(resizable_panel().size(px(420.)).size_range(px(320.)..px(900.)).flex_none().visible(self.chat_open)
+                                .child(resizable_panel().size(px(420.)).size_range(px(crate::layout_rules::COMPOSER_MIN_W)..px(900.)).flex_none().visible(self.chat_open)
                                     .child(chat_col))
                                 .into_any_element()
                         }),
