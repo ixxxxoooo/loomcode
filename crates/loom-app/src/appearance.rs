@@ -3,7 +3,7 @@
 //! @author ixxxxoooo
 
 use crate::UiPrefs;
-use gpui_kit::component::Theme;
+use gpui_kit::component::{ActiveTheme as _, Theme};
 use gpui_kit::component::scroll::ScrollbarMode;
 use gpui_kit::*;
 use std::time::Duration;
@@ -80,6 +80,13 @@ pub fn glyph_anim(id: &str, style: SpinnerStyle, color: Hsla, size: f32) -> AnyE
 /// 当前风格的动画字符(会话里的处理中 / 思考中提示用)。
 pub fn glyph_spinner(id: &str, color: Hsla, cx: &App) -> AnyElement {
     glyph_anim(id, current(cx).style, color, 14.)
+}
+
+/// 会话流行内的小号转圈(工具行、工具组、子 Agent),与思考 / 处理中同一种字符动画,随外观偏好。
+///
+/// 参数:`id` 元素 id 前缀(同一时刻唯一)。
+pub fn row_spinner(id: &str, cx: &App) -> AnyElement {
+    glyph_anim(id, current(cx).style, cx.theme().primary, 11.)
 }
 
 /// 耗时文字:`12s` / `1m 05s` / `1h 02m`。

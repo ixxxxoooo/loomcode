@@ -11,8 +11,7 @@ use crate::tool_card::render_tool;
 use crate::ui::icon;
 use gpui_kit::assets::IconName;
 use gpui_kit::component::shimmer::ShimmerText;
-use gpui_kit::component::spinner::Spinner;
-use gpui_kit::component::{ActiveTheme, Sizable, h_flex, v_flex};
+use gpui_kit::component::{ActiveTheme, h_flex, v_flex};
 use gpui_kit::prelude::FluentBuilder as _;
 use gpui_kit::*;
 use std::ops::Range;
@@ -46,7 +45,7 @@ pub fn render_group(session: &Entity<SessionModel>, range: Range<usize>, cx: &Ap
         .h(px(crate::flow_style::ROW_H)).px_2().gap_2().items_center().rounded(px(6.)).cursor_pointer().self_start()
         .hover(|d| d.bg(t.list_hover))
         .on_click(move |_, _, cx| { s.update(cx, |m, cx| m.toggle(&k, cx)); })
-        .child(if running { Spinner::new().xsmall().into_any_element() } else { icon(IconName::Layers, 14., t.muted_foreground).into_any_element() })
+        .child(if running { crate::appearance::row_spinner(&format!("tgrp-sp-{}", first.id), cx) } else { icon(IconName::Layers, 14., t.muted_foreground).into_any_element() })
         .child(div().text_size(px(13.)).text_color(t.muted_foreground).child(text))
         .when(failed > 0, |d| d.child(div().text_size(px(12.)).text_color(t.danger).child(format!("{failed} 项失败"))))
         .child(icon(if expanded { IconName::ChevronDown } else { IconName::ChevronRight }, 12., t.muted_foreground));

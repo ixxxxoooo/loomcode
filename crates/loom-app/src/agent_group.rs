@@ -9,8 +9,7 @@ use crate::model::SessionModel;
 use crate::row_groups::agents_tally;
 use crate::ui::icon;
 use gpui_kit::assets::IconName;
-use gpui_kit::component::spinner::Spinner;
-use gpui_kit::component::{ActiveTheme, Sizable, h_flex, v_flex};
+use gpui_kit::component::{ActiveTheme, h_flex, v_flex};
 use gpui_kit::prelude::FluentBuilder as _;
 use gpui_kit::*;
 use std::ops::Range;
@@ -40,7 +39,7 @@ pub fn render_group(session: &Entity<SessionModel>, range: Range<usize>, window:
     let header = h_flex().id(SharedString::from(format!("agrp-{}", first.id))).self_start().h(px(crate::flow_style::ROW_H)).px_2().gap_2().items_center().rounded(px(6.)).cursor_pointer()
         .hover(|d| d.bg(cx.theme().list_hover))
         .on_click(move |_, _, cx| { s.update(cx, |m, cx| m.toggle(&k, cx)); })
-        .child(if running > 0 { Spinner::new().xsmall().into_any_element() } else { icon(IconName::Bot, 14., muted).into_any_element() })
+        .child(if running > 0 { crate::appearance::row_spinner(&format!("agrp-sp-{}", first.id), cx) } else { icon(IconName::Bot, 14., muted).into_any_element() })
         .child(div().text_size(px(13.)).text_color(if expanded { fg } else { muted }).child(format!("并行 {} 个子 Agent", cards.len())))
         .when(running > 0, |d| d.child(chip(running, "运行中", cx.theme().primary)))
         .when(done > 0, |d| d.child(chip(done, "已完成", success)))

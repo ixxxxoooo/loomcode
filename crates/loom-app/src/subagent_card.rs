@@ -7,8 +7,7 @@ use crate::model::{SessionModel, UiRequest};
 use crate::timeline;
 use crate::ui::{icon, pill};
 use gpui_kit::assets::IconName;
-use gpui_kit::component::spinner::Spinner;
-use gpui_kit::component::{ActiveTheme, Sizable, h_flex, v_flex};
+use gpui_kit::component::{ActiveTheme, h_flex, v_flex};
 use gpui_kit::prelude::FluentBuilder as _;
 use gpui_kit::*;
 use loom_core::*;
@@ -69,7 +68,7 @@ pub fn render(session: &Entity<SessionModel>, card_data: &SubagentCard, depth: u
                 .child(div().flex_none().text_size(px(12.)).text_color(t.muted_foreground.opacity(0.7)).child(card_data.agent_type.clone()))
                 .when(card_data.background, |d| d.child(pill("后台", t.primary, t.muted))))
             .child(h_flex().gap_2().items_center().text_size(px(12.))
-                .child(h_flex().gap_1p5().items_center().flex_none().when(active, |d| d.child(Spinner::new().xsmall()))
+                .child(h_flex().gap_1p5().items_center().flex_none().when(active, |d| d.child(crate::appearance::row_spinner(&format!("sub-sp-{}", card_data.id), cx)))
                     .when(card_data.status == SubagentStatus::Completed, |d| d.child(icon(IconName::CircleCheck, 12., t.success)))
                     .when(card_data.status == SubagentStatus::Failed, |d| d.child(icon(IconName::CircleX, 12., t.danger)))
                     .when(card_data.status == SubagentStatus::Stopped, |d| d.child(icon(IconName::CircleStop, 12., t.muted_foreground)))

@@ -5,8 +5,7 @@ use crate::diff;
 use crate::model::SessionModel;
 use crate::ui::{MONO, icon, mono_box, pill};
 use gpui_kit::assets::IconName;
-use gpui_kit::component::spinner::Spinner;
-use gpui_kit::component::{ActiveTheme, Sizable, h_flex, v_flex};
+use gpui_kit::component::{ActiveTheme, h_flex, v_flex};
 use gpui_kit::prelude::FluentBuilder as _;
 use gpui_kit::*;
 use loom_core::*;
@@ -33,11 +32,11 @@ pub fn tool_icon(kind: ToolKind) -> IconName {
 }
 
 /// 状态指示器。
-fn status_indicator(status: ToolStatus, cx: &App) -> AnyElement {
+fn status_indicator(id: &str, status: ToolStatus, cx: &App) -> AnyElement {
     let t = cx.theme();
     match status {
         ToolStatus::Pending => icon(IconName::Clock, 12., t.muted_foreground).into_any_element(),
-        ToolStatus::Running => Spinner::new().xsmall().into_any_element(),
+        ToolStatus::Running => crate::appearance::row_spinner(&format!("tool-sp-{id}"), cx),
         // 成功不加勾,只在进行中 / 失败时标示状态
         ToolStatus::Completed => div().into_any_element(),
         ToolStatus::Failed => icon(IconName::X, 12., t.danger).into_any_element(),
@@ -164,7 +163,7 @@ pub fn render_tool(session: &Entity<SessionModel>, tool: &ToolCall, cx: &App) ->
         // 被拒绝 / 被中断:用文字说明,和「失败」区分开
         .when(tool.status == ToolStatus::Denied, |d| d.child(div().flex_none().text_size(px(11.)).text_color(t.warning).child("已拒绝")))
         .when(tool.status == ToolStatus::Interrupted, |d| d.child(div().flex_none().text_size(px(11.)).text_color(t.muted_foreground).child("已中断")))
-        .child(status_indicator(tool.status, cx))
+        .child(status_indicator(&tool.id, tool.status, cx))
         .when(has_body, |d| {
             d.child(
                 div().flex_none().when(!expanded, |d| d.invisible().group_hover(group.clone(), |d| d.visible()))
