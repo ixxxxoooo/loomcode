@@ -112,12 +112,14 @@ pub struct LspProvider {
     /// 所属视图与文档路径(悬停结果写回去)
     view: WeakEntity<IdeView>,
     path: PathBuf,
+    /// 定义请求按词合并的缓存(见 `DefCache`)
+    defs: Arc<Mutex<DefCache>>,
 }
 
 impl LspProvider {
     pub fn new(sync: Arc<DocSync>, view: WeakEntity<IdeView>, path: PathBuf) -> Self {
         let triggers = sync.client.completion_triggers();
-        Self { sync, triggers, view, path }
+        Self { sync, triggers, view, path, defs: Default::default() }
     }
 }
 
@@ -186,37 +188,89 @@ impl HoverProvider for LspProvider {
     }
 }
 
+/// 定义请求的应答(错误转成字符串以便克隆给多个等待者)。
+type DefReply = std::result::Result<Vec<lsp_types::LocationLink>, String>;
+
+/// 「同一个词」的定义缓存与在途请求合并。
+///
+/// 编辑器库在 ⌘ 悬停时,**鼠标每移动一个像素就换一次偏移、重新请求并取消上一个**,而下划线要等结果回来才出现,
+/// 所以鼠标在词上慢慢移动时请求不断被取消,迟迟没有下划线(点击却能跳,因为点击只发一次)。
+/// VS Code 的链接检测器按「词」去重:鼠标还在同一个词里就不再重新请求。这里同样按词(范围 + 文本长度 + 已同步版本)
+/// 合并:在途请求脱离调用方的取消继续跑,同词的后续调用直接等它的结果或拿缓存;只缓存非空成功结果
+/// (服务器还在加载时的空结果不能粘住)。
+#[derive(Default)]
+struct DefCache {
+    key: Option<(std::ops::Range<usize>, usize, i32)>,
+    done: Option<Vec<lsp_types::LocationLink>>,
+    waiters: Vec<async_channel::Sender<DefReply>>,
+}
+
+/// 向服务器要某偏移处的定义,并把范围换算成编辑器的字符列。
+async fn definition_request(sync: Arc<DocSync>, full: String, rope: Rope, offset: usize) -> Result<Vec<lsp_types::LocationLink>> {
+    let lines = split_lines(&full);
+    let pos = to_lsp_pos(&rope, offset, &lines);
+    sync.sync(&full);
+    let rx = sync.client.request("textDocument/definition", json!({ "textDocument": { "uri": sync.uri }, "position": pos }));
+    let v = rx.recv().await.map_err(|e| anyhow!("{e}"))?.map_err(|e| anyhow!(e))?;
+    if v.is_null() {
+        return Ok(vec![]);
+    }
+    let resp: lsp_types::GotoDefinitionResponse = serde_json::from_value(v)?;
+    let mut links = definition_links(resp);
+    loom_diag::debug!("LSP 定义:偏移 {offset} → {} 个结果", links.len());
+    for l in &mut links {
+        if let Some(r) = l.origin_selection_range.as_mut() {
+            fix_range(r, &lines);
+        }
+        // 目标在当前文件就用内存里的内容换算,否则读目标文件
+        let same = l.target_uri.as_str() == sync.uri;
+        let other = (!same).then(|| loom_lsp::uri::to_path(l.target_uri.as_str()).and_then(|p| std::fs::read_to_string(p).ok())).flatten();
+        let target_lines = if same { Some(lines.clone()) } else { other.as_deref().map(split_lines) };
+        if let Some(tl) = target_lines {
+            fix_range(&mut l.target_range, &tl);
+            fix_range(&mut l.target_selection_range, &tl);
+        }
+    }
+    Ok(links)
+}
+
 impl DefinitionProvider for LspProvider {
     fn definitions(&self, text: &Rope, offset: usize, _window: &mut Window, cx: &mut App) -> Task<Result<Vec<lsp_types::LocationLink>>> {
-        let sync = self.sync.clone();
-        let (full, rope) = (text.to_string(), text.clone());
-        cx.background_spawn(async move {
-            let lines = split_lines(&full);
-            let pos = to_lsp_pos(&rope, offset, &lines);
-            sync.sync(&full);
-            let rx = sync.client.request("textDocument/definition", json!({ "textDocument": { "uri": sync.uri }, "position": pos }));
-            let v = rx.recv().await.map_err(|e| anyhow!("{e}"))?.map_err(|e| anyhow!(e))?;
-            if v.is_null() {
-                return Ok(vec![]);
-            }
-            let resp: lsp_types::GotoDefinitionResponse = serde_json::from_value(v)?;
-            let mut links = definition_links(resp);
-            loom_diag::debug!("LSP 定义:偏移 {offset} → {} 个结果", links.len());
-            for l in &mut links {
-                if let Some(r) = l.origin_selection_range.as_mut() {
-                    fix_range(r, &lines);
+        let key = (text.word_range(offset).unwrap_or(offset..offset), text.len(), self.sync.version());
+        let (tx, rx) = async_channel::bounded::<DefReply>(1);
+        let start = {
+            let mut c = self.defs.lock().unwrap();
+            if c.key.as_ref() == Some(&key) {
+                if let Some(done) = &c.done {
+                    return Task::ready(Ok(done.clone()));
                 }
-                // 目标在当前文件就用内存里的内容换算,否则读目标文件
-                let same = l.target_uri.as_str() == sync.uri;
-                let other = (!same).then(|| loom_lsp::uri::to_path(l.target_uri.as_str()).and_then(|p| std::fs::read_to_string(p).ok())).flatten();
-                let target_lines = if same { Some(lines.clone()) } else { other.as_deref().map(split_lines) };
-                if let Some(tl) = target_lines {
-                    fix_range(&mut l.target_range, &tl);
-                    fix_range(&mut l.target_selection_range, &tl);
-                }
+                c.waiters.push(tx);
+                false
+            } else {
+                // 换词了:旧的等待者随发送端丢弃而收到「已取消」,旧请求的结果因键不符被丢弃
+                *c = DefCache { key: Some(key.clone()), done: None, waiters: vec![tx] };
+                true
             }
-            Ok(links)
-        })
+        };
+        if start {
+            let (sync, defs) = (self.sync.clone(), self.defs.clone());
+            let (full, rope) = (text.to_string(), text.clone());
+            cx.background_spawn(async move {
+                let res: DefReply = definition_request(sync, full, rope, offset).await.map_err(|e| e.to_string());
+                let mut c = defs.lock().unwrap();
+                if c.key.as_ref() == Some(&key) {
+                    match &res {
+                        Ok(l) if !l.is_empty() => c.done = Some(l.clone()),
+                        _ => c.key = None,
+                    }
+                    for w in c.waiters.drain(..) {
+                        let _ = w.try_send(res.clone());
+                    }
+                }
+            })
+            .detach();
+        }
+        cx.background_spawn(async move { rx.recv().await.map_err(|e| anyhow!("{e}"))?.map_err(|e| anyhow!(e)) })
     }
 }
 
