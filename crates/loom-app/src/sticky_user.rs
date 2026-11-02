@@ -76,9 +76,19 @@ pub fn push_offset(next_top: Option<f32>, card_h: f32) -> f32 {
     next_top.map_or(0., |y| (y - INSET - card_h - INSET).min(0.))
 }
 
-/// 估算吸附卡高度:短消息单行,长消息两行。
+/// 吸附卡正文行高与最多行数:吸附卡始终很矮(最多两行),长消息只显示开头。
+const LINE_H: f32 = 20.;
+const MAX_LINES: usize = 2;
+
+/// 吸附卡里显示的正文:换行折成空格,让两行都用来显示内容。
+fn flatten(text: &str) -> String {
+    text.split_whitespace().collect::<Vec<_>>().join(" ")
+}
+
+/// 估算吸附卡高度:短消息单行,长消息两行(上下内边距各 10)。
 fn card_height(text: &str) -> f32 {
-    if text.contains('\n') || text.chars().count() > 60 { 60. } else { 40. }
+    let lines = if text.contains('\n') || text.chars().count() > 60 { MAX_LINES } else { 1 };
+    LINE_H * lines as f32 + 20.
 }
 
 /// 正在编辑的用户消息所在的行下标。
@@ -135,12 +145,12 @@ pub fn render(session: &Entity<SessionModel>, scroller: &Entity<ChatScroll>, cx:
             .child(
                 div().w_full().px_3().pt(px(INSET)).flex().justify_center().child(
                     div().id("sticky-user").group("sticky-user").relative().w_full().max_w(max_w)
-                        .px(px(14.)).py(px(10.)).min_h(px(40.)).pr(px(60.)).rounded(px(12.))
+                        .px(px(14.)).py(px(10.)).min_h(px(40.)).pr(px(60.)).rounded(px(12.)).border_1().border_color(crate::user_message::card_border(cx))
                         // 文本被限制在框内:超长内容截断,不外溢
                         .min_w_0().overflow_hidden()
-                        .bg(t.muted).cursor_pointer().text_size(px(14.)).text_color(t.foreground).line_clamp(2)
+                        .bg(crate::user_message::card_bg(cx)).cursor_pointer().text_size(px(14.)).line_height(px(LINE_H)).text_color(t.foreground).line_clamp(MAX_LINES)
                         .on_click(move |_, window, cx| edit_click(window, cx))
-                        .child(text)
+                        .child(flatten(&text))
                         .child(
                             h_flex().absolute().right(px(8.)).bottom(px(8.)).gap_0p5().when(!(copied || retried), |d| d.invisible().group_hover("sticky-user", |d| d.visible()))
                                 .child(action_btn("sticky-retry".into(), IconName::RotateCcw, "重试(原样重新发送)", retried, cx)
@@ -200,6 +210,14 @@ mod tests {
         assert_eq!(editor_body_max(600., 8.), 600. - 8. - 16. - EDITOR_CHROME);
         // 视口很矮时保底,不会变成 0 或负数
         assert_eq!(editor_body_max(100., 8.), EDITOR_MIN_BODY);
+    }
+
+    #[::core::prelude::v1::test]
+    fn 吸附卡高度与正文压平() {
+        assert_eq!(card_height("短"), 40.);
+        assert_eq!(card_height("a\nb"), 60.);
+        assert_eq!(card_height(&"长".repeat(61)), 60.);
+        assert_eq!(flatten("a  b\n\n c"), "a b c");
     }
 
     #[::core::prelude::v1::test]

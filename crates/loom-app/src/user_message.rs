@@ -14,8 +14,16 @@ use gpui_kit::prelude::FluentBuilder as _;
 use gpui_kit::*;
 use std::path::Path;
 
-/// 超过这个行数的用户消息默认折叠。
+/// 超过这个(估算的显示)行数的用户消息默认折叠成固定高度的窗口(参考 OhMyAgent `CollapsibleUserText`)。
 const FOLD_LINES: usize = 6;
+/// 展开后最多显示的行数,再长就在卡内滚动。
+const EXPANDED_LINES: usize = 24;
+/// 估算折行用的每行列数(汉字等宽字符算 2 列)。
+const COLS: usize = 44;
+/// 正文行高。
+const LINE_H: f32 = 21.;
+/// 折叠时底部渐隐的高度。
+const FADE_H: f32 = 22.;
 /// 缩略图边长。
 const THUMB: f32 = 72.;
 
@@ -42,6 +50,31 @@ pub fn display_text(text: &str) -> String {
     // 每行去掉行尾空白,首尾空行去掉
     let lines: Vec<&str> = out.lines().map(str::trim_end).collect();
     lines.join("\n").trim().to_string()
+}
+
+/// 估算正文显示出来占几行:显式换行 + 长行折行(汉字等宽字符按 2 列算,每行 [`COLS`] 列)。
+///
+/// 折行取决于卡片实际宽度,这里只用来决定「要不要折叠」;窗口高度本身是固定的上限,估多了不会出错。
+pub fn estimated_lines(text: &str) -> usize {
+    if text.is_empty() {
+        return 0;
+    }
+    text.split('\n').map(|l| {
+        let cols: usize = l.chars().map(|c| if c.is_ascii() { 1 } else { 2 }).sum();
+        cols.div_ceil(COLS).max(1)
+    }).sum()
+}
+
+/// 用户消息卡的底色:与底部输入框同款的「浮起卡片」底色(浅色主题下是纸白,比会话背景亮一档),
+/// 配描边与极淡的阴影,和会话背景一眼可分。不透明(吸顶卡压在会话流上,不能透出后面的文字)。
+pub fn card_bg(cx: &App) -> Hsla {
+    cx.theme().popover
+}
+
+/// 用户消息卡的描边:比普通分割线略深一点,让卡片边缘清晰。
+pub fn card_border(cx: &App) -> Hsla {
+    let t = cx.theme();
+    crate::theme::mix(t.border, t.foreground, 0.06)
 }
 
 /// 渲染一条用户消息:编辑中显示编辑卡,否则显示消息卡。
@@ -107,10 +140,8 @@ fn file_chip(name: &str, cx: &App) -> AnyElement {
 fn render_card(session: &Entity<SessionModel>, id: &str, text: &str, images: &[String], files: &[String], cx: &App) -> AnyElement {
     let t = cx.theme();
     let text = display_text(text);
-    let lines = text.lines().count();
-    let long = lines > FOLD_LINES;
+    let long = estimated_lines(&text) > FOLD_LINES;
     let folded = session.read(cx).is_expanded(id);
-    let shown: String = if long && !folded { text.lines().take(FOLD_LINES).collect::<Vec<_>>().join("\n") } else { text.clone() };
     let group = SharedString::from(format!("umsg-{id}"));
     let (s_fold, id_fold) = (session.clone(), id.to_string());
     let (s_retry, id_retry) = (session.clone(), id.to_string());
@@ -122,7 +153,7 @@ fn render_card(session: &Entity<SessionModel>, id: &str, text: &str, images: &[S
     };
     let (s_copy_mark, id_copy_mark) = (session.clone(), id.to_string());
     let (s_retry_mark, id_retry_mark) = (session.clone(), id.to_string());
-    v_flex().id(SharedString::from(format!("umsg-card-{id}"))).group(group.clone()).relative().w_full().gap_2().px(px(14.)).py(px(10.)).min_h(px(40.)).pr(px(60.)).rounded(px(12.)).bg(t.muted).cursor_pointer()
+    v_flex().id(SharedString::from(format!("umsg-card-{id}"))).group(group.clone()).relative().w_full().gap_2().px(px(14.)).py(px(10.)).min_h(px(40.)).pr(px(60.)).rounded(px(12.)).bg(card_bg(cx)).border_1().border_color(card_border(cx)).shadow_xs().cursor_pointer()
         .on_click(move |_, window, cx| {
             let (id, text) = (id_click.clone(), text_click.clone());
             s_click.update(cx, |m, cx| m.begin_edit(&id, &text, true, window, cx));
@@ -130,12 +161,15 @@ fn render_card(session: &Entity<SessionModel>, id: &str, text: &str, images: &[S
         .when(!images.is_empty() || !files.is_empty(), |d| {
             d.child(h_flex().flex_wrap().gap_1p5().children(images.iter().map(|n| thumb(n, cx))).children(files.iter().map(|n| file_chip(n, cx))))
         })
-        .when(!shown.is_empty(), |d| d.child(div().min_w_0().text_size(px(14.)).child(shown.clone())))
+        .when(!text.is_empty(), |d| d.child(text_window(id, &text, long, folded, cx)))
         .when(long, |d| {
             d.child(
-                div().id(SharedString::from(format!("user-fold-{id}"))).text_size(px(12.)).text_color(t.primary).cursor_pointer()
+                h_flex().id(SharedString::from(format!("user-fold-{id}"))).gap_1().items_center().text_size(px(12.)).text_color(t.muted_foreground).cursor_pointer()
+                    .hover(|d| d.text_color(t.foreground))
+                    .on_mouse_down(MouseButton::Left, |_, _, cx| cx.stop_propagation())
                     .on_click(move |_, _, cx| { cx.stop_propagation(); s_fold.update(cx, |m, cx| m.toggle(&id_fold, cx)); })
-                    .child(if folded { "收起".to_string() } else { format!("展开全部({lines} 行)") }),
+                    .child(if folded { "收起" } else { "展开" })
+                    .child(icon(if folded { IconName::ChevronUp } else { IconName::ChevronDown }, 11., t.muted_foreground)),
             )
         })
         // 悬停时右下角出现:复制、编辑
@@ -155,6 +189,21 @@ fn render_card(session: &Entity<SessionModel>, id: &str, text: &str, images: &[S
                     }))
 
         )
+        .into_any_element()
+}
+
+/// 正文窗口:短消息原样显示;长消息折叠成固定行数的窗口(底部渐隐),展开后最多 [`EXPANDED_LINES`] 行、再长在卡内滚动。
+fn text_window(id: &str, text: &str, long: bool, folded: bool, cx: &App) -> AnyElement {
+    let body = div().min_w_0().text_size(px(14.)).line_height(px(LINE_H)).child(text.to_string());
+    if !long {
+        return body.into_any_element();
+    }
+    if folded {
+        return div().id(SharedString::from(format!("user-body-{id}"))).max_h(px(LINE_H * EXPANDED_LINES as f32)).overflow_y_scroll().child(body).into_any_element();
+    }
+    let bg = card_bg(cx);
+    div().relative().max_h(px(LINE_H * FOLD_LINES as f32)).overflow_hidden().child(body)
+        .child(div().absolute().bottom_0().left_0().right_0().h(px(FADE_H)).bg(linear_gradient(0., linear_color_stop(bg.opacity(0.), 0.), linear_color_stop(bg, 1.))))
         .into_any_element()
 }
 
@@ -295,5 +344,18 @@ mod tests {
     fn 普通方括号文字保留() {
         assert_eq!(display_text("数组 [Image] 与 [ImageData #1] 不是占位符"), "数组 [Image] 与 [ImageData #1] 不是占位符");
         assert_eq!(display_text("没有结束的 [Image #9"), "没有结束的 [Image #9");
+    }
+
+    #[::core::prelude::v1::test]
+    fn 估算显示行数() {
+        assert_eq!(estimated_lines(""), 0);
+        assert_eq!(estimated_lines("短"), 1);
+        assert_eq!(estimated_lines("a\n\nb"), 3);
+        // 一行很长的 ASCII(如 curl 命令)折成多行
+        assert_eq!(estimated_lines(&"x".repeat(COLS * 3 + 1)), 4);
+        // 汉字按 2 列
+        assert_eq!(estimated_lines(&"字".repeat(COLS)), 2);
+        // 少数几行但每行很长 → 超过折叠阈值
+        assert!(estimated_lines(&format!("{}\n{}", "x".repeat(200), "y".repeat(200))) > FOLD_LINES);
     }
 }

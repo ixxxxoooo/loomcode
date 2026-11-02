@@ -64,6 +64,8 @@ fn user_variants() -> Script {
     b.user_rich("", &["a.png", "b.png", "c.png"], &[]);
     b.user("**不会被渲染成 Markdown** 的原样文本 `code`");
     b.user("中英混排 mixed text 12345 测试");
+    // 行数不多但每行很长(粘贴的 curl 命令):窄栏里折成很多行,也只显示固定高度的窗口
+    b.user("不对啊。我下载的没有啊 curl --url 'https://example.com/api/chart/sql_data?logID=log_7253789162753282' \\\n  -H 'accept: application/json, text/plain, */*' \\\n  -H 'accept-language: zh-CN,zh;q=0.9,en;q=0.8' \\\n  -b '__debug__=1; SESSIONID=6d691bbcb4c8d13500edb4f74d9f4c4b1793083676; USERID=6c6977656e6a69616f; TOKEN=eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJhdWQiOiIyNDFmZDBhODFkN2M0YWUyOWZkODUzYTQxNzI5NWUzZCIsImlzcyI6Inp5YilsInN1Yil6Ijk5ODczMzIzNTgyNjYiLCJleHAiOjE3OTM3ODk3NjN9' \\\n  -H 'dnt: 1' \\\n  -H 'priority: u=1, i'");
     b.say("以上是各类用户消息的样式。");
     b.build()
 }
