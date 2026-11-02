@@ -3654,7 +3654,7 @@ dependencies = [
 
 [[package]]
 name = "loom-app"
-version = "0.1.1"
+version = "0.1.2"
 dependencies = [
  "anyhow",
  "async-channel",
@@ -3690,7 +3690,7 @@ dependencies = [
 
 [[package]]
 name = "loom-automation"
-version = "0.1.1"
+version = "0.1.2"
 dependencies = [
  "chrono",
  "serde",
@@ -3700,7 +3700,7 @@ dependencies = [
 
 [[package]]
 name = "loom-browser"
-version = "0.1.1"
+version = "0.1.2"
 dependencies = [
  "thiserror 2.0.21",
  "ureq",
@@ -3709,7 +3709,7 @@ dependencies = [
 
 [[package]]
 name = "loom-canvas"
-version = "0.1.1"
+version = "0.1.2"
 dependencies = [
  "serde",
  "serde_json",
@@ -3718,7 +3718,7 @@ dependencies = [
 
 [[package]]
 name = "loom-claude"
-version = "0.1.1"
+version = "0.1.2"
 dependencies = [
  "async-channel",
  "base64 0.22.1",
@@ -3733,7 +3733,7 @@ dependencies = [
 
 [[package]]
 name = "loom-config"
-version = "0.1.1"
+version = "0.1.2"
 dependencies = [
  "loom-core",
  "loom-diag",
@@ -3745,7 +3745,7 @@ dependencies = [
 
 [[package]]
 name = "loom-core"
-version = "0.1.1"
+version = "0.1.2"
 dependencies = [
  "async-channel",
  "serde",
@@ -3755,7 +3755,7 @@ dependencies = [
 
 [[package]]
 name = "loom-demo"
-version = "0.1.1"
+version = "0.1.2"
 dependencies = [
  "async-channel",
  "loom-core",
@@ -3764,7 +3764,7 @@ dependencies = [
 
 [[package]]
 name = "loom-diag"
-version = "0.1.1"
+version = "0.1.2"
 dependencies = [
  "backtrace",
  "crash-handler",
@@ -3776,7 +3776,7 @@ dependencies = [
 
 [[package]]
 name = "loom-lsp"
-version = "0.1.1"
+version = "0.1.2"
 dependencies = [
  "async-channel",
  "loom-diag",
@@ -3785,7 +3785,7 @@ dependencies = [
 
 [[package]]
 name = "loom-sheet"
-version = "0.1.1"
+version = "0.1.2"
 dependencies = [
  "calamine",
  "chardetng",
@@ -3794,7 +3794,7 @@ dependencies = [
 
 [[package]]
 name = "loom-term"
-version = "0.1.1"
+version = "0.1.2"
 dependencies = [
  "alacritty_terminal",
  "loom-diag",
