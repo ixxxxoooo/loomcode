@@ -141,9 +141,13 @@ impl Translator {
     }
 
     /// 用户发出的提示:claude 不会回显,由界面侧自己追加到时间线。
-    pub fn user_prompt(&mut self, text: &str, images: &[String]) -> AgentEvent {
+    /// 返回:追加条目事件 + 条目与 claude 消息 `uuid` 的对应(文件回退用)。
+    pub fn user_prompt(&mut self, text: &str, images: &[String], uuid: &str) -> Vec<AgentEvent> {
         let id = self.next_id("u");
-        AgentEvent::Append { parent: None, item: TimelineItem::User { id, text: text.into(), images: images.to_vec(), files: Vec::new() } }
+        vec![
+            AgentEvent::Append { parent: None, item: TimelineItem::User { id: id.clone(), text: text.into(), images: images.to_vec(), files: Vec::new() } },
+            AgentEvent::UserUuid { id, uuid: uuid.into() },
+        ]
     }
 
     /// 取走挂起的请求(应答时调用)。
@@ -533,10 +537,15 @@ impl Translator {
             return Vec::new();
         }
         let id = self.next_id("u");
-        vec![AgentEvent::Append {
+        let mut out = vec![AgentEvent::Append {
             parent: None,
-            item: TimelineItem::User { id, text: text.into(), images, files: Vec::new() },
-        }]
+            item: TimelineItem::User { id: id.clone(), text: text.into(), images, files: Vec::new() },
+        }];
+        // jsonl 里这条记录的 uuid 就是文件检查点的键
+        if let Some(uuid) = v.get("uuid").and_then(Value::as_str) {
+            out.push(AgentEvent::UserUuid { id, uuid: uuid.into() });
+        }
+        out
     }
 
     /// 回放时解析 `<task-notification>` 注入消息。

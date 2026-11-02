@@ -148,6 +148,7 @@ enum ReqKind {
     Other(&'static str),
     Usage,
     Context,
+    Rewind { uuid: String, dry_run: bool },
 }
 
 struct Actor {
@@ -270,11 +271,12 @@ impl Actor {
                     }
                 }
                 // claude 不回显用户输入,这里补上时间线条目(引导消息同样)
-                let echo = self.translator.user_prompt(&text, &images);
-                if !self.emit(echo) {
+                let uuid = uuid::Uuid::new_v4().to_string();
+                let echo = self.translator.user_prompt(&text, &images, &uuid);
+                if !self.emit_all(echo) {
                     return false;
                 }
-                let msg = protocol::user_message(&text, &images, steering);
+                let msg = protocol::user_message(&text, &images, steering, &uuid);
                 self.liveness.sent(msg.get("uuid").and_then(Value::as_str).unwrap_or_default());
                 self.write(&msg);
             }
@@ -318,6 +320,10 @@ impl Actor {
                     ok &= self.emit(AgentEvent::ModeChanged(mode));
                 }
                 return ok;
+            }
+            AgentCommand::RewindFiles { uuid, dry_run } => {
+                let kind = ReqKind::Rewind { uuid: uuid.clone(), dry_run };
+                self.request(kind, |id| protocol::rewind_files(id, &uuid, dry_run));
             }
             AgentCommand::StopTask { task_id } => {
                 self.request(ReqKind::Other("停止任务"), |id| protocol::stop_task(id, &task_id));
@@ -470,6 +476,11 @@ impl Actor {
                 Some(ev) => self.emit(ev),
                 None => true,
             },
+            ReqKind::Rewind { uuid, dry_run } => {
+                let outcome = crate::rewind::parse(&uuid, dry_run, ok, &resp["response"], &error);
+                loom_diag::info!("回退文件 dry_run={dry_run} 结果:可回退={} 文件 {} 个 错误={:?}", outcome.can_rewind, outcome.files.len(), outcome.error);
+                self.emit(AgentEvent::Rewind(outcome))
+            }
             ReqKind::Usage => {
                 let ev = self.translator.account_usage(&resp["response"], ok);
                 self.emit(ev)

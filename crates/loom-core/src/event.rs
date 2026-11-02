@@ -119,6 +119,10 @@ pub enum AgentEvent {
     TurnStarted,
     /// 记录某个条目的用时(秒):思考条目是一次思考的用时,用户消息条目是整个回合的用时(历史回放用时间戳算出)
     Duration { id: String, secs: u64 },
+    /// 用户消息条目对应的 claude 消息 uuid(文件检查点按它记录,回退时用)
+    UserUuid { id: String, uuid: String },
+    /// 文件回退请求的结果(预览或实际执行)
+    Rewind(crate::rewind::RewindOutcome),
     /// 追加一个条目
     Append { parent: Option<String>, item: TimelineItem },
     /// 助手文本增量
@@ -186,6 +190,8 @@ pub enum AgentCommand {
     /// 替换注入 claude 的额外环境变量(切换模型服务商时用):惰性后端结束当前进程,
     /// 下一条提示用新环境 `--resume` 继续当前会话;其余后端忽略
     SetEnv(Vec<(String, String)>),
+    /// 把 Claude 改过的文件回退到某条用户消息(claude 消息 uuid)发出之前;`dry_run` 只预览会改哪些文件
+    RewindFiles { uuid: String, dry_run: bool },
     /// 触发演示场景(仅演示后端识别)
     RunScenario(String),
     /// 关闭后端(结束子进程)

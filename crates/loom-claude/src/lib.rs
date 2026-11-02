@@ -20,6 +20,7 @@ pub mod options;
 pub mod session_index;
 pub mod usage;
 pub mod protocol;
+pub mod rewind;
 pub mod rewrite;
 pub mod translate;
 

@@ -9,7 +9,8 @@ use loom_core::{Effort, PermissionMode};
 ///
 /// 已对真实 claude 实测:`now` 会提前收尾当前回合(先发一个空的 `result success`,再另开回合),
 /// 不是引导;`next`(也是不写时的默认值)才并入当前回合,只产生一个 `result`。
-pub fn user_message(text: &str, images: &[String], steer: bool) -> Value {
+/// `uuid` 是这条消息的 claude 消息 id:文件检查点按它记录,回退时要用同一个。
+pub fn user_message(text: &str, images: &[String], steer: bool, uuid: &str) -> Value {
     let mut content: Vec<Value> = Vec::new();
     for path in images {
         match std::fs::read(path) {
@@ -31,7 +32,7 @@ pub fn user_message(text: &str, images: &[String], steer: bool) -> Value {
         "message": {"role": "user", "content": content},
         "parent_tool_use_id": null,
         "session_id": "",
-        "uuid": uuid::Uuid::new_v4().to_string(),
+        "uuid": uuid,
     });
     if steer {
         msg["priority"] = json!("next");
@@ -70,6 +71,12 @@ pub fn initialize(request_id: &str) -> Value {
             "forwardSubagentText": true,
         }),
     )
+}
+
+/// 把 Claude 改过的文件回退到 `uuid` 那条用户消息发出之前;`dry_run` 只返回会改哪些文件。
+/// 需要启动时设置 `CLAUDE_CODE_ENABLE_SDK_FILE_CHECKPOINTING`(见 `ClaudeOptions::env`)。
+pub fn rewind_files(request_id: &str, uuid: &str, dry_run: bool) -> Value {
+    control_request(request_id, json!({"subtype": "rewind_files", "user_message_id": uuid, "dry_run": dry_run}))
 }
 
 /// 查询上下文按类别的明细(不调用模型)。
@@ -226,10 +233,11 @@ mod tests {
 
     #[test]
     fn 用户消息含图片与引导优先级() {
-        let m = user_message("你好", &[], true);
+        let m = user_message("你好", &[], true, "u-1");
+        assert_eq!(m["uuid"], "u-1", "检查点按这个 uuid 记录");
         assert_eq!(m["priority"], "next", "引导不能用 now,now 会提前结束当前回合");
         assert_eq!(m["message"]["content"][0]["text"], "你好");
-        let m = user_message("x", &["/不存在.png".into()], false);
+        let m = user_message("x", &["/不存在.png".into()], false, "u-2");
         assert!(m.get("priority").is_none());
         assert_eq!(m["message"]["content"].as_array().unwrap().len(), 2);
     }

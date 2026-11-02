@@ -150,9 +150,9 @@ fn run(inner: ClaudeBackend, mut config: BackendConfig, cmd_rx: async_channel::R
                 real.send(cmd);
                 continue;
             }
-            // 进程已退出:提示与关闭会重新启动,其余命令(查用量、切模型等)只记下不启动
+            // 进程已退出:提示、回退文件与关闭会重新启动,其余命令(查用量、切模型等)只记下不启动
             match cmd {
-                AgentCommand::Prompt { .. } | AgentCommand::Shutdown => break cmd,
+                AgentCommand::Prompt { .. } | AgentCommand::RewindFiles { .. } | AgentCommand::Shutdown => break cmd,
                 _ => continue,
             }
         };

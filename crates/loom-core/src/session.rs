@@ -35,6 +35,10 @@ pub struct SessionState {
     pub durations: std::collections::HashMap<String, u64>,
     /// 后台任务表(按开始顺序);含已结束的,界面用 `counts_as_running` 过滤
     pub tasks: Vec<BackgroundTask>,
+    /// 用户消息条目 id → claude 消息 uuid(文件检查点回退用,见 `rewind.rs`)
+    pub user_uuids: std::collections::HashMap<String, String>,
+    /// 进行中的文件回退确认(一次只有一条)
+    pub rewind: Option<crate::rewind::RewindPrompt>,
 }
 
 impl Default for SessionState {
@@ -52,6 +56,8 @@ impl Default for SessionState {
             durations: Default::default(),
             tasks: Vec::new(),
             last_stop: None,
+            user_uuids: Default::default(),
+            rewind: None,
         }
     }
 }
@@ -111,6 +117,10 @@ impl SessionState {
             AgentEvent::Duration { id, secs } => {
                 self.durations.insert(id, secs);
             }
+            AgentEvent::UserUuid { id, uuid } => {
+                self.user_uuids.insert(id, uuid);
+            }
+            AgentEvent::Rewind(outcome) => self.rewind_result(outcome),
             AgentEvent::Append { parent, mut item } => {
                 // 子 Agent 卡片进入时间线时记录开始时间;嵌套条目的到来算作父卡片的一次活动
                 if let TimelineItem::Subagent(c) = &mut item {

@@ -375,6 +375,12 @@ impl Render for IdeWindow {
             .track_focus(&self.focus)
             .on_action(cx.listener(|this, _: &SaveFile, _, cx| this.save(cx)))
             .on_action(cx.listener(|this, a: &OpenPath, window, cx| this.open_path(&a.path, window, cx)))
+            // 工具卡「在终端面板查看」:命令的只读标签在 Agent 右栏的终端面板里,转给工作台打开并提示
+            .on_action(cx.listener(|this, a: &crate::workbench::ViewAgentRun, window, cx| {
+                let (wb, id) = (this.wb.clone(), a.id.clone());
+                cx.defer(move |cx| wb.update(cx, |w, cx| w.show_agent_run(id, cx)));
+                crate::notice::info(window, cx, "已在 Agent 窗口右栏的「终端」里打开这条命令");
+            }))
             .on_action(cx.listener(|this, a: &crate::term_links::OpenTermPath, window, cx| {
                 this.open_at(std::path::PathBuf::from(&a.path), a.line.max(1), window, cx);
             }))

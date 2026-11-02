@@ -1450,6 +1450,15 @@ impl Workbench {
         if p.is_absolute() { p } else { PathBuf::from(self.active_project_path().unwrap_or_default()).join(p) }
     }
 
+    /// 在 Agent 右栏的终端面板里打开一条命令的只读标签。
+    ///
+    /// 参数:`id` 工具调用 id。
+    pub fn show_agent_run(&mut self, id: String, cx: &mut Context<Self>) {
+        self.right_open = true;
+        self.panel.update(cx, |p, cx| p.open_run(id, cx));
+        cx.notify();
+    }
+
     /// 统一的「打开文件」入口(对话里的路径、命令面板、文件树都走这里):文件在全工作台唯一的编辑器里打开。
     ///
     /// 参数:`path` 绝对或相对项目根的路径。显示位置:融合 IDE 里直接可见;独立 IDE 窗口开着就聚焦它;
@@ -1667,12 +1676,9 @@ impl Workbench {
                     this.editor.update(cx, |v, cx| v.goto(line, 1, window, cx));
                 }
             }))
-            .on_action(cx.listener(|this, a: &ViewAgentRun, _, cx| {
-                this.right_open = true;
-                let id = a.id.clone();
-                this.panel.update(cx, |p, cx| p.open_run(id, cx));
-                cx.notify();
-            }))
+            // 会话流里 Diff 头的路径:融合 IDE 里由 IdeWindow 先接住,Agent 窗口走统一的打开文件入口
+            .on_action(cx.listener(|this, a: &crate::ide_window::OpenPath, window, cx| this.open_file(a.path.clone(), window, cx)))
+            .on_action(cx.listener(|this, a: &ViewAgentRun, _, cx| this.show_agent_run(a.id.clone(), cx)))
             .on_action(cx.listener(|this, _: &ForkActive, window, cx| {
                 let (Some(id), Some(ix)) = (this.active.clone(), this.current_project_ix()) else { return };
                 let Some(cwd) = this.projects.get(ix).map(|p| p.path.clone()) else { return };

@@ -123,6 +123,8 @@ impl ClaudeOptions {
             ("CLAUDE_AGENT_SDK_VERSION".into(), "0.2.0".into()),
             ("CLAUDE_CODE_EMIT_SESSION_STATE_EVENTS".into(), "1".into()),
             ("CLAUDE_CODE_SDK_READS_SESSION_STATE".into(), "1".into()),
+            // 开启文件检查点(SDK 的 enableFileCheckpointing),「回退文件」靠它
+            ("CLAUDE_CODE_ENABLE_SDK_FILE_CHECKPOINTING".into(), "1".into()),
             // 用户 shell 里的强度变量会压过 --effort 与运行中切换,这里置空;extra_env 显式设置的仍然生效
             ("CLAUDE_CODE_EFFORT_LEVEL".into(), String::new()),
         ];

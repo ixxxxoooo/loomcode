@@ -255,7 +255,7 @@ pub fn render_content(content: &ToolContent, run_id: Option<&str>, lang: &str, f
                             d.child(div().flex_none().child(pill(format!("退出码 {code}"), fg, bg)))
                         })
                         .when_some(run_id.map(str::to_string), |d, id| {
-                            // 只有 Agent 窗口处理这个动作(IDE 窗口里没有对应面板,等于无操作)
+                            // Agent 窗口直接打开右栏终端面板;IDE 窗口转给工作台并提示
                             d.child(
                                 div().id(SharedString::from(format!("view-run-{id}"))).flex_none().cursor_pointer().tooltip(move |window, cx| gpui_kit::component::tooltip::Tooltip::new("在终端面板查看").build(window, cx))
                                     .hover(|s| s.opacity(0.7))
@@ -276,7 +276,7 @@ pub fn render_content(content: &ToolContent, run_id: Option<&str>, lang: &str, f
                 .child(
                     h_flex().gap_2().text_size(px(12.)).font_family(MONO)
                         .child({
-                            // 点击路径:在 IDE 编辑器里打开(Agent 窗口里无处理者,等于无操作)
+                            // 点击路径:在编辑器里打开(IDE 窗口由 IdeWindow 处理,Agent 窗口由 Workbench 处理)
                             let target = path.clone();
                             div().id(SharedString::from(format!("diff-path-{path}"))).cursor_pointer().text_color(t.muted_foreground)
                                 .hover(|s| s.text_color(t.primary).underline())
