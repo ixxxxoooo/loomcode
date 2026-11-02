@@ -1,8 +1,8 @@
 //! 菜单栏托盘(参考 OhMyAgent):模板图标 + 右下角的彩色状态点,菜单里是状态摘要、
 //! 打开 / 新对话 / 最近会话(带状态点)/ 设置 / 检查更新 / 退出。
 //!
-//! 状态点:运行中橙色实心、等待你处理琥珀色空心环,两者都「呼吸」(透明度随时间起伏,约 1.6 秒一个来回);
-//! 有未读结果时蓝色实心静止;都没有就不显示。界面线程每 66 毫秒调用 [`tick`] 驱动呼吸,没有运行中会话时什么也不做。
+//! 状态点:运行中橙色实心并「呼吸」(透明度随时间起伏,约 1.6 秒一个来回);
+//! 等待你处理琥珀色空心环、有未读结果时蓝色实心都静止;都没有就不显示。界面线程每 66 毫秒调用 [`tick`] 驱动呼吸,没有运行中会话时什么也不做。
 //! 菜单里点选项通过 [`commands`] 通道交给工作台处理。
 //!
 //! @author ixxxxoooo
@@ -348,9 +348,9 @@ mod mac {
         });
     }
 
-    /// 推进呼吸动画一帧:只有运行中 / 等待处理才起伏,未读与空闲静止。
+    /// 推进呼吸动画一帧:只有运行中才起伏,等待处理、未读与空闲静止。
     pub fn tick() {
-        let animating = LAST.with_borrow(|s| matches!(indicator(s), TrayState::Running | TrayState::Waiting));
+        let animating = LAST.with_borrow(|s| matches!(indicator(s), TrayState::Running));
         if !animating {
             return;
         }

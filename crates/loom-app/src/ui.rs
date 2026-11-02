@@ -21,14 +21,14 @@ pub fn breathe<E: IntoElement + StatefulInteractiveElement + Styled + 'static>(e
         |d, delta| d.opacity(0.675 + 0.325 * (delta * std::f32::consts::TAU).cos())).into_any_element()
 }
 
-/// 会话状态点:运行实心(呼吸)、等待空心环(呼吸)、未读小点、空闲不显示。
+/// 会话状态点:运行实心(只有运行中才呼吸)、等待空心环(静止)、未读小点(静止)、空闲不显示。
 pub fn status_dot(badge: SessionBadge, cx: &App) -> Option<AnyElement> {
     let t = cx.theme();
     let base = |id: &'static str| div().id(id).size(px(8.)).rounded_full().flex_none();
     match badge {
         SessionBadge::Idle => None,
         SessionBadge::Running => Some(breathe(base("dot-run").bg(t.primary), "dot-run-breath")),
-        SessionBadge::Waiting => Some(breathe(base("dot-wait").border_2().border_color(t.warning), "dot-wait-breath")),
+        SessionBadge::Waiting => Some(base("dot-wait").border_2().border_color(t.warning).into_any_element()),
         SessionBadge::Unread => Some(base("dot-unread").bg(t.info).into_any_element()),
     }
 }

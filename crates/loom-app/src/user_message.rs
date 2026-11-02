@@ -48,20 +48,22 @@ pub fn display_text(text: &str) -> String {
 pub fn render_user(session: &Entity<SessionModel>, id: &str, text: &str, images: &[String], files: &[String], cx: &App) -> AnyElement {
     let editing = session.read(cx).editing.as_ref().filter(|e| e.id == id && !e.pinned).map(|e| e.input.clone());
     match editing {
-        Some(input) => render_editor(session, &input, images, cx),
+        Some(input) => render_editor(session, &input, images, None, cx),
         None => render_card(session, id, text, images, files, cx),
     }
 }
 
 /// 悬浮在会话流顶部的编辑卡(从吸顶卡发起的编辑);没有这样的编辑时返回 None。
-pub fn render_pinned_editor(session: &Entity<SessionModel>, cx: &App) -> Option<AnyElement> {
+///
+/// 参数:`max_body_h` 正文区(附件 + 文本框)的最大高度,超出在卡内滚动。
+pub fn render_pinned_editor(session: &Entity<SessionModel>, max_body_h: f32, cx: &App) -> Option<AnyElement> {
     let m = session.read(cx);
     let e = m.editing.as_ref().filter(|e| e.pinned)?;
     let images = m.state.items.iter().find_map(|i| match i {
         loom_core::TimelineItem::User { id, images, .. } if id == &e.id => Some(images.clone()),
         _ => None,
     }).unwrap_or_default();
-    Some(render_editor(session, &e.input.clone(), &images, cx))
+    Some(render_editor(session, &e.input.clone(), &images, Some(max_body_h), cx))
 }
 
 /// 悬停操作条上的小图标按钮:按下有底色反馈,`done` 为真时显示绿色对勾(复制 / 重试后短暂显示)。
@@ -128,7 +130,7 @@ fn render_card(session: &Entity<SessionModel>, id: &str, text: &str, images: &[S
         .when(!images.is_empty() || !files.is_empty(), |d| {
             d.child(h_flex().flex_wrap().gap_1p5().children(images.iter().map(|n| thumb(n, cx))).children(files.iter().map(|n| file_chip(n, cx))))
         })
-        .when(!shown.is_empty(), |d| d.child(div().text_size(px(14.)).child(shown.clone())))
+        .when(!shown.is_empty(), |d| d.child(div().min_w_0().text_size(px(14.)).child(shown.clone())))
         .when(long, |d| {
             d.child(
                 div().id(SharedString::from(format!("user-fold-{id}"))).text_size(px(12.)).text_color(t.primary).cursor_pointer()
@@ -157,7 +159,7 @@ fn render_card(session: &Entity<SessionModel>, id: &str, text: &str, images: &[S
 }
 
 /// 就地编辑卡:附件(只读)+ 文本框 + 取消 / 重新发送。
-pub(crate) fn render_editor(session: &Entity<SessionModel>, input: &Entity<TextareaState>, images: &[String], cx: &App) -> AnyElement {
+pub(crate) fn render_editor(session: &Entity<SessionModel>, input: &Entity<TextareaState>, images: &[String], max_body_h: Option<f32>, cx: &App) -> AnyElement {
     let t = cx.theme();
     let running = session.read(cx).state.phase == loom_core::Phase::Running;
     let has_text = !input.read(cx).value().trim().is_empty();
@@ -166,8 +168,13 @@ pub(crate) fn render_editor(session: &Entity<SessionModel>, input: &Entity<Texta
         // 点编辑卡以外的任何地方:收起编辑(未发送的修改丢弃)
         .on_mouse_down_out(move |_, _, cx| { s_out.update(cx, |m, cx| m.end_edit(cx)); })
         .on_action(move |_: &crate::workbench::Escape, _, cx| { s_esc.update(cx, |m, cx| m.end_edit(cx)); })
-        .when(!images.is_empty(), |d| d.child(h_flex().flex_wrap().gap_1p5().children(images.iter().map(|n| thumb(n, cx)))))
-        .child(Textarea::new(input).appearance(false).bordered(false))
+        // 正文区(附件 + 文本框):悬浮时限制最大高度,超出在框内滚动;横向不外溢
+        .child(
+            v_flex().id("umsg-editor-body").w_full().min_w_0().gap_2().overflow_x_hidden()
+                .when_some(max_body_h, |d, h| d.max_h(px(h)).overflow_y_scroll())
+                .when(!images.is_empty(), |d| d.child(h_flex().flex_wrap().gap_1p5().children(images.iter().map(|n| thumb(n, cx)))))
+                .child(Textarea::new(input).appearance(false).bordered(false)),
+        )
         .when(running, |d| d.child(div().text_size(px(11.)).text_color(t.muted_foreground).child("回合进行中,将排到本轮结束后发送。")))
         .child(
             h_flex().gap_2().items_center().justify_end()

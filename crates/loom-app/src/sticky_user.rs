@@ -18,6 +18,17 @@ use loom_core::TimelineItem;
 const INSET: f32 = 8.;
 /// 渐隐高度。
 const FADE_H: f32 = 28.;
+/// 悬浮编辑卡里正文区之外的固定高度(内边距、按钮行、提示行、边框)。
+const EDITOR_CHROME: f32 = 100.;
+/// 悬浮编辑卡正文区的最小高度。
+const EDITOR_MIN_BODY: f32 = 60.;
+
+/// 悬浮编辑卡正文区的最大高度:视口剩余高度扣掉上下间距与卡片自身的固定部分。
+///
+/// 参数:`viewport_h` 会话流视口高度;`top` 卡片顶边相对视口的 Y。
+pub fn editor_body_max(viewport_h: f32, top: f32) -> f32 {
+    (viewport_h - top - INSET * 2. - EDITOR_CHROME).max(EDITOR_MIN_BODY)
+}
 
 /// 吸附目标:行下标、消息 id、正文、其后下一条用户消息的行下标。
 #[derive(Debug, PartialEq)]
@@ -91,8 +102,8 @@ pub fn render(session: &Entity<SessionModel>, scroller: &Entity<ChatScroll>, cx:
     };
     let sc = scroller.read(cx);
     // 悬浮编辑:编辑卡盖在消息原来的位置上向下展开(吸附时盖在顶部),不推挤会话流
-    if let Some(editor) = crate::user_message::render_pinned_editor(session, cx) {
-        let y = editing_row(session, cx).and_then(|r| sc.row_top(r)).unwrap_or(INSET).max(INSET);
+    let y = editing_row(session, cx).and_then(|r| sc.row_top(r)).unwrap_or(INSET).max(INSET);
+    if let Some(editor) = crate::user_message::render_pinned_editor(session, editor_body_max(sc.viewport_height(), y), cx) {
         return Some(
             div().absolute().top(px(y)).left_0().right_0().px_3()
                 .child(div().w_full().px_1().flex().justify_center().child(div().w_full().max_w(max_w).child(editor)))
@@ -125,6 +136,8 @@ pub fn render(session: &Entity<SessionModel>, scroller: &Entity<ChatScroll>, cx:
                 div().w_full().px_3().pt(px(INSET)).flex().justify_center().child(
                     div().id("sticky-user").group("sticky-user").relative().w_full().max_w(max_w)
                         .px(px(14.)).py(px(10.)).min_h(px(40.)).pr(px(60.)).rounded(px(12.))
+                        // 文本被限制在框内:超长内容截断,不外溢
+                        .min_w_0().overflow_hidden()
                         .bg(t.muted).cursor_pointer().text_size(px(14.)).text_color(t.foreground).line_clamp(2)
                         .on_click(move |_, window, cx| edit_click(window, cx))
                         .child(text)
@@ -180,6 +193,13 @@ mod tests {
         // 第二条到顶后接管
         let t = resolve(&rows, &items, 2, |_| true).unwrap();
         assert_eq!((t.row, t.id.as_str()), (2, "b"));
+    }
+
+    #[::core::prelude::v1::test]
+    fn 编辑卡正文最大高度() {
+        assert_eq!(editor_body_max(600., 8.), 600. - 8. - 16. - EDITOR_CHROME);
+        // 视口很矮时保底,不会变成 0 或负数
+        assert_eq!(editor_body_max(100., 8.), EDITOR_MIN_BODY);
     }
 
     #[::core::prelude::v1::test]

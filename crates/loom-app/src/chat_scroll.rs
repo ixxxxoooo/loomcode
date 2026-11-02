@@ -68,6 +68,11 @@ impl ChatScroll {
         Some(self.probe.top_of(row)? + 5. - f32::from(self.list.viewport_bounds().top()))
     }
 
+    /// 会话流视口高度(像素,吸附层据此限制悬浮卡的最大高度)。
+    pub fn viewport_height(&self) -> f32 {
+        f32::from(self.list.viewport_bounds().size.height)
+    }
+
     /// 重置为 `item_count` 行并恢复跟随。
     pub fn reset(&mut self, item_count: usize, cx: &mut Context<Self>) {
         self.list.reset(item_count);
