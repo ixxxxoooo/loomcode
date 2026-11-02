@@ -42,7 +42,7 @@ impl Render for DraggedTab {
 
 /// 标签栏:预览标签用斜体;未保存显示圆点,悬停或当前标签显示关闭按钮;固定标签显示图钉;
 /// 中键关闭、双击固定预览,可拖动排序(固定与非固定之间不互拖)。
-pub fn tab_bar(items: Vec<TabItem>, scroll: ScrollHandle, root: &str, wrap: bool, cx: &mut Context<IdeView>) -> impl IntoElement {
+pub fn tab_bar(items: Vec<TabItem>, scroll: ScrollHandle, root: &str, wrap: bool, split: bool, cx: &mut Context<IdeView>) -> impl IntoElement {
     let t = cx.theme().clone();
     let th = px(crate::tab_style::TAB_H);
     let tabs = h_flex()
@@ -105,7 +105,20 @@ pub fn tab_bar(items: Vec<TabItem>, scroll: ScrollHandle, root: &str, wrap: bool
     let more = move |menu: PopupMenu, _: &mut Window, _: &mut Context<PopupMenu>| {
         let item = |label: &'static str| PopupMenuItem::new(label);
         let (v1, v2, v3) = (view.clone(), view.clone(), view.clone());
-        menu.item(item("多行标签").checked(wrap).on_click(move |_, _, cx| {
+        let (s1, s2, s3) = (view.clone(), view.clone(), view.clone());
+        let mut menu = menu
+            .item(item("向右拆分").icon(IconName::PanelRight).on_click(move |_, window, cx| {
+                let _ = s1.update(cx, |this, cx| this.split_active(false, window, cx));
+            }))
+            .item(item("向下拆分").icon(IconName::PanelBottom).on_click(move |_, window, cx| {
+                let _ = s2.update(cx, |this, cx| this.split_active(true, window, cx));
+            }));
+        if split {
+            menu = menu.item(item("合并拆分").on_click(move |_, window, cx| {
+                let _ = s3.update(cx, |this, cx| this.close_split(window, cx));
+            }));
+        }
+        menu.separator().item(item("多行标签").checked(wrap).on_click(move |_, _, cx| {
             let _ = v1.update(cx, |this, cx| {
                 this.wrap_tabs = !this.wrap_tabs;
                 cx.notify();
@@ -121,7 +134,8 @@ pub fn tab_bar(items: Vec<TabItem>, scroll: ScrollHandle, root: &str, wrap: bool
     };
     // 右侧操作区贴在第一行(多行时也不随换行下移),与标签同高、同底线
     h_flex().w_full().flex_none().items_start().bg(t.sidebar).child(tabs).child(
-        h_flex().h(th).flex_none().px_1().items_center().border_b_1().border_color(t.border).child(Button::new("ide-tabs-more").xsmall().ghost().icon(IconName::Ellipsis).tooltip("更多操作").dropdown_menu(more)),
+        h_flex().h(th).flex_none().px_1().items_center().border_b_1().border_color(t.border).child(Button::new("ide-tabs-split").xsmall().ghost().icon(IconName::PanelRight).tooltip("向右拆分").on_click(cx.listener(|this, _, window, cx| this.split_active(false, window, cx))))
+            .child(Button::new("ide-tabs-more").xsmall().ghost().icon(IconName::Ellipsis).tooltip("更多操作").dropdown_menu(more)),
     )
 }
 

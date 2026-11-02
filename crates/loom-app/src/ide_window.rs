@@ -111,7 +111,7 @@ impl IdeWindow {
         subs.push(cx.observe(&ide, |_, _, cx| cx.notify()));
         // 标签 / 面包屑右键「在资源管理器中定位」:展开左栏的文件树并定位
         subs.push(cx.subscribe(&ide, |this, _, ev: &crate::ide::IdeEvent, cx| {
-            let crate::ide::IdeEvent::RevealInExplorer(path) = ev;
+            let crate::ide::IdeEvent::RevealInExplorer(path) = ev else { return };
             this.left_open = true;
             this.search_open = false;
             let path = path.clone();

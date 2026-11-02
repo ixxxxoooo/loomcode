@@ -104,6 +104,12 @@ pub struct IdeView {
     pub(crate) untitled_seq: u32,
     /// 标签栏放不下时换行显示(对标 VS Code `wrapTabs`),在标签栏「···」菜单里切换
     pub(crate) wrap_tabs: bool,
+    /// 拆分:次编辑器组(仅主组持有)
+    pub(crate) split: Option<crate::ide_split::Split>,
+    /// 本视图是次组时,指向主组
+    pub(crate) parent: Option<WeakEntity<IdeView>>,
+    /// 外部操作落在次组(最近点击的是次组)
+    pub(crate) active_second: bool,
     /// 已另存、待换成真实文件标签的 (临时路径, 新路径)
     pub(crate) saved_as: Vec<(PathBuf, PathBuf)>,
     /// 刚打开文件、还没跳行:紧随其后的 `goto` 替换这一条而不是新增
@@ -136,12 +142,16 @@ pub struct IdeView {
 impl IdeView {
     /// 创建空的编辑器视图。
     pub fn new() -> Self {
-        Self { root: String::new(), docs: HashMap::new(), tabs: TabModel::default(), hover_win: None, crumb: None, cmd_click: None, note: None, images: Default::default(), sheets: HashMap::new(), sheet_subs: HashMap::new(), diffs: HashMap::new(), as_text: Default::default(), minimap_ui: Default::default(), applied: None, edit_gen: 0, nav: Default::default(), nav_quiet: false, fresh_open: false, recent: Vec::new(), pending_restore: None, md: HashMap::new(), blame_gutter: false, blame_ui: Default::default(), lsp_listening: false, hover_ui: Default::default(), overlay: None, cursor_msg: None, overlay_sub: None, tabs_scroll: ScrollHandle::new(), tabs_revealed: None, untitled_seq: 0, wrap_tabs: true, saved_as: Vec::new() }
+        Self { root: String::new(), docs: HashMap::new(), tabs: TabModel::default(), hover_win: None, crumb: None, cmd_click: None, note: None, images: Default::default(), sheets: HashMap::new(), sheet_subs: HashMap::new(), diffs: HashMap::new(), as_text: Default::default(), minimap_ui: Default::default(), applied: None, edit_gen: 0, nav: Default::default(), nav_quiet: false, fresh_open: false, recent: Vec::new(), pending_restore: None, md: HashMap::new(), blame_gutter: false, blame_ui: Default::default(), lsp_listening: false, hover_ui: Default::default(), overlay: None, cursor_msg: None, overlay_sub: None, tabs_scroll: ScrollHandle::new(), tabs_revealed: None, untitled_seq: 0, wrap_tabs: true, split: None, parent: None, active_second: false, saved_as: Vec::new() }
     }
 
     /// 设置项目根目录(会话切换时由宿主调用)。
     pub fn set_root(&mut self, root: String, cx: &mut Context<Self>) {
         if self.root != root {
+            if let Some(sp) = &self.split {
+                let r = root.clone();
+                sp.child.update(cx, |c, cx| c.set_root(r, cx));
+            }
             self.root = root;
             cx.notify();
         }
@@ -155,6 +165,10 @@ impl IdeView {
 
     /// 打开文件的实现;`focus` 为假时不抢焦点(恢复标签时用)。
     pub(crate) fn open_inner(&mut self, path: PathBuf, preview: bool, focus: bool, window: &mut Window, cx: &mut Context<Self>) {
+        if let Some(c) = self.focused_child() {
+            c.update(cx, |c, cx| c.open_inner(path, preview, focus, window, cx));
+            return;
+        }
         // 用户主动打开时,先把切换项目后挂起的标签记忆恢复好(否则稍后的恢复会把当前标签挤掉)
         if focus {
             self.restore_pending(window, cx);
@@ -332,6 +346,10 @@ impl IdeView {
 
     /// 保存当前文件到磁盘。
     pub fn save(&mut self, cx: &mut Context<Self>) {
+        if let Some(c) = self.focused_child() {
+            c.update(cx, |c, cx| c.save(cx));
+            return;
+        }
         if let Some(path) = self.tabs.active().map(Path::to_path_buf) {
             self.save_path(&path, cx);
         }
@@ -355,6 +373,7 @@ impl IdeView {
                 doc.mtime = std::fs::metadata(&path).and_then(|m| m.modified()).ok();
                 self.note = None;
                 self.tabs.pin(&path);
+                self.sync_saved(&path, cx);
             }
             Err(e) => {
                 loom_diag::error!("保存文件失败 {}:{e}", path.display());
@@ -387,6 +406,10 @@ impl IdeView {
 
     /// 把光标移到指定行列(1 起始),并让编辑器获得焦点。
     pub fn goto(&mut self, line: u32, col: u32, window: &mut Window, cx: &mut Context<Self>) {
+        if let Some(c) = self.focused_child() {
+            c.update(cx, |c, cx| c.goto(line, col, window, cx));
+            return;
+        }
         let Some(doc) = self.tabs.active().and_then(|p| self.docs.get(p)) else { return };
         let pos = gpui_kit::component::input::Position::new(line.saturating_sub(1), col.saturating_sub(1));
         doc.editor.update(cx, |e, cx| e.set_cursor_position(pos, window, cx));
@@ -402,6 +425,9 @@ impl IdeView {
 
     /// 状态栏要显示的光标与文件信息:(行, 列, 语言, 是否 CRLF);没有打开文件时为 `None`。
     pub fn cursor_info(&self, cx: &App) -> Option<(u32, u32, &'static str, bool)> {
+        if let Some(c) = self.focused_child() {
+            return c.read(cx).cursor_info(cx);
+        }
         let path = self.tabs.active()?;
         let doc = self.docs.get(path)?;
         let pos = doc.editor.read(cx).cursor_position();
@@ -447,7 +473,7 @@ pub(crate) fn build_doc(path: &Path, text: String, mtime: Option<std::time::Syst
     editor.update(cx, |e, _| e.set_context_menu_enabled(false));
     // 编辑后标记未保存并固定预览标签;光标移动时刷新状态条
     let key = path.to_path_buf();
-    let sub = cx.subscribe(&editor, move |this: &mut IdeView, _, ev: &InputEvent, cx| {
+    let sub = cx.subscribe_in(&editor, window, move |this: &mut IdeView, _, ev: &InputEvent, window, cx| {
         match ev {
             InputEvent::Change => {
                 this.tabs.pin(&key);
@@ -461,6 +487,7 @@ pub(crate) fn build_doc(path: &Path, text: String, mtime: Option<std::time::Syst
                 this.schedule_lsp_sync(&key, cx);
                 this.schedule_outline(&key, cx);
                 this.schedule_autosave(&key, cx);
+                this.sync_sibling(&key, window, cx);
             }
             // 失焦自动保存:编辑器失去焦点(切标签 / 点到别处 / 窗口失焦)时写盘
             InputEvent::Blur if crate::prefs(cx).editor.auto_save == loom_config::AutoSave::Blur && !crate::ide_untitled::is_untitled(&key) => {
@@ -491,6 +518,8 @@ pub(crate) fn build_doc(path: &Path, text: String, mtime: Option<std::time::Syst
 pub enum IdeEvent {
     /// 请在资源管理器(文件树)里定位这个文件
     RevealInExplorer(PathBuf),
+    /// 次编辑器组的标签已全部关闭,请主组合并拆分
+    GroupEmpty,
 }
 
 impl EventEmitter<IdeEvent> for IdeView {}
@@ -514,6 +543,22 @@ impl IdeView {
 
 impl Render for IdeView {
     fn render(&mut self, window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
+        // 调试用:LOOM_SPLIT=right|down 在首次有打开文件时自动拆分
+        if self.split.is_none() && self.parent.is_none() && self.tabs.active().is_some() {
+            static DONE: std::sync::atomic::AtomicBool = std::sync::atomic::AtomicBool::new(false);
+            if let Ok(m) = std::env::var("LOOM_SPLIT") {
+                if !DONE.swap(true, std::sync::atomic::Ordering::Relaxed) {
+                    self.split_active(m == "down", window, cx);
+                }
+            }
+        }
+        self.render_with_split(window, cx)
+    }
+}
+
+impl IdeView {
+    /// 渲染本组自己(标签栏 + 编辑区);拆分时由 `render_with_split` 调用。
+    pub(crate) fn render_group(&mut self, window: &mut Window, cx: &mut Context<Self>) -> AnyElement {
         self.restore_pending(window, cx);
         self.finish_save_as(window, cx);
         self.sync_prefs(window, cx);
@@ -551,17 +596,17 @@ impl Render for IdeView {
             self.reveal_active_tab(a);
         }
         if let Some(img_path) = active.clone().filter(|p| self.images.contains(p)) {
-            return root.child(tab_bar(self.tab_items(&img_path), self.tabs_scroll.clone(), &self.root, self.wrap_tabs, cx)).child(breadcrumbs(&img_path, &self.root, true, None, None, cx)).child(
+            return root.child(tab_bar(self.tab_items(&img_path), self.tabs_scroll.clone(), &self.root, self.wrap_tabs, self.is_split(), cx)).child(breadcrumbs(&img_path, &self.root, true, None, None, cx)).child(
                 div().flex_1().min_h_0().flex().items_center().justify_center().p_4().child(img(img_path).max_w_full().max_h_full()),
             ).into_any_element();
         }
         if let Some(diff_path) = active.clone().filter(|p| self.diffs.contains_key(p)) {
             let body = self.diff_view(&diff_path, cx);
-            return root.child(tab_bar(self.tab_items(&diff_path), self.tabs_scroll.clone(), &self.root, self.wrap_tabs, cx)).child(div().flex_1().min_h_0().child(body)).into_any_element();
+            return root.child(tab_bar(self.tab_items(&diff_path), self.tabs_scroll.clone(), &self.root, self.wrap_tabs, self.is_split(), cx)).child(div().flex_1().min_h_0().child(body)).into_any_element();
         }
         if let Some(sheet_path) = active.clone().filter(|p| self.sheets.contains_key(p)) {
             let view = self.sheets[&sheet_path].clone();
-            return root.child(tab_bar(self.tab_items(&sheet_path), self.tabs_scroll.clone(), &self.root, self.wrap_tabs, cx)).child(breadcrumbs(&sheet_path, &self.root, true, None, None, cx)).child(div().flex_1().min_h_0().child(view)).into_any_element();
+            return root.child(tab_bar(self.tab_items(&sheet_path), self.tabs_scroll.clone(), &self.root, self.wrap_tabs, self.is_split(), cx)).child(breadcrumbs(&sheet_path, &self.root, true, None, None, cx)).child(div().flex_1().min_h_0().child(view)).into_any_element();
         }
         let Some(path) = active.filter(|p| self.docs.contains_key(p)) else {
             if let Some(note) = self.note.clone() {
@@ -589,7 +634,7 @@ impl Render for IdeView {
         let overlay = self.overlay_element(cx);
         let doc = &self.docs[&path];
         let editor = doc.editor.clone();
-        root.child(tab_bar(self.tab_items(&path), self.tabs_scroll.clone(), &self.root, self.wrap_tabs, cx))
+        root.child(tab_bar(self.tab_items(&path), self.tabs_scroll.clone(), &self.root, self.wrap_tabs, self.is_split(), cx))
             .child(breadcrumbs(&path, &self.root, doc.saved, self.note.clone().or_else(|| doc.stale.then(|| "磁盘上的文件已被修改,点右侧刷新按钮载入(会丢弃你的修改)".to_string())), Some(self.blame_gutter), cx))
             .children(md_view.as_ref().map(|v| crate::ide_markdown::mode_bar(v, md_mode, cx)))
             .child({

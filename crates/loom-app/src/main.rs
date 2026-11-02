@@ -114,6 +114,7 @@ mod outline;
 mod explorer_sections;
 mod tab_style;
 mod ide_close;
+mod ide_split;
 mod ide_untitled;
 mod ide_tabs;
 mod chat_scroll;

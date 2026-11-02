@@ -57,6 +57,10 @@ impl IdeView {
             self.drop_tab(p);
         }
         self.focus_active(window, cx);
+        // 次组的标签全关完了:请主组合并拆分
+        if self.parent.is_some() && self.tabs.tabs().is_empty() {
+            cx.emit(crate::ide::IdeEvent::GroupEmpty);
+        }
         cx.notify();
     }
 
@@ -99,6 +103,10 @@ impl IdeView {
 
     /// 关闭当前标签。
     pub fn close_active(&mut self, window: &mut Window, cx: &mut Context<Self>) {
+        if let Some(c) = self.focused_child() {
+            c.update(cx, |c, cx| c.close_active(window, cx));
+            return;
+        }
         if let Some(p) = self.tabs.active().map(Path::to_path_buf) {
             self.close_tab(&p, window, cx);
         }
