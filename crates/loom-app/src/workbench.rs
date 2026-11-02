@@ -1534,6 +1534,7 @@ impl Workbench {
             }))
             .on_action(cx.listener(|this, _: &NewSession, window, cx| this.new_session(this.target_project(), window, cx)))
             .on_action(cx.listener(|this, _: &SaveFile, _, cx| this.save_ide(cx)))
+            .on_action(cx.listener(|this, _: &crate::app_menu::AddProject, window, cx| this.add_project(window, cx)))
             .on_action(cx.listener(|this, _: &ToggleIde, window, cx| this.toggle_ide(window, cx)))
             .on_action(cx.listener(|this, _: &SwitchMode, window, cx| this.request_switch_mode(window, cx)))
             .on_action(cx.listener(|this, _: &CycleMode, _, cx| {

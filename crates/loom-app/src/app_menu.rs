@@ -4,10 +4,11 @@
 //!
 //! @author ixxxxoooo
 
-use crate::{term_actions, workbench};
+use crate::{ide, term_actions, workbench};
+use gpui_kit::component::input::{Copy, Cut, GoToDefinition, Paste, Redo, Replace, Search, SelectAll, Undo};
 use gpui_kit::*;
 
-actions!(loomcode_app, [QuitApp, HideApp, HideOthers, ShowAll, MinimizeWindow, ZoomWindow, ToggleFullscreen, CloseWindow, NavBack, NavForward]);
+actions!(loomcode_app, [QuitApp, HideApp, HideOthers, ShowAll, MinimizeWindow, ZoomWindow, ToggleFullscreen, CloseWindow, NavBack, NavForward, AddProject, OpenLogs, OpenHomepage, ReportIssue]);
 
 /// 对当前激活的窗口执行一个窗口操作(没有激活窗口时忽略)。
 ///
@@ -54,6 +55,13 @@ pub fn install(cx: &mut App) {
     cx.on_action(|_: &ZoomWindow, cx| on_active_window(cx, |w, _| w.zoom_window()));
     cx.on_action(|_: &ToggleFullscreen, cx| on_active_window(cx, |w, _| w.toggle_fullscreen()));
     cx.on_action(|_: &CloseWindow, cx| close_window(cx));
+    cx.on_action(|_: &OpenLogs, cx| {
+        if let Some(dir) = loom_diag::log_path().and_then(|p| p.parent()) {
+            cx.reveal_path(dir);
+        }
+    });
+    cx.on_action(|_: &OpenHomepage, cx| cx.open_url("https://github.com/ixxxxoooo/loomcode"));
+    cx.on_action(|_: &ReportIssue, cx| cx.open_url("https://github.com/ixxxxoooo/loomcode/issues/new"));
 
     // ⌘W 在编辑器里由更具体的 `IdeView` 绑定(关标签)优先
     cx.bind_keys([
@@ -82,9 +90,28 @@ pub fn install(cx: &mut App) {
         ]),
         menu("文件", vec![
             MenuItem::action("新建会话", workbench::NewSession),
+            MenuItem::action("添加项目文件夹…", AddProject),
+            MenuItem::separator(),
             MenuItem::action("保存", workbench::SaveFile),
             MenuItem::separator(),
+            MenuItem::action("关闭标签", ide::CloseTab),
             MenuItem::action("关闭窗口", CloseWindow),
+        ]),
+        menu("编辑", vec![
+            MenuItem::action("撤销", Undo),
+            MenuItem::action("重做", Redo),
+            MenuItem::separator(),
+            MenuItem::action("剪切", Cut),
+            MenuItem::action("拷贝", Copy),
+            MenuItem::action("粘贴", Paste),
+            MenuItem::action("全选", SelectAll),
+            MenuItem::separator(),
+            MenuItem::action("查找", Search),
+            MenuItem::action("替换", Replace),
+            MenuItem::action("在项目中查找", ide::FindInProject),
+            MenuItem::separator(),
+            MenuItem::action("格式化文档", ide::FormatDocument),
+            MenuItem::action("重命名符号", ide::RenameSymbol),
         ]),
         menu("视图", vec![
             MenuItem::action("命令面板", workbench::TogglePalette),
@@ -93,16 +120,43 @@ pub fn install(cx: &mut App) {
             MenuItem::action("切换右栏", workbench::ToggleRight),
             MenuItem::action("切换终端", term_actions::ToggleTerminal),
             MenuItem::action("切换 IDE", workbench::ToggleIde),
+            MenuItem::action("源代码管理", ide::ShowScm),
+            MenuItem::separator(),
+            MenuItem::action("自动换行", ide::ToggleWordWrap),
+            MenuItem::action("Git 追溯注释", ide::ToggleBlameAnnotations),
             MenuItem::separator(),
             MenuItem::action("进入 / 退出全屏", ToggleFullscreen),
         ]),
         menu("前往", vec![
             MenuItem::action("后退", NavBack),
             MenuItem::action("前进", NavForward),
+            MenuItem::separator(),
+            MenuItem::action("转到文件…", ide::QuickOpen),
+            MenuItem::action("转到行…", ide::GoToLine),
+            MenuItem::separator(),
+            MenuItem::action("转到定义", GoToDefinition),
+            MenuItem::action("转到类型定义", ide::GoToTypeDefinition),
+            MenuItem::action("转到实现", ide::GoToImplementation),
+            MenuItem::action("查找所有引用", ide::FindReferences),
+            MenuItem::separator(),
+            MenuItem::action("下一个标签", ide::NextTab),
+            MenuItem::action("上一个标签", ide::PrevTab),
+        ]),
+        menu("终端", vec![
+            MenuItem::action("新建终端", term_actions::NewTerminal),
+            MenuItem::action("切换终端", term_actions::ToggleTerminal),
         ]),
         menu("窗口", vec![
             MenuItem::action("最小化", MinimizeWindow),
             MenuItem::action("缩放", ZoomWindow),
+            MenuItem::action("进入 / 退出全屏", ToggleFullscreen),
+        ]),
+        menu("帮助", vec![
+            MenuItem::action("命令面板", workbench::TogglePalette),
+            MenuItem::separator(),
+            MenuItem::action("项目主页", OpenHomepage),
+            MenuItem::action("报告问题", ReportIssue),
+            MenuItem::action("打开日志文件夹", OpenLogs),
         ]),
     ]);
 }
