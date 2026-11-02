@@ -15,7 +15,7 @@ pub struct SessionModel {
     /// 已展开的条目 id(工具卡、思考、子 Agent、计划等)
     pub expanded: HashSet<String>,
     /// 运行中排队的消息(回合结束后依次发送)
-    pub queued: Vec<String>,
+    pub queued: crate::prompt_queue::PromptQueue,
     /// 提问向导当前所在题号(按提问 id)
     pub wizard_step: std::collections::HashMap<String, usize>,
     /// 提问向导已选答案草稿(按提问 id → 每题的已选项)
@@ -76,7 +76,7 @@ impl SessionModel {
             scroller,
             timeline: None,
             expanded: HashSet::new(),
-            queued: Vec::new(),
+            queued: Default::default(),
             wizard_step: Default::default(),
             wizard_draft: Default::default(),
             wizard_inputs: Default::default(),
@@ -102,12 +102,14 @@ impl SessionModel {
     fn on_events(&mut self, events: Vec<AgentEvent>, cx: &mut Context<Self>) {
         let mut dirty_rows: Vec<usize> = Vec::new();
         let mut turn_ended = false;
+        let mut stop_reason = None;
         // 同一批里连续打到同一条目的事件(流式 delta)只定位一次
         let mut last_target: Option<String> = None;
         for ev in events {
             let target = ev.target_id().filter(|id| last_target.as_deref() != Some(*id)).map(str::to_string);
-            if matches!(ev, AgentEvent::TurnEnded(_)) {
+            if let AgentEvent::TurnEnded(reason) = &ev {
                 turn_ended = true;
+                stop_reason = Some(*reason);
             }
             self.state.apply(ev);
             if let Some(id) = target {
@@ -154,9 +156,10 @@ impl SessionModel {
             // 回合结束:历史列表与分支可能变了,通知工作台刷新
             cx.emit(UiRequest::SessionSettled);
         }
-        if turn_ended && !self.queued.is_empty() {
-            let next = self.queued.remove(0);
-            self.send_prompt(next, cx);
+        if let Some(reason) = stop_reason.filter(|_| turn_ended)
+            && let crate::prompt_queue::Next::Send(next) = self.queued.on_turn_end(&reason)
+        {
+            self.send_prompt_with(next.text, next.images, next.files, cx);
         }
         cx.notify();
     }
@@ -217,16 +220,50 @@ impl SessionModel {
         }
     }
 
-    /// 运行中把消息排到队尾。
-    pub fn queue_prompt(&mut self, text: String, cx: &mut Context<Self>) {
-        self.queued.push(text);
+    /// 运行中把消息排到队尾(本轮正常结束后自动发送)。
+    pub fn queue_prompt(&mut self, text: String, images: Vec<String>, files: Vec<String>, cx: &mut Context<Self>) {
+        self.queued.push(text, images, files);
         cx.notify();
     }
 
-    /// 取走全部排队消息(撤回用),返回按排队顺序的文本。
-    pub fn take_queued(&mut self, cx: &mut Context<Self>) -> Vec<String> {
+    /// 取走全部排队消息(撤回用),按排队顺序。
+    pub fn take_queued(&mut self, cx: &mut Context<Self>) -> Vec<crate::prompt_queue::QueuedPrompt> {
         cx.notify();
-        std::mem::take(&mut self.queued)
+        self.queued.take_all()
+    }
+
+    /// 立即引导:把某条排队消息现在就塞进当前回合(回合已结束则当普通消息发送)。
+    pub fn steer_queued(&mut self, id: u64, cx: &mut Context<Self>) {
+        if let Some(p) = self.queued.take(id) {
+            self.send_prompt_with(p.text, p.images, p.files, cx);
+        }
+        cx.notify();
+    }
+
+    /// 停止并发送:把某条挪到队首,中断当前回合,中断结束后自动发它。
+    pub fn stop_and_send(&mut self, id: u64, cx: &mut Context<Self>) {
+        if self.state.phase != Phase::Running {
+            self.steer_queued(id, cx);
+            return;
+        }
+        if self.queued.promote_for_stop(id) {
+            self.cancel(cx);
+        }
+    }
+
+    /// 删除某条排队消息。
+    pub fn remove_queued(&mut self, id: u64, cx: &mut Context<Self>) -> Option<crate::prompt_queue::QueuedPrompt> {
+        let p = self.queued.take(id);
+        cx.notify();
+        p
+    }
+
+    /// 队列暂停后点「继续」:发队首,之后恢复自动发送。
+    pub fn resume_queue(&mut self, cx: &mut Context<Self>) {
+        if let Some(p) = self.queued.resume() {
+            self.send_prompt_with(p.text, p.images, p.files, cx);
+        }
+        cx.notify();
     }
 
     pub fn cancel(&mut self, cx: &mut Context<Self>) {

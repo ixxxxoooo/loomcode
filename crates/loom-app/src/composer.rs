@@ -1,7 +1,7 @@
 //! 输入区:多行输入、斜杠 / @ 补全、模型 / 模式 / 强度选择、发送 / 停止 / 排队。
 
 use crate::model::SessionModel;
-use crate::ui::{icon, pill};
+use crate::ui::icon;
 use gpui_kit::assets::IconName;
 use gpui_kit::component::input::{Indent, InputEvent, MoveDown, MoveUp, Textarea, TextareaState};
 use gpui_kit::component::{ActiveTheme, h_flex, v_flex};
@@ -111,7 +111,8 @@ impl Composer {
                 if this.suggestions.is_empty() && cmd_send && !*secondary {
                     this.input.update(cx, |i, cx| i.insert("\n", window, cx));
                 } else if this.suggestions.is_empty() {
-                    this.submit(window, cx)
+                    // 运行中:Enter = 排队,⌘Enter = 立即引导(「⌘Enter 发送」模式下 ⌘Enter 是排队,引导走排队卡按钮)
+                    this.submit_with(*secondary && !cmd_send, window, cx)
                 } else {
                     this.accept_suggestion(this.sel, window, cx)
                 }
@@ -130,6 +131,14 @@ impl Composer {
             _ => None,
         };
         let mut this = Self { session, input, open, outside_closed: None, suggestions: Vec::new(), sel: 0, attachments: Vec::new(), attach_counter: 0, demo, rewrite: None, optimizing: false, optimize_error: None, custom_commands: Vec::new(), custom_agents: Vec::new(), _sub: sub };
+        // 调试用:LOOM_QUEUE=N 启动即排 N 条消息(只用于截图验证排队卡)
+        if let Some(n) = std::env::var("LOOM_QUEUE").ok().and_then(|v| v.parse::<usize>().ok()) {
+            this.session.update(cx, |m, cx| {
+                for i in 1..=n {
+                    m.queue_prompt(format!("第 {i} 条排队消息:接着把设置页的测试也补上,并检查一下 @src/lib.rs 的导出"), vec![], vec![], cx);
+                }
+            });
+        }
         // 调试用:LOOM_ATTACH=图片路径 启动即带一张附件,方便截图检查缩略图
         if let Ok(p) = std::env::var("LOOM_ATTACH") {
             this.add_image_path(std::path::Path::new(&p), cx);
@@ -177,7 +186,14 @@ impl Composer {
             return;
         }
         let cur = self.input.read(cx).value().trim_end().to_string();
-        let text = std::iter::once(cur).filter(|c| !c.is_empty()).chain(queued).collect::<Vec<_>>().join("\n\n");
+        let mut texts = vec![cur];
+        for p in queued {
+            for path in &p.images {
+                self.add_image_path(std::path::Path::new(path), cx);
+            }
+            texts.push(p.text);
+        }
+        let text = texts.into_iter().filter(|c| !c.is_empty()).collect::<Vec<_>>().join("\n\n");
         self.set_text(&text, window, cx);
         self.focus(window, cx);
     }
@@ -285,6 +301,11 @@ impl Composer {
     }
 
     pub(crate) fn submit(&mut self, window: &mut Window, cx: &mut Context<Self>) {
+        self.submit_with(false, window, cx)
+    }
+
+    /// 发送输入框内容。回合进行中:`steer` 为真立即引导(塞进当前回合),否则排到队尾等本轮结束。
+    pub(crate) fn submit_with(&mut self, steer: bool, window: &mut Window, cx: &mut Context<Self>) {
         let text = self.input.read(cx).value().trim().to_string();
         if text.is_empty() && self.attachments.is_empty() {
             return;
@@ -295,13 +316,24 @@ impl Composer {
         let files = extract_file_mentions(&text);
         let running = self.session.read(cx).state.phase == Phase::Running;
         self.session.update(cx, |m, cx| {
-            if running && images.is_empty() {
-                m.queue_prompt(text, cx)
+            if running && !steer {
+                m.queue_prompt(text, images, files, cx)
             } else {
                 m.send_prompt_with(text, images, files, cx)
             }
         });
         cx.notify();
+    }
+
+    /// 排队卡上点某条文字:把它退回输入框(接在已输入内容之后)继续编辑,图片回到附件。
+    pub fn restore_queued(&mut self, p: crate::prompt_queue::QueuedPrompt, window: &mut Window, cx: &mut Context<Self>) {
+        let cur = self.input.read(cx).value().trim_end().to_string();
+        let text = std::iter::once(cur).filter(|c| !c.is_empty()).chain([p.text]).collect::<Vec<_>>().join("\n\n");
+        for path in p.images {
+            self.add_image_path(std::path::Path::new(&path), cx);
+        }
+        self.set_text(&text, window, cx);
+        self.focus(window, cx);
     }
 
     fn pick_list(&self, kind: Pick, cx: &App) -> Vec<(String, String, bool, String)> {
@@ -386,11 +418,11 @@ impl Composer {
 impl Render for Composer {
     fn render(&mut self, _window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
         let t = cx.theme().clone();
-        let (phase, mode, model_id, model_name, effort, queued, usage) = {
+        let (phase, mode, model_id, model_name, effort, usage) = {
             let m = self.session.read(cx);
             // 用第三方服务时显示「服务商 · 真实模型名」(而不是 claude 报的别名 / 自定义说明)
             let name = crate::composer_models::chip_label(&m.state, cx);
-            (m.state.phase, m.state.mode, m.state.model.clone(), name, m.state.effort, m.queued.len(), m.state.usage.clone())
+            (m.state.phase, m.state.mode, m.state.model.clone(), name, m.state.effort, m.state.usage.clone())
         };
         let running = phase == Phase::Running;
         let mode_color = crate::mode_style::mode_color(mode, cx);
@@ -475,6 +507,7 @@ impl Render for Composer {
             }))
         });
 
+        let queue_card = crate::queue_card::render(&self.session, &this, running, cx);
         let drop_hint = t.primary;
         div().key_context("Composer").on_action(cx.listener(|this, _: &CycleEffort, _, cx| this.cycle_effort(cx)))
             .w_full().flex().justify_center().px_4().pb_3().pt_1()
@@ -515,6 +548,7 @@ impl Render for Composer {
                     v_flex().w_full().rounded(px(14.)).border_1().border_color(t.border).bg(t.popover).shadow_sm()
                         .drag_over::<crate::file_dnd::DraggedPath>(move |s, _, _, _| s.border_color(drop_hint))
                         .drag_over::<crate::ide_chrome::DraggedTab>(move |s, _, _, _| s.border_color(drop_hint))
+                        .when_some(queue_card, |d, c| d.child(c))
                         .when_some(attach_chips, |d, c| d.child(c))
                         .child(div().px_3().pt_2().child(Textarea::new(&self.input).appearance(false).bordered(false).token(|ctx, window, cx| crate::composer_refs::token_view(ctx, window, cx)).on_paste(move |item, _, cx| {
                             // 粘贴图片:作为附件;其余(文本)走默认逻辑
@@ -532,15 +566,6 @@ impl Render for Composer {
                             h_flex().h(px(36.)).px_2().gap_1().items_center().overflow_hidden()
                                 .child(chip("chip-mode", mode.label().to_string(), mode_color, Pick::Mode, Some(icon(crate::mode_style::mode_icon(mode), 13., mode_color).into_any_element()), crate::layout_rules::MODE_CHIP_MIN, this.clone()))
                                 .child(chip("chip-model", format!("{model_name} · {}", effort.label()), t.foreground, Pick::Model, Some(crate::brand_icons::brand_icon(&model_id, &model_name, 13., t.foreground)), crate::layout_rules::MODEL_CHIP_MIN, this.clone()))
-                                .when(queued > 0, |d| {
-                                    // 点击撤回:排队消息退回输入框
-                                    let this = this.clone();
-                                    d.child(pill(format!("排队 {queued} · 撤回"), t.warning, t.muted).cursor_pointer()
-                                        .on_mouse_down(MouseButton::Left, move |_, window, cx| {
-                                            cx.stop_propagation();
-                                            this.update(cx, |c, cx| c.withdraw_queued(window, cx));
-                                        }))
-                                })
                                 .child(div().flex_1())
                                 .child({
                                     // 始终显示:没发过消息时也能点开查账户限额

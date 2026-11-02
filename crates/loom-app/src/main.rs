@@ -8,6 +8,8 @@
 #![recursion_limit = "512"]
 
 mod ansi;
+mod prompt_queue;
+mod queue_card;
 mod live_sig;
 mod timeline_view;
 mod app_menu;

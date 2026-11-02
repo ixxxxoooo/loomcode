@@ -235,8 +235,8 @@ impl SessionModel {
         if text.is_empty() && images.is_empty() {
             return;
         }
-        if self.state.phase == loom_core::Phase::Running && images.is_empty() {
-            self.queue_prompt(text, cx);
+        if self.state.phase == loom_core::Phase::Running {
+            self.queue_prompt(text, images, files, cx);
         } else {
             self.send_prompt_with(text, images, files, cx);
         }
@@ -271,8 +271,8 @@ impl SessionModel {
         }
         let running = self.state.phase == loom_core::Phase::Running;
         self.end_edit(cx);
-        if running && images.is_empty() {
-            self.queue_prompt(text, cx);
+        if running {
+            self.queue_prompt(text, images, files, cx);
         } else {
             self.send_prompt_with(text, images, files, cx);
         }
