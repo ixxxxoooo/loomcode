@@ -9,7 +9,9 @@ pub mod keys;
 pub mod snapshot;
 pub mod label;
 mod terminal;
+pub mod theme;
 
 pub use keys::{Mods, encode_key};
 pub use snapshot::{Run, Snapshot, Style, TermColor};
+pub use theme::TermTheme;
 pub use terminal::{SelectKind, SpawnOptions, Terminal};

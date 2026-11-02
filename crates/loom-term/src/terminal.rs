@@ -3,6 +3,7 @@
 //! @author ixxxxoooo
 
 use crate::snapshot::{self, Snapshot};
+use crate::theme::{self, TermTheme, ThemeSlot};
 use alacritty_terminal::event::{Event, EventListener};
 use alacritty_terminal::grid::{Dimensions, Scroll};
 use alacritty_terminal::index::{Column, Line, Point, Side};
@@ -28,6 +29,8 @@ pub struct SpawnOptions {
     pub no_login: bool,
     /// 回看历史行数;为空用默认 10000
     pub scrollback: Option<usize>,
+    /// 初始主题:用来设置 `COLORFGBG` 并应答程序的颜色查询(OSC 4 / 10 / 11 / 12)
+    pub theme: Option<TermTheme>,
 }
 
 /// 选择的粒度:单击拖动选字符,双击选单词,三击选整行。
@@ -45,6 +48,7 @@ type SharedWriter = Arc<Mutex<Box<dyn Write + Send>>>;
 struct Listener {
     writer: SharedWriter,
     title: Arc<Mutex<String>>,
+    theme: ThemeSlot,
 }
 
 impl EventListener for Listener {
@@ -53,6 +57,15 @@ impl EventListener for Listener {
             Event::PtyWrite(text) => {
                 if let Ok(mut w) = self.writer.lock() {
                     let _ = w.write_all(text.as_bytes());
+                    let _ = w.flush();
+                }
+            }
+            // 程序查询前景 / 背景 / 调色板色(OSC 4 / 10 / 11 / 12):按当前主题应答,
+            // 否则 opencode 这类程序拿不到答案,浅色主题下也按深色渲染。
+            Event::ColorRequest(index, format) => {
+                let rgb = self.theme.lock().ok().and_then(|g| g.as_ref().and_then(|t| theme::lookup(t, index)));
+                if let (Some(rgb), Ok(mut w)) = (rgb, self.writer.lock()) {
+                    let _ = w.write_all(format(rgb).as_bytes());
                     let _ = w.flush();
                 }
             }
@@ -111,6 +124,7 @@ struct Inner {
 
 /// 一个终端。丢弃时会结束它的子进程。
 pub struct Terminal {
+    theme: ThemeSlot,
     inner: Arc<Mutex<Inner>>,
     writer: SharedWriter,
     master: Mutex<Box<dyn MasterPty + Send>>,
@@ -151,6 +165,9 @@ impl Terminal {
         }
         cmd.env("TERM", "xterm-256color");
         cmd.env("COLORTERM", "truecolor");
+        if let Some(t) = &opts.theme {
+            cmd.env("COLORFGBG", t.colorfgbg());
+        }
         // spawn 内部会 fork:持有 fork 保护锁,避免此刻别的线程正在 libc 里初始化(见 `loom_diag::fork_guard`)。
         let spawned = {
             let _fork = loom_diag::fork_guard();
@@ -167,7 +184,8 @@ impl Terminal {
         let mut reader = pair.master.try_clone_reader().map_err(|e| format!("无法读取终端:{e}"))?;
         let writer: SharedWriter = Arc::new(Mutex::new(pair.master.take_writer().map_err(|e| format!("无法写入终端:{e}"))?));
         let title = Arc::new(Mutex::new(String::new()));
-        let listener = Listener { writer: writer.clone(), title: title.clone() };
+        let theme: ThemeSlot = Arc::new(Mutex::new(opts.theme.clone()));
+        let listener = Listener { writer: writer.clone(), title: title.clone(), theme: theme.clone() };
         let term = Term::new(Config { scrolling_history: opts.scrollback.unwrap_or(10_000), ..Config::default() }, &Size { cols: cols as usize, rows: rows as usize }, listener);
         let inner = Arc::new(Mutex::new(Inner { term, parser: Processor::default() }));
         let child = Arc::new(Mutex::new(child));
@@ -196,7 +214,15 @@ impl Terminal {
             loom_diag::info!("终端退出 pid={pid:?} 退出码={code} 存活 {} 秒", started.elapsed().as_secs());
             notify();
         });
-        Ok(Self { inner, writer, master: Mutex::new(pair.master), child, title, exit_code })
+        Ok(Self { theme, inner, writer, master: Mutex::new(pair.master), child, title, exit_code })
+    }
+
+    /// 更新终端主题(界面切换深浅色时调用);颜色没变什么都不做。
+    pub fn set_theme(&self, new: TermTheme) {
+        let mut g = self.theme.lock().unwrap();
+        if !g.as_ref().is_some_and(|old| old.same(&new)) {
+            *g = Some(new);
+        }
     }
 
     /// 向终端写入字节(键盘输入、粘贴)。

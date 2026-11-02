@@ -171,3 +171,15 @@ fn 前台命令运行时算忙碌() {
     wait_for(&t, |s| s.exit_code.is_some());
     assert!(!t.is_busy());
 }
+
+#[test]
+fn 程序查询背景色时按主题应答() {
+    // 浅色主题:程序发 OSC 11 查询背景色,终端必须答出浅色(否则 opencode 等会按深色渲染)
+    let theme = TermTheme { fg: (30, 30, 30), bg: (250, 251, 252), dark: false, palette: Arc::new(|i| (i, i, i)) };
+    let script = "stty raw -echo; printf '\\033]11;?\\007'; dd bs=1 count=20 2>/dev/null | cat -v; echo; echo \"fgbg=$COLORFGBG\"";
+    let t = Terminal::spawn(SpawnOptions { command: Some(vec!["/bin/sh".into(), "-c".into(), script.into()]), cols: 80, rows: 24, theme: Some(theme), ..Default::default() }, || {}).unwrap();
+    let s = wait_for(&t, |s| s.text().contains("fgbg="));
+    let text = s.text();
+    assert!(text.contains("fafa/fbfb"), "应答里应有浅色背景,画面:{text:?}");
+    assert!(text.contains("fgbg=0;15"), "COLORFGBG 应为浅色,画面:{text:?}");
+}

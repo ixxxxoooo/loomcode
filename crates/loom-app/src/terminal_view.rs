@@ -59,6 +59,7 @@ impl TerminalView {
             shell: Some(tp.shell.clone()),
             no_login: !tp.login_shell,
             scrollback: Some(tp.scrollback as usize),
+            theme: Some(term_theme(cx.theme())),
         };
         let term = Terminal::spawn(opts, move || {
             let _ = tx.try_send(());
@@ -248,6 +249,13 @@ impl TerminalView {
     }
 }
 
+/// 界面主题 → 终端主题(前景、背景、调色板与界面绘制用的同一套)。
+fn term_theme(t: &gpui_kit::component::Theme) -> loom_term::TermTheme {
+    let c = |h: Hsla| { let r = h.to_rgb(); ((r.r * 255.).round() as u8, (r.g * 255.).round() as u8, (r.b * 255.).round() as u8) };
+    let dark = t.is_dark();
+    loom_term::TermTheme { fg: c(t.foreground), bg: c(t.background), dark, palette: Arc::new(move |i| indexed_rgb(i, dark)) }
+}
+
 /// 字号 → (字号, 行高);行高取字号的 4/3 并取整,保证行与行之间不出现亚像素缝。
 fn metrics_of(font_size: u8) -> (f32, f32) {
     let fs = f32::from(font_size.clamp(8, 28));
@@ -321,6 +329,8 @@ impl Render for TerminalView {
             self.cell_w = window.text_system().advance(id, px(font_size), 'm').ok().map(|s| s.width);
         }
         let cell_w = self.cell_w.unwrap_or(px(7.));
+        // 把当前主题同步给终端,程序查询背景色时才答得对(浅色主题下 opencode 等才会用浅色)
+        self.term.set_theme(term_theme(&t));
         let snap = self.term.snapshot();
         let focused = self.focus.is_focused(window);
         let view = cx.entity();
