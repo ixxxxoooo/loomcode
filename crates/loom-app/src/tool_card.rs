@@ -167,7 +167,7 @@ pub fn render_tool(session: &Entity<SessionModel>, tool: &ToolCall, cx: &App) ->
         .when(has_body, |d| {
             d.child(
                 div().flex_none().when(!expanded, |d| d.invisible().group_hover(group.clone(), |d| d.visible()))
-                    .child(icon(if expanded { IconName::ChevronDown } else { IconName::ChevronRight }, 11., t.muted_foreground)),
+                    .child(session.read(cx).motion.chevron(&tool.id, expanded, 11., t.muted_foreground)),
             )
         });
 

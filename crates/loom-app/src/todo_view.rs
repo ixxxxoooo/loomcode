@@ -112,7 +112,7 @@ pub fn render_line(session: &Entity<SessionModel>, id: &str, items: &[TodoItem],
         };
         head = head.child(h_flex().min_w_0().gap_1().items_center().child(icon(ic, 11., color)).child(div().min_w_0().truncate().text_size(px(12.)).text_color(t.muted_foreground).child(text)));
     }
-    head = head.child(icon(if expanded { IconName::ChevronDown } else { IconName::ChevronRight }, 11., t.muted_foreground));
+    head = head.child(m.motion.chevron(id, expanded, 11., t.muted_foreground));
     v_flex().w_full().child(head)
         .when(expanded, |d| d.child(div().pl(px(30.)).pr_2().py_1().child(list(id, items, cx))))
         .into_any_element()

@@ -99,7 +99,7 @@ pub fn render(session: &Entity<SessionModel>, card_data: &SubagentCard, depth: u
         .child(
         div().id(SharedString::from(format!("sub-t-{}", card_data.id))).flex_none().size(px(20.)).flex().items_center().justify_center().rounded(px(4.)).hover(|d| d.bg(t.border))
             .on_click(move |_, _, cx| { cx.stop_propagation(); ts.update(cx, |m, cx| m.toggle(&tid, cx)); })
-            .child(icon(if expanded { IconName::ChevronDown } else { IconName::ChevronRight }, 12., t.muted_foreground)),
+            .child(session.read(cx).motion.chevron(&card_data.id, expanded, 12., t.muted_foreground)),
     );
     let mut col = v_flex().w_full().child(head);
     if expanded {

@@ -5,8 +5,6 @@
 
 use crate::model::SessionModel;
 use crate::row_groups::{Row, build_rows};
-use crate::ui::icon;
-use gpui_kit::assets::IconName;
 use gpui_kit::component::{ActiveTheme, h_flex, v_flex};
 use gpui_kit::prelude::FluentBuilder as _;
 use gpui_kit::*;
@@ -51,7 +49,7 @@ pub fn render_digest(session: &Entity<SessionModel>, range: Range<usize>, window
         .on_click(move |_, _, cx| { s.update(cx, |m, cx| m.toggle(&k, cx)); })
         .child(div().text_size(px(13.)).text_color(if expanded { fg } else { muted }).child(format!("已工作 {}", work_text(secs))))
         .when(failed > 0, |d| d.child(div().text_size(px(12.)).text_color(danger).child(format!("{failed} 项失败"))))
-        .child(icon(if expanded { IconName::ChevronDown } else { IconName::ChevronRight }, 12., muted));
+        .child(session.read(cx).motion.chevron(&key, expanded, 12., muted));
     v_flex().w_full()
         .child(header)
         .when(expanded, |d| {

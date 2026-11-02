@@ -48,7 +48,7 @@ pub fn render_group(session: &Entity<SessionModel>, range: Range<usize>, cx: &Ap
         .child(if running { crate::appearance::row_spinner(&format!("tgrp-sp-{}", first.id), cx) } else { icon(IconName::Layers, 14., t.muted_foreground).into_any_element() })
         .child(div().text_size(px(13.)).text_color(t.muted_foreground).child(text))
         .when(failed > 0, |d| d.child(div().text_size(px(12.)).text_color(t.danger).child(format!("{failed} 项失败"))))
-        .child(icon(if expanded { IconName::ChevronDown } else { IconName::ChevronRight }, 12., t.muted_foreground));
+        .child(model.motion.chevron(&key, expanded, 12., t.muted_foreground));
     v_flex().w_full()
         .child(header)
         .when(!expanded && (running || live_tail), |d| d.child(latest_step(session, &tools, &key, running, cx)))

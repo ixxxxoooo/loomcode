@@ -58,7 +58,12 @@ pub fn render_row(session: &Entity<SessionModel>, ix: usize, window: &mut Window
         .pt(px(if ix == 0 { crate::flow_style::FIRST_TOP } else { gap }))
         // 末行底部留白(不能用列表内边距,见 workbench 里的说明)
         .when(ix + 1 == count, |d| d.pb(px(25.)))
-        .child(div().w_full().max_w(px(content_max_w(cx))).child(body))
+        .child({
+            // 实时回合里刚出现的行淡入(见 motion)
+            let m = session.read(cx);
+            let key = m.rows.get(ix).map(|r| crate::motion::row_key(r, &m.state.items)).unwrap_or_default();
+            m.motion.appear(&key, div().w_full().max_w(px(content_max_w(cx))).child(body))
+        })
         .into_any_element()
 }
 
@@ -127,7 +132,7 @@ fn render_thinking(session: &Entity<SessionModel>, id: &str, text: &str, streami
                 } else {
                     div().text_size(px(13.)).text_color(t.muted_foreground).child(thought_label(session.read(cx).thinking_secs(id))).into_any_element()
                 })
-                .child(icon(if expanded { IconName::ChevronDown } else { IconName::ChevronRight }, 12., t.muted_foreground)),
+                .child(session.read(cx).motion.chevron(id, expanded, 12., t.muted_foreground)),
         )
         .when(expanded && !streaming, |d| {
             d.child(div().pl(px(20.)).text_size(px(13.)).text_color(t.muted_foreground).child(text.to_string()))

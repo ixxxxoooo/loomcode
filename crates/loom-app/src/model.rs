@@ -28,6 +28,8 @@ pub struct SessionModel {
     pub rows: Vec<crate::row_groups::Row>,
     /// 刚点过「复制」的助手条目 id(1.5 秒后清掉,用来显示「已复制」)
     pub copied: Option<String>,
+    /// 微动效的时间记录(新行淡入、箭头旋转)
+    pub motion: crate::motion::Motion,
     /// 思考条目的计时:id → (开始, 结束)。只有实时看到的思考才有时长,历史回放没有
     /// 当前回合开始时间(运行中才有);界面用它显示「12s · 按 Esc 中断」
     pub turn_started: Option<std::time::Instant>,
@@ -83,6 +85,7 @@ impl SessionModel {
             wizard_focus: None,
             rows: Vec::new(),
             copied: None,
+            motion: Default::default(),
             turn_started: None,
             thinking_times: Default::default(),
             item_row: Vec::new(),
@@ -130,7 +133,11 @@ impl SessionModel {
         }
         // 重新算显示行;只有尾部会变,把变化的那一段整体替换,并重新测量内容变了的行
         let old_rows = std::mem::take(&mut self.rows);
+        let old_keys: Vec<String> = old_rows.iter().map(|r| crate::motion::row_key(r, &self.state.items)).collect();
         self.rows = crate::row_groups::build_rows(&self.state.items, self.state.phase == Phase::Running, Self::density(cx), &self.state.durations);
+        // 实时回合里新出现的行淡入(历史回放、批量载入不动)
+        let new_keys: Vec<String> = self.rows.iter().map(|r| crate::motion::row_key(r, &self.state.items)).collect();
+        self.motion.mark_appeared(crate::motion::fresh_keys(&old_keys, &new_keys, self.state.phase == Phase::Running));
         self.item_row = crate::row_groups::item_to_row(&self.rows, self.state.items.len());
         let common = old_rows.iter().zip(&self.rows).take_while(|(a, b)| a == b).count();
         let dirty: Vec<usize> = {
@@ -316,6 +323,7 @@ impl SessionModel {
         if !self.expanded.remove(id) {
             self.expanded.insert(id.to_string());
         }
+        self.motion.mark_toggled(id);
         // 点开 / 收起是用户的原地操作:暂停贴底跟随,让内容从原位置往下长
         self.scroller.update(cx, |s, _| s.pause_following());
         self.remeasure_id(id, cx);

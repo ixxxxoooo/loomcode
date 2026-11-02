@@ -46,7 +46,7 @@ pub fn render_group(session: &Entity<SessionModel>, range: Range<usize>, window:
         .when(failed > 0, |d| d.child(chip(failed, "失败", danger)))
         .when(stopped > 0, |d| d.child(chip(stopped, "已停止", muted)))
         .when(stalled > 0, |d| d.child(chip(stalled, "疑似停滞", warning)))
-        .child(icon(if expanded { IconName::ChevronDown } else { IconName::ChevronRight }, 12., muted));
+        .child(session.read(cx).motion.chevron(&key, expanded, 12., muted));
     v_flex().w_full()
         .child(header)
         .when(expanded, |d| {
