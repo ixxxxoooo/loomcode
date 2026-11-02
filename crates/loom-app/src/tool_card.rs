@@ -176,7 +176,18 @@ pub fn render_tool(session: &Entity<SessionModel>, tool: &ToolCall, cx: &App) ->
         .w_full()
         .child(header)
         .when(expanded && has_body, |d| {
-            d.child(v_flex().w_full().pl(px(30.)).pr_2().py_1().gap_1p5().children(tool.content.iter().map(|c| render_content(c, Some(&tool.id), &content_lang(tool), cx))))
+            d.child(v_flex().w_full().pl(px(30.)).pr_2().py_1().gap_1p5().children(tool.content.iter().enumerate().map(|(ix, c)| {
+                // 每块内容一个展开状态(键 `cb:<工具 id>:<第几块>`),长输出限高滚动
+                let key = format!("cb:{}:{ix}", tool.id);
+                let fold = crate::code_box::Fold {
+                    expanded: session.read(cx).is_expanded(&key),
+                    on_toggle: std::rc::Rc::new({
+                        let s = session.clone();
+                        move |_, cx| { s.update(cx, |m, cx| m.toggle(&key, cx)); }
+                    }),
+                };
+                render_content(c, Some(&tool.id), &content_lang(tool), Some((SharedString::from(format!("tc-{}-{ix}", tool.id)), fold, !tool.status.is_finished())), cx)
+            })))
         })
         .into_any_element()
 }
@@ -203,20 +214,35 @@ fn clip_lines(text: &str, max: usize) -> (String, usize) {
 }
 
 /// 渲染一个内容块。
-/// 参数:`run_id` 所属工具调用的 id;终端块用它显示「在终端面板查看」;`lang` 文本内容的语言(`text` 不着色)。
-pub fn render_content(content: &ToolContent, run_id: Option<&str>, lang: &str, cx: &App) -> AnyElement {
+/// 参数:`run_id` 所属工具调用的 id;终端块用它显示「在终端面板查看」;`lang` 文本内容的语言(`text` 不着色);
+/// `fold` 限高滚动用的 (元素 id, 展开状态, 是否运行中贴底跟随),`None` 时不限高(只按行数截断)。
+pub fn render_content(content: &ToolContent, run_id: Option<&str>, lang: &str, fold: Option<(SharedString, crate::code_box::Fold, bool)>, cx: &App) -> AnyElement {
     let t = cx.theme();
     match content {
         ToolContent::Text(text) => {
-            let (shown, more) = clip_lines(text, 60);
+            let (shown, more) = clip_lines(text, if fold.is_some() { 2000 } else { 60 });
+            let total = shown.lines().count();
+            let styled = StyledText::new(shown.clone()).with_highlights(crate::code_hl::styles(&shown, lang, cx));
+            let body = match &fold {
+                Some((id, f, follow)) => crate::code_box::fold_body(id.clone(), styled, total, Some(f), *follow, cx),
+                None => styled.into_any_element(),
+            };
             mono_box(cx)
-                .child(StyledText::new(shown.clone()).with_highlights(crate::code_hl::styles(&shown, lang, cx)))
+                .child(body)
                 .when(more > 0, |d| d.child(div().mt_1().text_color(t.muted_foreground).child(format!("… 还有 {more} 行"))))
                 .into_any_element()
         }
         ToolContent::Terminal { command, output, exit_code } => {
-            let (shown, more) = clip_lines(output, 80);
+            let (shown, more) = clip_lines(output, if fold.is_some() { 2000 } else { 80 });
             let parsed = ansi::parse(&shown);
+            let total = shown.lines().count();
+            let out_el = {
+                let styled = StyledText::new(parsed.text).with_highlights(parsed.runs);
+                match &fold {
+                    Some((id, f, follow)) => crate::code_box::fold_body(id.clone(), styled, total, Some(f), *follow, cx),
+                    None => styled.into_any_element(),
+                }
+            };
             mono_box(cx)
                 .child(
                     h_flex().gap_2().mb_1().items_start()
@@ -238,7 +264,7 @@ pub fn render_content(content: &ToolContent, run_id: Option<&str>, lang: &str, c
                             )
                         })),
                 )
-                .child(StyledText::new(parsed.text).with_highlights(parsed.runs))
+                .child(out_el)
                 .when(more > 0, |d| d.child(div().mt_1().text_color(t.muted_foreground).child(format!("… 还有 {more} 行"))))
                 .into_any_element()
         }
@@ -260,7 +286,13 @@ pub fn render_content(content: &ToolContent, run_id: Option<&str>, lang: &str, c
                         .child(div().text_color(t.success).child(format!("+{added}")))
                         .child(div().text_color(t.danger).child(format!("−{removed}"))),
                 )
-                .child(diff::render(&lines, 120, crate::file_tree::language_for(std::path::Path::new(path)), cx))
+                .child({
+                    let el = diff::render(&lines, 120, crate::file_tree::language_for(std::path::Path::new(path)), cx);
+                    match &fold {
+                        Some((id, f, _)) => crate::code_box::fold_body(id.clone(), el, lines.len().min(120), Some(f), false, cx),
+                        None => el.into_any_element(),
+                    }
+                })
                 .into_any_element()
         }
         ToolContent::Image { label, path: Some(path) } if std::path::Path::new(path).is_file() => v_flex()

@@ -24,6 +24,8 @@ pub enum Block {
     Chart(ChartSpec),
     /// 无法渲染成图时回退为源码展示;`kind` 为围栏语言
     Source { kind: String, code: String },
+    /// 普通围栏代码块(限高滚动,见 `code_box`);`closed` 为假表示还在流式输出、围栏未闭合
+    Code { lang: String, code: String, closed: bool },
 }
 
 /// 解析 `chart` 围栏里的 JSON。
@@ -54,6 +56,18 @@ pub fn split_blocks(text: &str) -> Vec<Block> {
     let mut lines = text.split_inclusive('\n').peekable();
     while let Some(line) = lines.next() {
         let trimmed = line.trim_start();
+        // 四个及以上反引号的外层围栏(里面可以放三个反引号):整段原样交给 Markdown
+        if trimmed.starts_with("````") {
+            let ticks = trimmed.chars().take_while(|c| *c == '`').count();
+            md.push_str(line);
+            for next in lines.by_ref() {
+                md.push_str(next);
+                if next.trim() == "`".repeat(ticks) {
+                    break;
+                }
+            }
+            continue;
+        }
         let lang = trimmed.strip_prefix("```").map(str::trim);
         match lang {
             Some(lang @ ("chart" | "mermaid")) => {
@@ -88,6 +102,25 @@ pub fn split_blocks(text: &str) -> Vec<Block> {
                     }
                 }
             }
+            // 其他围栏(```rust、``` 等):拆出来做成限高的代码块;四个以上反引号交给 Markdown
+            Some(lang) => {
+                let mut body = String::new();
+                let mut closed = false;
+                for next in lines.by_ref() {
+                    if next.trim() == "```" {
+                        closed = true;
+                        break;
+                    }
+                    body.push_str(next);
+                }
+                if !md.trim().is_empty() {
+                    out.push(Block::Markdown(std::mem::take(&mut md)));
+                } else {
+                    md.clear();
+                }
+                let lang = lang.split_whitespace().next().unwrap_or("").to_string();
+                out.push(Block::Code { lang, code: body, closed });
+            }
             _ => md.push_str(line),
         }
     }
@@ -98,13 +131,27 @@ pub fn split_blocks(text: &str) -> Vec<Block> {
 }
 
 /// 渲染助手正文。
-pub fn render_assistant(id: &str, text: &str, cx: &App) -> AnyElement {
+///
+/// 参数:`session` 会话(代码块的展开状态存在它的展开集合里);`id` 条目 id;`text` 正文。
+pub fn render_assistant(session: &Entity<crate::model::SessionModel>, id: &str, text: &str, cx: &App) -> AnyElement {
     let blocks = split_blocks(text);
     v_flex().w_full().gap_2().text_size(px(14. * cx.try_global::<crate::UiPrefs>().map_or(1., |p| p.font_scale)))
         .children(blocks.into_iter().enumerate().map(|(n, b)| match b {
             Block::Markdown(md) => div().w_full().child(TextView::markdown(SharedString::from(format!("md-{id}-{n}")), md).selectable(true)).into_any_element(),
             Block::Chart(spec) => render_chart(id, n, &spec, cx),
             Block::Source { kind, code } => render_source(&kind, &code, cx),
+            Block::Code { lang, code, closed } => {
+                // 展开状态:键 `cb:<条目 id>:<第几块>`,存在会话的展开集合里,切换时重新测量所在行
+                let key = format!("cb:{id}:{n}");
+                let fold = crate::code_box::Fold {
+                    expanded: session.read(cx).is_expanded(&key),
+                    on_toggle: std::rc::Rc::new({
+                        let s = session.clone();
+                        move |_, cx| { s.update(cx, |m, cx| m.toggle(&key, cx)); }
+                    }),
+                };
+                crate::code_box::render_code(SharedString::from(format!("cb-{id}-{n}")), &lang, &code, !closed, Some(&fold), cx)
+            }
         }))
         .into_any_element()
 }
@@ -175,6 +222,26 @@ mod tests {
     fn 坏数据回退为源码() {
         let blocks = split_blocks("```chart\n{bad json}\n```\n");
         assert!(matches!(&blocks[0], Block::Source { kind, .. } if kind == "chart"));
+    }
+
+    #[::core::prelude::v1::test]
+    fn 普通围栏拆成代码块() {
+        let blocks = split_blocks("前文\n```rust title=a\nfn main() {}\n```\n后文\n");
+        assert_eq!(blocks.len(), 3);
+        assert_eq!(blocks[1], Block::Code { lang: "rust".into(), code: "fn main() {}\n".into(), closed: true });
+        assert!(matches!(&blocks[2], Block::Markdown(m) if m.contains("后文")));
+    }
+
+    #[::core::prelude::v1::test]
+    fn 流式未闭合的围栏也是代码块() {
+        let blocks = split_blocks("```\nlet a = 1;\nlet b");
+        assert_eq!(blocks, vec![Block::Code { lang: String::new(), code: "let a = 1;\nlet b".into(), closed: false }]);
+    }
+
+    #[::core::prelude::v1::test]
+    fn 四个反引号交给_markdown() {
+        let blocks = split_blocks("````md\n```x\n```\n````\n");
+        assert!(blocks.iter().all(|b| matches!(b, Block::Markdown(_))));
     }
 
     #[::core::prelude::v1::test]

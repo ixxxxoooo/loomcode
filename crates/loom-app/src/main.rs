@@ -32,6 +32,7 @@ mod branch_bar;
 mod browser_page;
 mod canvas_page;
 mod cards;
+mod code_box;
 mod code_hl;
 mod composer;
 mod composer_pop;

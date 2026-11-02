@@ -75,7 +75,7 @@ fn render_working(session: &Entity<SessionModel>, cx: &App) -> AnyElement {
 pub fn render_item(session: &Entity<SessionModel>, item: &TimelineItem, depth: usize, window: &mut Window, cx: &mut App) -> AnyElement {
     match item {
         TimelineItem::User { id, text, images, files } => crate::user_message::render_user(session, id, text, images, files, cx),
-        TimelineItem::Assistant { id, text, .. } => crate::rich_text::render_assistant(id, text, cx),
+        TimelineItem::Assistant { id, text, .. } => crate::rich_text::render_assistant(session, id, text, cx),
         TimelineItem::Thinking { id, text, streaming } => render_thinking(session, id, text, *streaming, cx),
         TimelineItem::Tool(tool) => tool_card::render_tool(session, tool, cx),
         TimelineItem::Todos { id, items } => cards::render_todos(id, items, cx),

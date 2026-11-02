@@ -290,6 +290,8 @@ impl SessionModel {
 
     pub(crate) fn remeasure_id(&mut self, id: &str, cx: &mut Context<Self>) {
         // 折叠组的 key 是「grp:首个工具 id」
+        // 代码块 / 输出块的 key 是「cb:条目 id:第几块」,取条目 id
+        let id = id.strip_prefix("cb:").map_or(id, |r| r.rsplit_once(':').map_or(r, |(item, _)| item));
         let id = id.strip_prefix("grp:").or_else(|| id.strip_prefix("dg:")).or_else(|| id.strip_prefix("ag:")).unwrap_or(id);
         if let Some(row) = self.state.row_of(id).and_then(|i| self.item_row.get(i).copied()) {
             self.scroller.update(cx, |s, cx| {
