@@ -146,6 +146,10 @@ pub fn render_assistant(session: &Entity<crate::model::SessionModel>, id: &str, 
                 let fold = crate::code_box::Fold {
                     expanded: session.read(cx).is_expanded(&key),
                     collapsed_h: None,
+                    copy: Some((session.read(cx).copied.as_deref() == Some(&format!("cc-{key}")), std::rc::Rc::new({
+                        let (s, k) = (session.clone(), format!("cc-{key}"));
+                        move |cx| { s.update(cx, |m, cx| m.mark_copied(&k, cx)); }
+                    }))),
                     on_toggle: std::rc::Rc::new({
                         let s = session.clone();
                         move |_, cx| { s.update(cx, |m, cx| m.toggle(&key, cx)); }

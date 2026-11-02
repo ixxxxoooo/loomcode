@@ -39,7 +39,8 @@ pub fn render_row(session: &Entity<SessionModel>, ix: usize, window: &mut Window
             match footer {
                 Some((id, text)) => {
                     let meta = crate::turn_footer::meta_text(session, i, cx);
-                    v_flex().w_full().child(body).child(crate::turn_footer::render(session, &id, &text, meta, cx)).into_any_element()
+                    let latest = !session.read(cx).state.items[i + 1..].iter().any(|x| matches!(x, TimelineItem::User { .. }));
+                    v_flex().w_full().group(SharedString::from(format!("turn-{id}"))).child(body).child(crate::turn_footer::render(session, &id, &text, meta, latest, cx)).into_any_element()
                 }
                 None => body,
             }

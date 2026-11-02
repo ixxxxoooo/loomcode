@@ -9,7 +9,7 @@ use gpui_kit::component::{ActiveTheme, h_flex};
 use gpui_kit::prelude::FluentBuilder as _;
 use gpui_kit::*;
 
-/// 操作条高度(固定占位,悬停才可见,避免悬停时行高跳动)。
+/// 操作条高度(固定占位,旧回合悬停才可见,避免悬停时行高跳动)。
 pub const FOOTER_H: f32 = 26.;
 
 /// 回合元信息:模型 · 用时 · 结束时间(没有的项跳过)。
@@ -37,12 +37,15 @@ pub fn meta_text(session: &Entity<SessionModel>, ix: usize, cx: &App) -> String 
 /// 渲染操作条(一直显示):复制、分支,后面跟回合元信息。
 ///
 /// 参数:`session` 会话;`id` 助手条目 id;`text` 要复制的原文;`meta` 元信息文本。
-pub fn render(session: &Entity<SessionModel>, id: &str, text: &str, meta: String, cx: &App) -> AnyElement {
+pub fn render(session: &Entity<SessionModel>, id: &str, text: &str, meta: String, latest: bool, cx: &App) -> AnyElement {
     let t = cx.theme();
     let copied = session.read(cx).copied.as_deref() == Some(id);
     let s = session.clone();
     let (cid, ctext) = (id.to_string(), text.to_string());
+    // 最近一个回合常驻;旧回合悬停在回复上才显示(占位高度不变,不跳动),刚复制过的保持可见
+    let group = SharedString::from(format!("turn-{id}"));
     h_flex().h(px(FOOTER_H)).items_center().gap_1().mt_0p5()
+        .when(!latest && !copied, |d| d.invisible().group_hover(group, |d| d.visible()))
         .child(
             h_flex().id(SharedString::from(format!("copy-{id}"))).h(px(22.)).px_1p5().gap_1().items_center().rounded(px(5.)).cursor_pointer()
                 .on_mouse_down(MouseButton::Left, |_, _, cx| cx.stop_propagation())

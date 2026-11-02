@@ -189,6 +189,7 @@ pub fn render_tool(session: &Entity<SessionModel>, tool: &ToolCall, cx: &App) ->
                     expanded: session.read(cx).is_expanded(&key),
                     // 编辑 Diff 收起时只给约 7 行的预览
                     collapsed_h: matches!(c, ToolContent::Diff { .. }).then_some(DIFF_PREVIEW_H),
+                    copy: None,
                     on_toggle: std::rc::Rc::new({
                         let s = session.clone();
                         move |_, cx| { s.update(cx, |m, cx| m.toggle(&key, cx)); }

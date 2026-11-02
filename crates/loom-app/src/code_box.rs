@@ -52,6 +52,8 @@ pub struct Fold {
     pub on_toggle: Rc<dyn Fn(&mut Window, &mut App)>,
     /// 收起时的最大高度;`None` 用默认的 [`COLLAPSED_H`](编辑 Diff 用更小的预览高度)
     pub collapsed_h: Option<f32>,
+    /// 代码块复制反馈:(是否刚复制过, 复制后回调);`None` 表示只复制不给反馈
+    pub copy: Option<(bool, Rc<dyn Fn(&mut App)>)>,
 }
 
 /// 这段文本是否需要限高。
@@ -63,9 +65,9 @@ pub fn needs_fold(total_lines: usize) -> bool {
 
 /// 当前应使用的最大高度。
 ///
-/// 参数:`expanded` 是否展开。
-pub fn max_height(expanded: bool) -> f32 {
-    if expanded { EXPANDED_H } else { COLLAPSED_H }
+/// 参数:`expanded` 是否展开;`collapsed_h` 收起时的自定义高度(`None` 用默认)。
+pub fn max_height(expanded: bool, collapsed_h: Option<f32>) -> f32 {
+    if expanded { EXPANDED_H } else { collapsed_h.unwrap_or(COLLAPSED_H) }
 }
 
 /// 限高滚动容器:短内容原样返回,长内容限高滚动并在底部加展开 / 收起条。
@@ -84,7 +86,7 @@ pub fn fold_body(id: SharedString, body: impl IntoElement, total_lines: usize, f
     let on_toggle = fold.on_toggle.clone();
     let label = if fold.expanded { "收起".to_string() } else { format!("展开 · 共 {total_lines} 行") };
     v_flex().w_full()
-        .child(div().id(id.clone()).w_full().max_h(px(if fold.expanded { EXPANDED_H } else { fold.collapsed_h.unwrap_or(COLLAPSED_H) })).overflow_y_scroll().track_scroll(&handle).child(body))
+        .child(div().id(id.clone()).w_full().max_h(px(max_height(fold.expanded, fold.collapsed_h))).overflow_y_scroll().track_scroll(&handle).child(body))
         .child(
             h_flex().id(SharedString::from(format!("{id}-fold"))).h(px(22.)).px_3().gap_1().items_center().cursor_pointer()
                 .text_size(px(11.)).text_color(t.muted_foreground).hover(|d| d.text_color(t.foreground))
@@ -106,13 +108,17 @@ pub fn render_code(id: SharedString, lang: &str, code: &str, streaming: bool, fo
     let hl = if streaming && code.len() > STREAM_HL_MAX { Vec::new() } else { crate::code_hl::styles(code, lang, cx) };
     let body = div().w_full().px_3().py_2().font_family(MONO).text_size(px(12.)).text_color(t.foreground).child(StyledText::new(code.to_string()).with_highlights(hl));
     let copy_text = code.to_string();
+    let (copied, on_copy) = fold.and_then(|f| f.copy.clone()).map_or((false, None), |(c, f)| (c, Some(f)));
     v_flex().w_full().rounded(px(8.)).border_1().border_color(t.border).bg(t.muted).overflow_hidden()
         .child(
             h_flex().h(px(26.)).px_3().gap_2().items_center()
                 .child(div().flex_1().min_w_0().truncate().text_size(px(11.)).text_color(t.muted_foreground).child(if lang.is_empty() { "代码".to_string() } else { lang.to_string() }))
                 .child(
-                    Button::new(SharedString::from(format!("{id}-copy"))).xsmall().ghost().icon(IconName::Copy).tooltip("复制")
-                        .on_click(move |_, _, cx| cx.write_to_clipboard(ClipboardItem::new_string(copy_text.clone()))),
+                    Button::new(SharedString::from(format!("{id}-copy"))).xsmall().ghost().icon(if copied { IconName::Check } else { IconName::Copy }).tooltip(if copied { "已复制" } else { "复制" })
+                        .on_click(move |_, _, cx| {
+                            cx.write_to_clipboard(ClipboardItem::new_string(copy_text.clone()));
+                            if let Some(f) = &on_copy { f(cx); }
+                        }),
                 ),
         )
         .child(fold_body(id, body, total, fold, streaming, cx))
@@ -127,8 +133,9 @@ mod tests {
     fn 行数阈值与高度档位() {
         assert!(!needs_fold(FOLD_LINES));
         assert!(needs_fold(FOLD_LINES + 1));
-        assert_eq!(max_height(false), COLLAPSED_H);
-        assert_eq!(max_height(true), EXPANDED_H);
+        assert_eq!(max_height(false, None), COLLAPSED_H);
+        assert_eq!(max_height(false, Some(100.)), 100.);
+        assert_eq!(max_height(true, Some(100.)), EXPANDED_H);
         assert!(EXPANDED_H > COLLAPSED_H);
     }
 }

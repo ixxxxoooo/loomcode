@@ -42,12 +42,14 @@ pub fn render_digest(session: &Entity<SessionModel>, range: Range<usize>, window
     let key = digest_key(&first_id);
     let expanded = session.read(cx).is_expanded(&key);
     let failed = items.iter().filter(|i| matches!(i, TimelineItem::Tool(t) if t.status == ToolStatus::Failed)).count();
-    let (muted, fg, danger) = { let t = cx.theme(); (t.muted_foreground, t.foreground, t.danger) };
+    let (muted, fg, danger, hover) = { let t = cx.theme(); (t.muted_foreground, t.foreground, t.danger, t.list_hover) };
+    let tool_count = items.iter().filter(|i| matches!(i, TimelineItem::Tool(_))).count();
     let s = session.clone();
     let k = key.clone();
-    let header = h_flex().id(SharedString::from(format!("digest-{first_id}"))).group(SharedString::from(format!("dg-g-{first_id}"))).self_start().h(px(crate::flow_style::ROW_H)).px_2().gap_1p5().items_center().rounded(px(6.)).cursor_pointer()
+    let header = h_flex().id(SharedString::from(format!("digest-{first_id}"))).group(SharedString::from(format!("dg-g-{first_id}"))).self_start().h(px(crate::flow_style::ROW_H)).px_2().gap_1p5().items_center().rounded(px(6.)).cursor_pointer().hover(|d| d.bg(hover))
         .on_click(move |_, _, cx| { s.update(cx, |m, cx| m.toggle(&k, cx)); })
         .child(div().text_size(px(13.)).text_color(if expanded { fg } else { muted }).child(format!("已工作 {}", work_text(secs))))
+        .when(tool_count > 0, |d| d.child(div().text_size(px(11.5)).text_color(muted.opacity(0.75)).child(format!("{tool_count} 次工具"))))
         .when(failed > 0, |d| d.child(div().text_size(px(12.)).text_color(danger).child(format!("{failed} 项失败"))))
         .child(session.read(cx).motion.chevron(&key, expanded, 12., muted));
     v_flex().w_full()
