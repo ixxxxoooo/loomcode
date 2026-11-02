@@ -58,7 +58,6 @@ impl RightPanel {
             (Some(ed), false) => div().size_full().child(ed.clone()).into_any_element(),
             (None, false) => empty_state(IconName::FileText, "选择一个文件", "在右侧资源管理器里单击文件,会在这里打开", cx).into_any_element(),
         };
-        crate::tab_style::set_compact(true);
         let tree = self.files_view(cx);
         v_flex().size_full()
             .child(header)

@@ -9,25 +9,8 @@ use gpui_kit::component::{ActiveTheme, Icon, h_flex};
 use gpui_kit::prelude::FluentBuilder as _;
 use gpui_kit::*;
 
-/// 标签条高度。
-pub const TAB_H: f32 = 36.;
-/// Agent 右栏内嵌编辑器时的紧凑标签条高度(与右栏标签条的胶囊高度一致)。
-pub const TAB_H_COMPACT: f32 = 28.;
-
-static COMPACT: std::sync::atomic::AtomicBool = std::sync::atomic::AtomicBool::new(false);
-
-/// 由宿主在渲染编辑器之前设置:Agent 右栏内嵌为紧凑,IDE 窗口为标准。
-///
-/// 参数:`on` 是否紧凑。
-pub fn set_compact(on: bool) {
-    COMPACT.store(on, std::sync::atomic::Ordering::Relaxed);
-}
-
-/// 当前文件标签条高度。返回:紧凑 28,否则 `TAB_H`。
-pub fn tab_bar_h() -> f32 {
-    if COMPACT.load(std::sync::atomic::Ordering::Relaxed) { TAB_H_COMPACT } else { TAB_H }
-}
-
+/// 标签条高度(对标 OhMyAgent 的编辑器标签条 32pt;Agent 与 IDE 共用)。
+pub const TAB_H: f32 = 32.;
 /// 标签字号。
 pub const TAB_FONT: f32 = 13.;
 

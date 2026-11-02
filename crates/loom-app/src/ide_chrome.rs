@@ -46,7 +46,7 @@ pub fn tab_bar(items: Vec<TabItem>, scroll: ScrollHandle, root: &str, cx: &mut C
     let t = cx.theme().clone();
     h_flex()
         .id("ide-tabs")
-        .h(px(crate::tab_style::tab_bar_h()))
+        .h(px(crate::tab_style::TAB_H))
         .w_full()
         .flex_none()
         .overflow_x_scroll()
