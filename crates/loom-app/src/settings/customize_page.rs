@@ -97,7 +97,8 @@ pub fn render(wb: &mut Workbench, window: &mut Window, cx: &mut Context<Workbenc
 /// 主窗口里的整页:居中可滚动,宽度比设置页稍宽。
 pub fn render_page(wb: &mut Workbench, window: &mut Window, cx: &mut Context<Workbench>) -> AnyElement {
     let content = render(wb, window, cx);
-    div().id("customize-scroll").size_full().overflow_y_scroll().flex().justify_center().px_6().pb_10()
-        .child(v_flex().w_full().max_w(px(900.)).pt_4().child(content))
+    // 纵向 flex + flex_none:内容比窗口高时不被压缩,外层才有可滚动的溢出(横向 flex 会把子项拉伸到容器高度,导致滚不动)
+    div().id("customize-scroll").size_full().overflow_y_scroll().flex().flex_col().items_center().px_6().pb_10()
+        .child(v_flex().w_full().max_w(px(900.)).flex_none().pt_4().child(content))
         .into_any_element()
 }

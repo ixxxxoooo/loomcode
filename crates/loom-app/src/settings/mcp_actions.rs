@@ -118,12 +118,22 @@ impl Workbench {
             return;
         }
         if self.demo {
-            let h = &mut self.forms_mut().mcp_health;
-            h.clear();
-            h.insert("filesystem".into(), (Health::Connected, "Connected".into()));
-            h.insert("github".into(), (Health::NeedsAuth, "Needs authentication".into()));
-            h.insert("playwright".into(), (Health::Failed, "Failed to connect".into()));
+            // 演示:模拟 1.5 秒的检测过程,方便看到转圈动画
+            self.forms_mut().mcp_checking = true;
             cx.notify();
+            cx.spawn(async move |this, cx| {
+                cx.background_executor().timer(std::time::Duration::from_millis(1500)).await;
+                let _ = this.update(cx, |this, cx| {
+                    let f = this.forms_mut();
+                    f.mcp_checking = false;
+                    f.mcp_health.clear();
+                    f.mcp_health.insert("filesystem".into(), (Health::Connected, "Connected".into()));
+                    f.mcp_health.insert("github".into(), (Health::NeedsAuth, "Needs authentication".into()));
+                    f.mcp_health.insert("playwright".into(), (Health::Failed, "Failed to connect".into()));
+                    cx.notify();
+                });
+            })
+            .detach();
             return;
         }
         let Some(bin) = loom_claude::options::find_claude(self.settings.claude_path.as_deref()) else {

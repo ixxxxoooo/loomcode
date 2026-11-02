@@ -13,6 +13,7 @@ use gpui_kit::component::Disableable as _;
 use gpui_kit::component::button::{Button, ButtonVariants};
 use gpui_kit::component::input::{Input, Textarea};
 use gpui_kit::component::menu::{DropdownMenu as _, PopupMenu, PopupMenuItem};
+use gpui_kit::component::spinner::Spinner;
 use gpui_kit::component::switch::Switch;
 use gpui_kit::component::{ActiveTheme, Sizable, h_flex, v_flex};
 use gpui_kit::prelude::FluentBuilder as _;
@@ -103,7 +104,8 @@ fn menu(wb: WeakEntity<Workbench>, s: McpServer) -> impl Fn(PopupMenu, &mut Wind
 fn server_row(wb: &Workbench, i: usize, s: McpServer, has_project: bool, cx: &mut Context<Workbench>) -> AnyElement {
     let t = cx.theme().clone();
     let health = wb.forms().mcp_health.get(&s.name).map(|(h, _)| *h);
-    let tint = health.map(|h| health_look(h, cx).0);
+    let checking = wb.forms().mcp_checking;
+    let tint = health.filter(|_| !checking).map(|h| health_look(h, cx).0);
     let mut row = Row::new(format!("mcp-{i}"), IconName::Plug, s.name.clone());
     row.tint = tint;
     row.dimmed = !s.enabled;
@@ -122,7 +124,9 @@ fn server_row(wb: &Workbench, i: usize, s: McpServer, has_project: bool, cx: &mu
     }
     let (s_tog, s_appr, weak) = (s.clone(), s.clone(), cx.entity().downgrade());
     row.trailing = Some(h_flex().gap_2p5().items_center()
-        .when_some(health, |d, h| {
+        // 检测中:所有行显示转圈,不沿用上一次的结果
+        .when(checking, |d| d.child(h_flex().gap_1p5().items_center().child(Spinner::new().xsmall()).child(div().text_size(px(11.5)).text_color(t.muted_foreground).child("检测中…"))))
+        .when_some(health.filter(|_| !checking), |d, h| {
             let (c, text) = health_look(h, cx);
             d.child(h_flex().gap_1p5().items_center().child(div().size(px(7.)).rounded_full().bg(c)).child(div().text_size(px(11.5)).text_color(t.muted_foreground).child(text)))
         })
@@ -165,8 +169,13 @@ pub fn mcp(wb: &Workbench, filter: &str, cx: &mut Context<Workbench>) -> AnyElem
     let checking = wb.forms().mcp_checking;
     let weak = cx.entity().downgrade();
     let actions = h_flex().gap_2().items_center()
-        .child(Button::new("mcp-check").small().outline().icon(IconName::Timer).label(if checking { "检测中…" } else { "检测连接" }).disabled(checking)
-            .tooltip("运行 claude mcp list 检测各服务器的连接状态").on_click(cx.listener(|this, _, _, cx| this.check_mcp_health(cx))))
+        .child(if checking {
+            Button::new("mcp-check").small().outline().disabled(true)
+                .child(h_flex().gap_1p5().items_center().child(Spinner::new().xsmall()).child("检测中…"))
+        } else {
+            Button::new("mcp-check").small().outline().icon(IconName::Timer).label("检测连接")
+                .tooltip("运行 claude mcp list 检测各服务器的连接状态").on_click(cx.listener(|this, _, _, cx| this.check_mcp_health(cx)))
+        })
         .child(icon_button("mcp-refresh", IconName::RefreshCw, "重新读取配置").on_click(cx.listener(|this, _, _, cx| { this.reload_claude_cfg(); cx.notify(); })))
         .child(Button::new("mcp-add").small().primary().icon(IconName::Plus).label("添加服务器").dropdown_menu(move |menu, _, _| {
             let (w1, w2, w3) = (weak.clone(), weak.clone(), weak.clone());
