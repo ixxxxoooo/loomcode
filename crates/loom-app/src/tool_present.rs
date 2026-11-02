@@ -50,6 +50,29 @@ fn mcp_parts(name: &str) -> Option<(String, String)> {
     Some((server.to_string(), tool.replace('_', " ")))
 }
 
+/// 工具结果的第一段文本。
+fn result_text(tool: &ToolCall) -> Option<&str> {
+    tool.content.iter().find_map(|c| if let ToolContent::Text(t) = c { Some(t.as_str()) } else { None })
+}
+
+/// 搜索 / 查找的结果数附注:按非空行数算(「12 处」「3 个文件」);没有结果文本或结果为空时返回 `None`。
+fn result_count(tool: &ToolCall) -> Option<String> {
+    let n = result_text(tool)?.lines().filter(|l| !l.trim().is_empty()).count();
+    (n > 0).then(|| if tool.name == "Glob" { format!("{n} 个文件") } else { format!("{n} 处") })
+}
+
+/// 网址缩成「域名 + 截断的路径」,不是网址就原样返回。
+fn short_url(url: &str) -> String {
+    let rest = url.split_once("://").map_or(url, |(_, r)| r);
+    let (host, path) = rest.split_once('/').unwrap_or((rest, ""));
+    let path = path.trim_end_matches('/');
+    if path.is_empty() {
+        return host.to_string();
+    }
+    let path: String = if path.chars().count() > 28 { path.chars().take(27).chain(std::iter::once('…')).collect() } else { path.to_string() };
+    format!("{host}/{path}")
+}
+
 /// 由工具调用算出展示信息。
 ///
 /// 参数:`tool` 工具调用。返回:动词 / 对象 / 附注。
@@ -73,7 +96,13 @@ pub fn present(tool: &ToolCall) -> Present {
         ToolKind::Search => Present {
             verb: if tool.name == "Glob" { "查找文件" } else { "搜索" }.into(),
             subject: s(input, "pattern").or_else(|| s(input, "query")).map(str::to_string).unwrap_or_else(|| strip_verb(&tool.title)),
-            detail: s(input, "path").map(|p| p.rsplit('/').next().unwrap_or(p).to_string()).or_else(|| s(input, "glob").map(str::to_string)),
+            detail: {
+                let scope = s(input, "path").map(|p| p.rsplit('/').next().unwrap_or(p).to_string()).or_else(|| s(input, "glob").map(str::to_string));
+                match (scope, result_count(tool)) {
+                    (Some(a), Some(b)) => Some(format!("{a} · {b}")),
+                    (a, b) => a.or(b),
+                }
+            },
             is_path: false,
         },
         ToolKind::Execute => {
@@ -82,12 +111,18 @@ pub fn present(tool: &ToolCall) -> Present {
         }
         ToolKind::Fetch => Present {
             verb: if tool.name == "WebSearch" { "联网搜索" } else { "获取" }.into(),
-            subject: s(input, "url").or_else(|| s(input, "query")).map(str::to_string).unwrap_or_else(|| strip_verb(&tool.title)),
+            subject: s(input, "url").map(short_url).or_else(|| s(input, "query").map(str::to_string)).unwrap_or_else(|| strip_verb(&tool.title)),
             ..Default::default()
         },
         ToolKind::Think => Present { verb: "思考".into(), subject: tool.title.clone(), ..Default::default() },
         ToolKind::Mcp => match mcp_parts(&tool.name) {
-            Some((server, name)) => Present { verb: server, subject: name, ..Default::default() },
+            // 对象后面带第一个字符串参数,一眼看出调的是哪一个(如 get pr · #123)
+            Some((server, name)) => Present {
+                verb: server,
+                subject: name,
+                detail: input.as_object().and_then(|o| o.values().find_map(|v| v.as_str().filter(|x| !x.is_empty() && x.chars().count() <= 40).map(str::to_string))),
+                is_path: false,
+            },
             None => Present { subject: tool.title.clone(), ..Default::default() },
         },
         _ => Present { subject: if tool.title.is_empty() { tool.name.clone() } else { tool.title.clone() }, ..Default::default() },
@@ -120,6 +155,25 @@ mod tests {
     fn 没有入参时从标题去掉动词() {
         let p = present(&tool("Read", "读取 src/main.rs", serde_json::json!({})));
         assert_eq!((p.subject.as_str(), p.is_path), ("src/main.rs", false));
+    }
+
+    #[::core::prelude::v1::test]
+    fn 搜索附注带结果数() {
+        let mut t = tool("Grep", "搜索 foo", serde_json::json!({"pattern": "foo", "path": "/x/src"}));
+        t.kind = ToolKind::Search;
+        t.content = vec![ToolContent::Text("a.rs:1:foo\nb.rs:2:foo\n".into())];
+        assert_eq!(present(&t).detail.as_deref(), Some("src · 2 处"));
+        let mut g = tool("Glob", "查找", serde_json::json!({"pattern": "*.rs"}));
+        g.kind = ToolKind::Search;
+        g.content = vec![ToolContent::Text("a.rs\nb.rs\nc.rs".into())];
+        assert_eq!(present(&g).detail.as_deref(), Some("3 个文件"));
+    }
+
+    #[::core::prelude::v1::test]
+    fn 网址缩成域名加路径() {
+        assert_eq!(short_url("https://docs.rs/"), "docs.rs");
+        assert_eq!(short_url("https://docs.rs/tokio/latest/tokio/"), "docs.rs/tokio/latest/tokio");
+        assert!(short_url("https://a.com/aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa").ends_with('…'));
     }
 
     #[::core::prelude::v1::test]

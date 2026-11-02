@@ -4,7 +4,8 @@
 //! @author ixxxxoooo
 
 use crate::model::SessionModel;
-use crate::tool_card::{render_content, tool_icon};
+use crate::tool_card::tool_icon;
+use crate::tool_content::render_content;
 use crate::ui::{MONO, caption, icon, mono_box};
 use gpui_kit::assets::IconName;
 use gpui_kit::component::button::{Button, ButtonVariants};

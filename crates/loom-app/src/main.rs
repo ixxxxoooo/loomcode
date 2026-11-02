@@ -172,6 +172,7 @@ mod theme;
 mod theme_palettes;
 mod timeline;
 mod tool_card;
+mod tool_content;
 mod ui;
 mod updater;
 mod user_message;

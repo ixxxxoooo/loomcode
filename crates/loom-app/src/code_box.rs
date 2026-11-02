@@ -50,6 +50,8 @@ pub struct Fold {
     pub expanded: bool,
     /// 点「展开 / 收起」时调用
     pub on_toggle: Rc<dyn Fn(&mut Window, &mut App)>,
+    /// 收起时的最大高度;`None` 用默认的 [`COLLAPSED_H`](编辑 Diff 用更小的预览高度)
+    pub collapsed_h: Option<f32>,
 }
 
 /// 这段文本是否需要限高。
@@ -82,7 +84,7 @@ pub fn fold_body(id: SharedString, body: impl IntoElement, total_lines: usize, f
     let on_toggle = fold.on_toggle.clone();
     let label = if fold.expanded { "收起".to_string() } else { format!("展开 · 共 {total_lines} 行") };
     v_flex().w_full()
-        .child(div().id(id.clone()).w_full().max_h(px(max_height(fold.expanded))).overflow_y_scroll().track_scroll(&handle).child(body))
+        .child(div().id(id.clone()).w_full().max_h(px(if fold.expanded { EXPANDED_H } else { fold.collapsed_h.unwrap_or(COLLAPSED_H) })).overflow_y_scroll().track_scroll(&handle).child(body))
         .child(
             h_flex().id(SharedString::from(format!("{id}-fold"))).h(px(22.)).px_3().gap_1().items_center().cursor_pointer()
                 .text_size(px(11.)).text_color(t.muted_foreground).hover(|d| d.text_color(t.foreground))

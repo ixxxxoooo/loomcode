@@ -145,6 +145,7 @@ pub fn render_assistant(session: &Entity<crate::model::SessionModel>, id: &str, 
                 let key = format!("cb:{id}:{n}");
                 let fold = crate::code_box::Fold {
                     expanded: session.read(cx).is_expanded(&key),
+                    collapsed_h: None,
                     on_toggle: std::rc::Rc::new({
                         let s = session.clone();
                         move |_, cx| { s.update(cx, |m, cx| m.toggle(&key, cx)); }

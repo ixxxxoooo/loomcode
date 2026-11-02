@@ -57,6 +57,18 @@ pub fn expands_in_detailed(tool: &ToolCall) -> bool {
     tool.content.iter().any(|c| matches!(c, loom_core::ToolContent::Diff { .. } | loom_core::ToolContent::Terminal { .. }))
 }
 
+/// 按详细程度判断工具是否默认展开:详细档 Diff 与命令输出都展开;
+/// 标准档只展开编辑 / 写入的 Diff(对标 Claude Code / Cursor,改了什么一眼可见,Diff 用小预览高度);精简档都折叠。
+///
+/// 参数:`tool` 工具调用;`density` 详细程度。
+pub fn expands_by_default(tool: &ToolCall, density: ToolDensity) -> bool {
+    match density {
+        ToolDensity::Detailed => expands_in_detailed(tool),
+        ToolDensity::Standard => matches!(tool.kind, ToolKind::Edit | ToolKind::Write) && tool.content.iter().any(|c| matches!(c, loom_core::ToolContent::Diff { .. })),
+        ToolDensity::Compact => false,
+    }
+}
+
 /// 回合在进行时,末尾是否需要「处理中」提示:最后一个条目没有在流式输出 / 没有运行中的工具 /
 /// 没有在等待用户(那些自己已经有动态指示);用户已处理完的权限 / 提问 / 计划卡不算。
 ///
@@ -313,6 +325,20 @@ mod tests {
         assert!(expands_in_detailed(&edit));
         assert!(!expands_in_detailed(&read));
         assert!(!expands_in_detailed(&ToolCall::new("3", "x", "x")));
+    }
+
+    #[test]
+    fn 标准档默认展开编辑的差异() {
+        let mut edit = ToolCall::new("1", "Edit", "x");
+        edit.kind = ToolKind::Edit;
+        edit.content = vec![loom_core::ToolContent::Diff { path: "a".into(), old: "".into(), new: "b".into() }];
+        let mut run = ToolCall::new("2", "Bash", "x");
+        run.kind = ToolKind::Execute;
+        run.content = vec![loom_core::ToolContent::Terminal { command: "ls".into(), output: "a".into(), exit_code: Some(0) }];
+        assert!(expands_by_default(&edit, ToolDensity::Standard));
+        assert!(!expands_by_default(&run, ToolDensity::Standard));
+        assert!(!expands_by_default(&edit, ToolDensity::Compact));
+        assert!(expands_by_default(&run, ToolDensity::Detailed));
     }
 
     fn user(id: &str) -> TimelineItem {
