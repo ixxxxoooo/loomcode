@@ -522,11 +522,13 @@ impl Input {
         search_panel: Option<AnyElement>,
         _: &Window,
     ) -> impl IntoElement {
-        v_flex().size_full().children(search_panel).child(
+        // 查找小窗浮在编辑区右上角(对标 VS Code),不占行高;右边让出滚动条的位置
+        v_flex().size_full().child(
             div()
                 .relative()
                 .flex_1()
-                .child(input_state.into_any_element()),
+                .child(input_state.into_any_element())
+                .children(search_panel.map(|p| div().absolute().top_0().right(px(16.)).max_w_full().child(p))),
         )
     }
 }

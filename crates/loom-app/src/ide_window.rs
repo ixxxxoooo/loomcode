@@ -508,6 +508,10 @@ pub(crate) fn bind_ide_keys(cx: &mut App) {
             KeyBinding::new("ctrl--", NavBack, Some("IdeWindow")),
             KeyBinding::new("ctrl-_", NavForward, Some("IdeWindow")),
             KeyBinding::new("cmd-shift-f", FindInProject, Some("IdeWindow")),
+            // 编辑器自带库把 ⌘⇧F 绑成「替换」(在更深的 Input 上下文里,会盖住上面这条):
+            // 对齐 VS Code,编辑器里 ⌘F = 当前文件查找,⌘⇧F = 全局搜索,替换改成 ⌘⌥F
+            KeyBinding::new("cmd-shift-f", FindInProject, Some("IdeWindow > Input")),
+            KeyBinding::new("cmd-alt-f", gpui_kit::component::input::Replace, Some("Input")),
             KeyBinding::new("ctrl-shift-g", ShowScm, Some("IdeWindow")),
             KeyBinding::new("cmd-j", TogglePanel, Some("IdeWindow")),
             KeyBinding::new("cmd-l", crate::ide_reference::QuoteSelection, Some("IdeWindow")),

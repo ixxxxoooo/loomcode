@@ -1,9 +1,8 @@
 use ropey::Rope;
-use rust_i18n::t;
 use std::ops::Range;
 
 use gpui::{
-    App, AppContext as _, Context, Empty, Entity, FocusHandle, Focusable, Half,
+    App, AppContext as _, Context, Empty, Entity, FocusHandle, Focusable,
     InteractiveElement as _, IntoElement, ParentElement as _, Pixels, Render, Styled, Subscription,
     WeakEntity, Window, actions, div, prelude::FluentBuilder as _,
 };
@@ -16,7 +15,6 @@ use crate::{
         Enter, Escape, IndentInline, Input, InputBaseState, InputEvent, InputState, OutdentInline,
         Replace,
     },
-    label::Label,
     v_flex,
 };
 
@@ -202,6 +200,11 @@ impl<M: crate::input::overlay::OverlayMode> SearchPanel<M> {
     }
 
     fn on_action_enter(&mut self, action: &Enter, window: &mut Window, cx: &mut Context<Self>) {
+        // 焦点在「替换」框里按 Enter = 替换当前匹配项(VS Code 一致)
+        if self.session.replace_mode && self.replace_input.read(cx).focus_handle(cx).is_focused(window) {
+            self.replace_next(window, cx);
+            return;
+        }
         if action.shift {
             self.prev(window, cx);
         } else {
@@ -325,7 +328,23 @@ impl<M: crate::input::overlay::OverlayMode> Render for SearchPanel<M> {
             self.session.replace_mode = false;
         }
 
-        v_flex()
+        let theme = cx.theme();
+        let (border, muted, popover) = (theme.border, theme.muted_foreground, theme.tokens.popover);
+        let replace_on = self.session.replace_mode && allow_replace;
+        let total = self.session.matcher.len();
+        let has_query = !self.session.query.is_empty();
+        // 对标 VS Code 查找小窗:无结果时 "无结果",否则 "第 N 项,共 M 项"
+        let counter = if has_matches {
+            format!("第 {} 项,共 {} 项", self.session.matcher.current_match_index() + 1, total)
+        } else {
+            "无结果".to_string()
+        };
+        let compact_input = |input: &Entity<InputState>| {
+            Input::new(input).focus_bordered(false).xsmall().w_full().shadow_none()
+        };
+
+        // 浮在编辑器右上角的紧凑小窗(宿主把它绝对定位在编辑区上方),不再占满整行、不推挤正文
+        h_flex()
             .id("search-panel")
             .occlude()
             .track_focus(&self.focus_handle(cx))
@@ -336,137 +355,152 @@ impl<M: crate::input::overlay::OverlayMode> Render for SearchPanel<M> {
             .on_action(cx.listener(Self::on_action_tab_prev))
             .on_action(cx.listener(Self::on_action_replace))
             .font_family(cx.theme().font_family.clone())
-            .items_center()
-            .py_2()
-            .px_3()
-            .w_full()
-            .gap_1()
-            .bg(cx.theme().tokens.popover)
-            .border_b_1()
-            .rounded(cx.theme().radius.half())
-            .border_color(cx.theme().border)
+            .items_start()
+            .w(gpui::px(340.))
+            .max_w_full()
+            .gap_0p5()
+            .py_1()
+            .pr_1()
+            .pl_0p5()
+            .bg(popover)
+            .border_1()
+            .border_color(border)
+            .rounded(gpui::px(6.))
+            .shadow_md()
+            // 左侧整列的展开 / 收起替换(VS Code 的 ▸ / ▾),不能替换时留一点空白
             .child(
-                h_flex()
-                    .w_full()
-                    .gap_2()
-                    .child(
-                        div()
-                            .flex()
-                            .flex_1()
-                            .gap_1()
-                            .child(
-                                Input::new(&self.search_input)
-                                    .focus_bordered(false)
-                                    .suffix(
-                                        Button::new("case-insensitive")
-                                            .selected(!self.session.case_insensitive)
-                                            .toggled(!self.session.case_insensitive)
-                                            .xsmall()
-                                            .compact()
-                                            .text()
-                                            .icon(IconName::CaseSensitive)
-                                            .on_click(cx.listener(|this, _, _, cx| {
-                                                this.session.case_insensitive =
-                                                    !this.session.case_insensitive;
-                                                this.update_search_query(None, cx);
-                                                cx.notify();
-                                            })),
-                                    )
-                                    .small()
-                                    .w_full()
-                                    .shadow_none(),
-                            )
-                            .on_prepaint({
-                                let view = cx.entity();
-                                move |bounds, _, cx| {
-                                    view.update(cx, |r, _| r.input_width = bounds.size.width)
-                                }
-                            }),
-                    )
-                    .when(allow_replace, |this| {
-                        this.child(
-                            Button::new("replace-mode")
-                                .xsmall()
-                                .ghost()
-                                .icon(IconName::Replace)
-                                .selected(self.session.replace_mode)
-                                .toggled(self.session.replace_mode)
-                                .on_click(cx.listener(|this, _, window, cx| {
-                                    this.toggle_replace_mode(window, cx);
-                                })),
-                        )
-                    })
-                    .child(
-                        Button::new("prev")
-                            .xsmall()
-                            .ghost()
-                            .icon(IconName::ChevronLeft)
-                            .disabled(!has_matches)
-                            .on_click(cx.listener(|this, _, window, cx| {
-                                this.prev(window, cx);
-                            })),
-                    )
-                    .child(
-                        Button::new("next")
-                            .xsmall()
-                            .ghost()
-                            .icon(IconName::ChevronRight)
-                            .disabled(!has_matches)
-                            .on_click(cx.listener(|this, _, window, cx| {
-                                this.next(window, cx);
-                            })),
-                    )
-                    .child(
-                        Label::new(self.session.matcher.label())
-                            .when(!has_matches, |this| {
-                                this.text_color(cx.theme().muted_foreground)
-                            })
-                            .text_left()
-                            .min_w_16(),
-                    )
-                    .child(div().w_7())
-                    .child(
-                        Button::new("close")
-                            .xsmall()
-                            .ghost()
-                            .icon(IconName::Close)
-                            .on_click(cx.listener(|this, _, window, cx| {
-                                this.on_action_escape(&Escape, window, cx);
-                            })),
-                    ),
+                div().w(gpui::px(18.)).h_full().flex().items_start().justify_center().pt(gpui::px(1.)).child(
+                    Button::new("replace-mode")
+                        .xsmall()
+                        .ghost()
+                        .compact()
+                        .icon(if replace_on { IconName::ChevronDown } else { IconName::ChevronRight })
+                        .tooltip("切换替换")
+                        .when(!allow_replace, |b| b.invisible())
+                        .on_click(cx.listener(|this, _, window, cx| {
+                            this.toggle_replace_mode(window, cx);
+                        })),
+                ),
             )
-            .when(self.session.replace_mode && allow_replace, |this| {
-                this.child(
-                    h_flex()
-                        .w_full()
-                        .gap_2()
-                        .child(
-                            Input::new(&self.replace_input)
-                                .focus_bordered(false)
-                                .small()
-                                .w(self.input_width)
-                                .shadow_none(),
+            .child(
+                v_flex()
+                    .flex_1()
+                    .min_w_0()
+                    .gap_1()
+                    .child(
+                        h_flex()
+                            .w_full()
+                            .gap_0p5()
+                            .items_center()
+                            .child(
+                                div()
+                                    .flex_1()
+                                    .min_w_0()
+                                    .child(
+                                        compact_input(&self.search_input).suffix(
+                                            Button::new("case-insensitive")
+                                                .selected(!self.session.case_insensitive)
+                                                .toggled(!self.session.case_insensitive)
+                                                .xsmall()
+                                                .compact()
+                                                .text()
+                                                .icon(IconName::CaseSensitive)
+                                                .tooltip("区分大小写")
+                                                .on_click(cx.listener(|this, _, _, cx| {
+                                                    this.session.case_insensitive =
+                                                        !this.session.case_insensitive;
+                                                    this.update_search_query(None, cx);
+                                                    cx.notify();
+                                                })),
+                                        ),
+                                    )
+                                    .on_prepaint({
+                                        let view = cx.entity();
+                                        move |bounds, _, cx| {
+                                            view.update(cx, |r, _| r.input_width = bounds.size.width)
+                                        }
+                                    }),
+                            )
+                            .child(
+                                div()
+                                    .flex_none()
+                                    .min_w(gpui::px(64.))
+                                    .px_1()
+                                    .text_size(gpui::px(11.))
+                                    .text_color(if has_query && !has_matches { theme.danger } else { muted })
+                                    .whitespace_nowrap()
+                                    .child(counter),
+                            )
+                            .child(
+                                Button::new("prev")
+                                    .xsmall()
+                                    .ghost()
+                                    .compact()
+                                    .icon(IconName::ArrowUp)
+                                    .tooltip("上一个匹配项 (⇧Enter)")
+                                    .disabled(!has_matches)
+                                    .on_click(cx.listener(|this, _, window, cx| {
+                                        this.prev(window, cx);
+                                    })),
+                            )
+                            .child(
+                                Button::new("next")
+                                    .xsmall()
+                                    .ghost()
+                                    .compact()
+                                    .icon(IconName::ArrowDown)
+                                    .tooltip("下一个匹配项 (Enter)")
+                                    .disabled(!has_matches)
+                                    .on_click(cx.listener(|this, _, window, cx| {
+                                        this.next(window, cx);
+                                    })),
+                            )
+                            .child(
+                                Button::new("close")
+                                    .xsmall()
+                                    .ghost()
+                                    .compact()
+                                    .icon(IconName::Close)
+                                    .tooltip("关闭 (Esc)")
+                                    .on_click(cx.listener(|this, _, window, cx| {
+                                        this.on_action_escape(&Escape, window, cx);
+                                    })),
+                            ),
+                    )
+                    .when(replace_on, |this| {
+                        this.child(
+                            h_flex()
+                                .w_full()
+                                .gap_0p5()
+                                .items_center()
+                                .child(div().flex_1().min_w_0().child(compact_input(&self.replace_input)))
+                                .child(
+                                    Button::new("replace-one")
+                                        .xsmall()
+                                        .ghost()
+                                        .compact()
+                                        .label("替换")
+                                        .tooltip("替换 (Enter)")
+                                        .disabled(!has_matches)
+                                        .on_click(cx.listener(|this, _, window, cx| {
+                                            this.replace_next(window, cx);
+                                        })),
+                                )
+                                .child(
+                                    Button::new("replace-all")
+                                        .xsmall()
+                                        .ghost()
+                                        .compact()
+                                        .label("全部替换")
+                                        .tooltip("全部替换")
+                                        .disabled(!has_matches)
+                                        .on_click(cx.listener(|this, _, window, cx| {
+                                            this.replace_all(window, cx);
+                                        })),
+                                ),
                         )
-                        .child(
-                            Button::new("replace-one")
-                                .small()
-                                .label(t!("Input.Replace"))
-                                .disabled(!has_matches)
-                                .on_click(cx.listener(|this, _, window, cx| {
-                                    this.replace_next(window, cx);
-                                })),
-                        )
-                        .child(
-                            Button::new("replace-all")
-                                .small()
-                                .label(t!("Input.Replace All"))
-                                .disabled(!has_matches)
-                                .on_click(cx.listener(|this, _, window, cx| {
-                                    this.replace_all(window, cx);
-                                })),
-                        ),
-                )
-            })
+                    }),
+            )
             .into_any_element()
     }
 }
