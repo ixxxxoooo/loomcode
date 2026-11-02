@@ -338,8 +338,10 @@ impl Workbench {
         wb._subs.push(editor_sub);
         // 源代码管理里打开文件 → 共享编辑器(Agent 与 IDE 同一入口)
         let scm_sub = cx.subscribe_in(&scm, window, |this, _, ev: &crate::scm::ScmEvent, window, cx| {
-            if let crate::scm::ScmEvent::OpenFile(path, pinned) = ev {
-                this.open_in_editor(path.clone(), *pinned, window, cx);
+            match ev {
+                crate::scm::ScmEvent::OpenFile(path, pinned) => this.open_in_editor(path.clone(), *pinned, window, cx),
+                crate::scm::ScmEvent::OpenDiff(src, pinned) => this.open_diff_in_editor(src.clone(), *pinned, window, cx),
+                _ => {}
             }
         });
         wb._subs.push(scm_sub);
@@ -1378,6 +1380,20 @@ impl Workbench {
         cx.notify();
     }
 
+    /// 在编辑器里打开某文件的差异标签(源代码管理单击);布局处理同 [`Self::open_in_editor`]。
+    fn open_diff_in_editor(&mut self, src: crate::ide_diff::DiffSource, pinned: bool, window: &mut Window, cx: &mut Context<Self>) {
+        self.page = Page::Chat;
+        self.sync_panel_root_if_needed(cx);
+        self.editor.update(cx, |v, cx| v.open_diff(src, !pinned, window, cx));
+        if self.editor_elsewhere(cx) {
+            self.open_ide_window(window, cx);
+        } else if !(self.ide && self.ide_shell.is_some()) {
+            self.right_open = true;
+            self.panel.update(cx, |p, cx| p.show_files_tab(cx));
+        }
+        cx.notify();
+    }
+
     /// 打开文件前确认编辑器的项目与当前会话一致(否则之后的换根会清掉刚打开的标签)。
     fn sync_panel_root_if_needed(&mut self, cx: &mut Context<Self>) {
         if let Some(root) = self.active_project_path() {
@@ -1529,7 +1545,7 @@ impl Workbench {
             .on_action(cx.listener(|this, _: &TogglePalette, window, cx| this.toggle_palette(window, cx)))
             .on_action(cx.listener(|this, _: &crate::ide::OpenCommandPalette, window, cx| this.toggle_palette(window, cx)))
             .on_action(cx.listener(|this, _: &crate::ide::ShowFileHistory, _, cx| {
-                if let Some(path) = this.editor.read(cx).tabs.active().map(|p| p.to_path_buf()) {
+                if let Some(path) = this.editor.read(cx).tabs.active().map(crate::ide_diff::real_path) {
                     this.scm.update(cx, |s, cx| s.show_file_history(&path, cx));
                     this.panel.update(cx, |p, cx| p.set_tab(RightTab::Changes, cx));
                     this.right_open = true;

@@ -27,6 +27,8 @@ pub enum ScmEvent {
     OpenFile(PathBuf, bool),
     /// 仓库状态被改动(暂存 / 提交 / 放弃…),文件树的 Git 标记需要刷新
     Changed,
+    /// 请在编辑区打开某文件的差异标签(第二项为 true 表示固定,否则是预览标签)
+    OpenDiff(crate::ide_diff::DiffSource, bool),
     /// 点了顶部分支名:请宿主弹出分支选择器(只有宿主能放得下浮层时才会发)
     PickBranch,
 }
@@ -309,6 +311,21 @@ impl ScmView {
             });
         })
         .detach();
+    }
+
+    /// 调试用(`LOOM_DIFF`):打开第 `n` 个文件(暂存组在前)的差异标签。
+    pub(crate) fn open_nth_diff(&self, n: usize, cx: &mut Context<Self>) {
+        let keys: Vec<String> = self.groups.staged.iter().chain(self.groups.changes.iter()).map(|i| i.key()).collect();
+        if let Some(k) = keys.get(n) {
+            self.open_diff_tab(k, false, cx);
+        }
+    }
+
+    /// 在编辑区打开某一行的差异标签(IDE 里单击 = 预览标签,双击 = 固定)。
+    pub(crate) fn open_diff_tab(&self, key: &str, pinned: bool, cx: &mut Context<Self>) {
+        let (Some(top), Some(item)) = (self.top.clone(), self.item(key)) else { return };
+        let src = crate::ide_diff::DiffSource { top, rel: item.path().to_string(), orig: item.entry.orig.clone(), group: item.group, untracked: item.entry.untracked() };
+        cx.emit(ScmEvent::OpenDiff(src, pinned));
     }
 
     /// 在编辑器里打开某个文件(仓库内相对路径)。

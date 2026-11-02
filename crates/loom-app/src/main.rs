@@ -8,6 +8,7 @@
 #![recursion_limit = "512"]
 
 mod ansi;
+mod ide_diff;
 mod branch_picker;
 mod notice;
 mod prompt_queue;

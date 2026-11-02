@@ -79,6 +79,8 @@ pub struct IdeView {
     pub(crate) sheet_subs: HashMap<PathBuf, Subscription>,
     /// 被选成「以文本打开」的分隔文本文件
     pub(crate) as_text: std::collections::HashSet<PathBuf>,
+    /// 差异标签(源代码管理里单击文件打开,伪路径 `diff:…`)
+    pub(crate) diffs: HashMap<PathBuf, crate::ide_diff::DiffTab>,
     /// 迷你地图的界面状态(区域、悬停、拖动抓取点、编辑区宽度)
     pub(crate) minimap_ui: std::rc::Rc<crate::ide_minimap::MinimapUi>,
     /// 已套用到所有文档的编辑器偏好(与全局不同就重新套用)
@@ -119,7 +121,7 @@ pub struct IdeView {
 impl IdeView {
     /// 创建空的编辑器视图。
     pub fn new() -> Self {
-        Self { root: String::new(), docs: HashMap::new(), tabs: TabModel::default(), note: None, images: Default::default(), sheets: HashMap::new(), sheet_subs: HashMap::new(), as_text: Default::default(), minimap_ui: Default::default(), applied: None, edit_gen: 0, nav: Default::default(), nav_quiet: false, fresh_open: false, recent: Vec::new(), pending_restore: None, md: HashMap::new(), blame_gutter: false, blame_ui: Default::default(), lsp_listening: false, hover_ui: Default::default(), overlay: None, cursor_msg: None, overlay_sub: None, tabs_scroll: ScrollHandle::new(), tabs_revealed: None }
+        Self { root: String::new(), docs: HashMap::new(), tabs: TabModel::default(), note: None, images: Default::default(), sheets: HashMap::new(), sheet_subs: HashMap::new(), diffs: HashMap::new(), as_text: Default::default(), minimap_ui: Default::default(), applied: None, edit_gen: 0, nav: Default::default(), nav_quiet: false, fresh_open: false, recent: Vec::new(), pending_restore: None, md: HashMap::new(), blame_gutter: false, blame_ui: Default::default(), lsp_listening: false, hover_ui: Default::default(), overlay: None, cursor_msg: None, overlay_sub: None, tabs_scroll: ScrollHandle::new(), tabs_revealed: None }
     }
 
     /// 设置项目根目录(会话切换时由宿主调用)。
@@ -164,6 +166,7 @@ impl IdeView {
             self.docs.remove(&old);
             self.images.remove(&old);
             self.drop_sheet(&old);
+            self.drop_diff(&old);
         }
         if focus {
             self.focus_active(window, cx);
@@ -346,7 +349,7 @@ impl IdeView {
 
     /// 从磁盘重新载入当前文件(丢弃未保存的修改)。
     pub fn reload(&mut self, window: &mut Window, cx: &mut Context<Self>) {
-        let Some(path) = self.tabs.active().map(Path::to_path_buf) else { return };
+        let Some(path) = self.tabs.active().map(Path::to_path_buf).filter(|p| !crate::ide_diff::is_diff(p)) else { return };
         self.docs.remove(&path);
         match load(&path, window, cx) {
             Ok(doc) => {
@@ -484,6 +487,10 @@ impl Render for IdeView {
             return root.child(tab_bar(self.tab_items(&img_path), self.tabs_scroll.clone(), cx)).child(breadcrumbs(&img_path, &self.root, true, None, None, cx)).child(
                 div().flex_1().min_h_0().flex().items_center().justify_center().p_4().child(img(img_path).max_w_full().max_h_full()),
             ).into_any_element();
+        }
+        if let Some(diff_path) = active.clone().filter(|p| self.diffs.contains_key(p)) {
+            let body = self.diff_view(&diff_path, cx);
+            return root.child(tab_bar(self.tab_items(&diff_path), self.tabs_scroll.clone(), cx)).child(div().flex_1().min_h_0().child(body)).into_any_element();
         }
         if let Some(sheet_path) = active.clone().filter(|p| self.sheets.contains_key(p)) {
             let view = self.sheets[&sheet_path].clone();

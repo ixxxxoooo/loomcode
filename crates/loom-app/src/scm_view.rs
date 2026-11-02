@@ -269,11 +269,6 @@ impl ScmView {
             let rel = rel.clone();
             actions = actions.child(act_btn(format!("scm-open-{key}").into(), IconName::ExternalLink, "打开文件", cx, move |this, _, cx| this.open_file(&rel, true, cx)));
         }
-        // IDE 里单击是打开文件,「查看更改」按钮负责就地展开 diff
-        if self.open_on_click {
-            let k = key.clone();
-            actions = actions.child(act_btn(format!("scm-diff-{key}").into(), IconName::FileDiff, "查看更改", cx, move |this, _, cx| this.toggle_diff(&k, cx)));
-        }
         match it.group {
             Group::Staged => {
                 let e = entry.clone();
@@ -304,12 +299,13 @@ impl ScmView {
                     .when(selected, |d| d.bg(t.list_active))
                     .when(!selected, |d| d.hover(|d| d.bg(t.list_hover)))
                     .on_click(cx.listener(move |this, ev: &ClickEvent, _, cx| {
-                        if ev.click_count() >= 2 && exists {
-                            this.open_file(&double_rel, true, cx);
-                        } else if this.open_on_click && exists && kind != 'D' {
+                        if this.open_on_click {
+                            // IDE:单击在编辑区直接看左右对比(预览标签),双击固定该标签
                             this.selected = Some(click_key.clone());
-                            this.open_file(&double_rel, false, cx);
+                            this.open_diff_tab(&click_key, ev.click_count() >= 2, cx);
                             cx.notify();
+                        } else if ev.click_count() >= 2 && exists {
+                            this.open_file(&double_rel, true, cx);
                         } else {
                             this.toggle_diff(&click_key, cx);
                         }

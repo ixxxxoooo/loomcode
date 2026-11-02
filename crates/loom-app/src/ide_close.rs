@@ -15,6 +15,7 @@ impl IdeView {
         self.docs.remove(path);
         self.images.remove(path);
         self.drop_sheet(path);
+        self.drop_diff(path);
         self.tabs.close(path);
     }
 

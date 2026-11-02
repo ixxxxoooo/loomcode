@@ -76,7 +76,7 @@ pub(crate) fn line_styles(lines: &[DiffLine], lang: &str, cx: &App) -> Vec<Vec<(
     out
 }
 
-fn render_with(lines: &[DiffLine], max_lines: usize, bordered: bool, lang: &str, cx: &App) -> Div {
+pub(crate) fn render_with(lines: &[DiffLine], max_lines: usize, bordered: bool, lang: &str, cx: &App) -> Div {
     let t = cx.theme();
     let (add_bg, del_bg) = diff_colors(cx);
     let shown = lines.len().min(max_lines);

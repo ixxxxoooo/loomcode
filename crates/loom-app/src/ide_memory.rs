@@ -15,7 +15,7 @@ impl IdeView {
 
     /// 打开 / 激活文件:记入最近文件与位置历史。
     pub(crate) fn record_open(&mut self, path: &Path, line: u32) {
-        if self.nav_quiet {
+        if self.nav_quiet || crate::ide_diff::is_diff(path) {
             return;
         }
         let key = path.to_string_lossy().to_string();
@@ -64,9 +64,10 @@ impl IdeView {
                 .tabs
                 .tabs()
                 .iter()
+                .filter(|p| !crate::ide_diff::is_diff(p))
                 .map(|p| IdeTabMemory { path: p.to_string_lossy().to_string(), preview: self.tabs.is_preview(p), pinned: self.tabs.is_pinned(p) })
                 .collect(),
-            active: self.tabs.active().map(|p| p.to_string_lossy().to_string()),
+            active: self.tabs.active().filter(|p| !crate::ide_diff::is_diff(p)).map(|p| p.to_string_lossy().to_string()),
             recent: self.recent.clone(),
             expanded: Vec::new(),
         }
@@ -78,6 +79,7 @@ impl IdeView {
         self.images.clear();
         self.sheets.clear();
         self.sheet_subs.clear();
+        self.diffs.clear();
         self.tabs = Default::default();
         self.note = None;
         self.nav = Default::default();

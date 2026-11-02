@@ -58,7 +58,8 @@ pub fn tab_bar(items: Vec<TabItem>, scroll: ScrollHandle, cx: &mut Context<IdeVi
         .border_b_1()
         .border_color(t.border)
         .children(items.into_iter().enumerate().map(|(i, TabItem { path, dirty, preview, active, pinned })| {
-            let name = path.file_name().map(|n| n.to_string_lossy().to_string()).unwrap_or_default();
+            let is_diff = crate::ide_diff::is_diff(&path);
+            let name = if is_diff { crate::ide_diff::tab_title(&path) } else { path.file_name().map(|n| n.to_string_lossy().to_string()).unwrap_or_default() };
             let group = SharedString::from(format!("tab-{i}"));
             let (p_click, p_close, p_mid) = (path.clone(), path.clone(), path.clone());
             let menu = tab_menu(cx.entity().downgrade(), path.clone(), pinned);
@@ -77,7 +78,7 @@ pub fn tab_bar(items: Vec<TabItem>, scroll: ScrollHandle, cx: &mut Context<IdeVi
                 .drag_over::<DraggedTab>(move |s, _, _, _| s.bg(accent))
                 .on_drop(cx.listener(move |this, d: &DraggedTab, _, cx| this.move_tab(&d.path, &p_drop, cx)))
                 .context_menu(menu)
-                .child(if pinned { icon(IconName::Pin, 13., t.muted_foreground).into_any_element() } else { crate::file_icons::file_icon_img(&name, false, false, 14.).into_any_element() })
+                .child(if pinned { icon(IconName::Pin, 13., t.muted_foreground).into_any_element() } else if is_diff { icon(IconName::FileDiff, 13., t.muted_foreground).into_any_element() } else { crate::file_icons::file_icon_img(&name, false, false, 14.).into_any_element() })
                 .child(div().min_w_0().truncate().when(preview, |d| d.italic()).child(name))
                 .child(
                     crate::tab_style::tab_close_box(SharedString::from(format!("ide-tab-x-{i}")), cx)

@@ -113,6 +113,15 @@ impl IdeWindow {
         let term = cx.new(|cx| crate::ide_terminal::BottomTerminal::new(panel.clone(), cx));
         // 调试用:LOOM_IDE_TERM=1 启动时就展开底部终端面板,方便截图
         let term_open = std::env::var("LOOM_IDE_TERM").is_ok_and(|v| v == "1");
+        // 调试用:LOOM_DIFF=N 启动后打开 SCM 里第 N 个文件的差异标签
+        if let Some(n) = std::env::var("LOOM_DIFF").ok().and_then(|v| v.parse::<usize>().ok()) {
+            let scm = scm_events.clone();
+            cx.spawn_in(window, async move |_, cx| {
+                cx.background_executor().timer(std::time::Duration::from_millis(2500)).await;
+                let _ = scm.update(cx, |s, cx| s.open_nth_diff(n, cx));
+            })
+            .detach();
+        }
         // 调试用:LOOM_BRANCH=1 启动后自动打开分支选择器(=查询词则预填)
         if let Ok(q) = std::env::var("LOOM_BRANCH") {
             cx.spawn_in(window, async move |this, cx| {
@@ -343,7 +352,7 @@ impl Render for IdeWindow {
             .on_action(cx.listener(|this, _: &ShowScm, window, cx| this.show_scm(window, cx)))
             .on_action(cx.listener(|this, _: &OpenCommandPalette, window, cx| this.toggle_quick(window, cx)))
             .on_action(cx.listener(|this, _: &ShowFileHistory, window, cx| {
-                if let Some(path) = this.ide.read(cx).tabs.active().map(|p| p.to_path_buf()) {
+                if let Some(path) = this.ide.read(cx).tabs.active().map(crate::ide_diff::real_path) {
                     let scm = this.wb.read(cx).scm.clone();
                     scm.update(cx, |s, cx| s.show_file_history(&path, cx));
                     this.show_scm(window, cx);
