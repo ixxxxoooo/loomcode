@@ -199,6 +199,10 @@ pub struct Workbench {
     new_counter: u32,
     /// 本次运行里新建、还没写进历史的会话 id(启动时用预分配 id,而不是恢复)
     pub new_sessions: HashSet<String>,
+    /// 演示模式:需要按演示速度实时播放的场景(从面板运行 / 重新播放过的)
+    pub force_live: HashSet<String>,
+    /// 演示播放的慢放倍数(1 = 正常速度;环境变量 `LOOM_DEMO_SLOW` 设初值,默认 3)
+    pub demo_slow: f32,
     /// 分叉出来、还没写进历史的会话:新会话 id → 源会话 id(首次发消息时用 --fork-session 启动)
     pub forks: HashMap<String, String>,
     /// 历史加载完成后要打开的会话(调试用 `LOOM_SESSION`)
@@ -337,6 +341,8 @@ impl Workbench {
             focus,
             new_counter: 0,
             new_sessions: HashSet::new(),
+            force_live: HashSet::new(),
+            demo_slow: std::env::var("LOOM_DEMO_SLOW").ok().and_then(|v| v.parse::<f32>().ok()).filter(|v| *v >= 0.).unwrap_or(3.),
             forks: HashMap::new(),
             pending_open: None,
             startup_project_done: false,
@@ -643,6 +649,13 @@ impl Workbench {
         cmd("打开自动化", "", IconName::Timer, PaletteAction::OpenPage("automation"));
         cmd("打开自定义(插件 / MCP / 技能 / 命令…)", "", IconName::SlidersHorizontal, PaletteAction::OpenPage("customize"));
         cmd("打开内置浏览器", "", IconName::Globe, PaletteAction::OpenPage("browser"));
+        if self.demo {
+            cmd("演示:重新播放当前场景", "从头按演示速度播放", IconName::Play, PaletteAction::ReplayScenario);
+            cmd("演示速度:正常 ×1", "", IconName::Gauge, PaletteAction::DemoSlow(1));
+            cmd("演示速度:慢 ×3", "默认", IconName::Gauge, PaletteAction::DemoSlow(3));
+            cmd("演示速度:很慢 ×6", "逐步观察", IconName::Gauge, PaletteAction::DemoSlow(6));
+            cmd("演示速度:极慢 ×12", "", IconName::Gauge, PaletteAction::DemoSlow(12));
+        }
         for (pi, p) in self.projects.iter().enumerate() {
             items.push(PaletteItem { title: p.name.clone(), subtitle: p.path.clone(), group: Group::Project, icon: IconName::Folder, action: PaletteAction::OpenProject(pi) });
         }
@@ -694,7 +707,15 @@ impl Workbench {
             PaletteAction::OpenSession(pi, id) => self.open_session(pi, &id, window, cx),
             PaletteAction::OpenProject(pi) => self.open_project_from_palette(pi, window, cx),
             PaletteAction::OpenFile(path) => self.open_file(path, window, cx),
-            PaletteAction::RunScenario(id) => self.open_scenario(&id, window, cx),
+            PaletteAction::RunScenario(id) => self.replay_scenario(&id, window, cx),
+            PaletteAction::ReplayScenario => match self.active.clone().filter(|id| loom_demo::scenarios::find(id).is_some()) {
+                Some(id) => self.replay_scenario(&id, window, cx),
+                None => crate::notice::info(window, cx, "当前会话不是演示场景,没有可重新播放的脚本"),
+            },
+            PaletteAction::DemoSlow(n) => {
+                self.demo_slow = n as f32;
+                crate::notice::info(window, cx, format!("演示播放速度已设为{}(下次播放 / 重新播放生效)", if n <= 1 { "正常".to_string() } else { format!("慢 ×{n}") }));
+            }
             PaletteAction::SwitchMode => self.request_switch_mode(window, cx),
             PaletteAction::Ide(_) => {}
         }
@@ -708,6 +729,18 @@ impl Workbench {
             Some(id) => self.open_session(pi, &id, window, cx),
             None => self.new_session(pi, window, cx),
         }
+    }
+
+    /// 从头按演示速度播放一个场景:已打开的先关掉旧会话(结束后端),再以实时节奏重新开始。
+    ///
+    /// 参数:`id` 场景 id。
+    pub fn replay_scenario(&mut self, id: &str, window: &mut Window, cx: &mut Context<Self>) {
+        if let Some(v) = self.views.remove(id) {
+            v.model.update(cx, |m, _| m.handle.send(AgentCommand::Shutdown));
+        }
+        self.view_order.retain(|x| x != id);
+        self.force_live.insert(id.to_string());
+        self.open_scenario(id, window, cx);
     }
 
     /// 打开一个演示场景:已在侧栏则直接打开,否则临时插入第一个项目。
@@ -728,7 +761,7 @@ impl Workbench {
         if !self.views.contains_key(id) {
             let cwd = self.projects[project_ix].path.clone();
             // 后台任务相关场景与全场景会话也要真实节奏,才能看到任务一边运行一边变化
-            let live = id == "showcase-tour" || id == "thinking-time" || id == "showcase-all" || id.starts_with("bg-");
+            let live = self.force_live.contains(id) || id == "showcase-tour" || id == "thinking-time" || id == "showcase-all" || id.starts_with("bg-");
             let is_new = self.new_sessions.contains(id);
             // 分叉会话:恢复源会话并分叉,界面先回放源会话的历史
             let fork_src = self.forks.get(id).cloned();
@@ -737,7 +770,7 @@ impl Workbench {
             let s = &self.settings;
             let (backend, config): (Box<dyn AgentBackend>, BackendConfig) = if self.demo {
                 // 历史会话瞬时回放,只有「进行中」的会话保持真实节奏
-                (Box::new(DemoBackend { speed: if live { 1.0 } else { 0.0 } }), BackendConfig { cwd: cwd.clone(), ..Default::default() })
+                (Box::new(DemoBackend { speed: if live { self.demo_slow } else { 0.0 } }), BackendConfig { cwd: cwd.clone(), ..Default::default() })
             } else {
                 // 真实模式:惰性启动 claude;新会话预分配 id,历史会话 --resume
                 let config = BackendConfig {

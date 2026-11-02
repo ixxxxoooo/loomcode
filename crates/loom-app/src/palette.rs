@@ -27,8 +27,12 @@ pub enum PaletteAction {
     /// 项目下标:展开并打开最近会话(没有则新建)
     OpenProject(usize),
     OpenFile(String),
-    /// 演示场景 id
+    /// 演示场景 id:从头按演示速度播放
     RunScenario(String),
+    /// 重新播放当前会话对应的演示场景
+    ReplayScenario,
+    /// 设置演示播放的慢放倍数(1 = 正常速度,越大越慢)
+    DemoSlow(u32),
     /// 演示 ↔ 真实一键切换(确认后重启)
     SwitchMode,
     /// IDE 窗口的内置命令(键为命令名,由 `ide_quick` 执行)
