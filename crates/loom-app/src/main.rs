@@ -80,6 +80,7 @@ mod minimap_model;
 mod ide_quick;
 mod ide_reference;
 mod ide_search;
+mod mermaid_view;
 mod ide_search_model;
 mod ide_search_rows;
 mod ide_search_view;

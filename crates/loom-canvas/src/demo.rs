@@ -62,6 +62,17 @@ pub fn demo_document(project_path: &str, now: i64) -> CanvasDocument {
         },
         Block::Callout { tone: Tone::Warning, title: Some(s("风险")), text: s("`Metrics` 的覆盖率低于 80% 的目标,发布前需要补齐。") },
         Block::Section {
+            title: s("架构图(Mermaid)"),
+            collapsed: false,
+            blocks: vec![
+                Block::Mermaid { text: s("flowchart LR\n  客户端 --> 网关{鉴权}\n  网关 -->|通过| 路由器([Router])\n  网关 -->|拒绝| 拒绝页[403]\n  路由器 --> 缓存[(Cache)]\n  路由器 --> 处理器[[Handler]]") },
+                Block::Mermaid { text: s("sequenceDiagram\n  autonumber\n  participant C as 客户端\n  participant R as Router\n  C->>+R: GET /metrics\n  R-->>-C: 200 OK\n  Note over C,R: 命中缓存时跳过处理器") },
+                Block::Mermaid { text: s("pie title 缺陷来源\n  \"路由\" : 9\n  \"缓存\" : 5\n  \"解析\" : 3\n  \"其他\" : 2") },
+                Block::Mermaid { text: s("stateDiagram-v2\n  [*] --> 打开\n  打开 --> 评审中 : 提交\n  评审中 --> 已合并 : 通过\n  评审中 --> 打开 : 退回\n  已合并 --> [*]") },
+                Block::Mermaid { text: s("gantt\n  title 暂不支持的类型\n  section 发布\n  灰度 :a1, 2026-01-01, 3d") },
+            ],
+        },
+        Block::Section {
             title: s("附录:实现细节"),
             collapsed: true,
             blocks: vec![
@@ -94,5 +105,8 @@ mod tests {
         }
         walk(&d.blocks, &mut kinds);
         assert_eq!(kinds.len(), 11, "{kinds:?}");
+        // 架构图分区里的 Mermaid 块都要出现在画布上(含一个故意不支持的)
+        let mermaid = d.blocks.iter().filter_map(|b| if let Block::Section { blocks, .. } = b { Some(blocks) } else { None }).flatten().filter(|b| matches!(b, Block::Mermaid { .. })).count();
+        assert!(mermaid >= 5);
     }
 }

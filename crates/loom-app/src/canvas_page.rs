@@ -1,5 +1,5 @@
 //! Canvas 画布页:左侧文档列表,右侧把声明式文档渲染成原生控件(统计卡、图表、表格、提示框……),
-//! 也可切到源码视图查看 JSON。Mermaid 暂不做排版引擎,以源码卡片展示。
+//! 也可切到源码视图查看 JSON。Mermaid 块由 `mermaid_view` 排版并绘制。
 
 use crate::ui::{MONO, card, caption, empty_state, icon, pill};
 use gpui_kit::assets::IconName;
@@ -166,7 +166,17 @@ impl CanvasPage {
                     .into_any_element()
             }
             Block::Code { language, text } => code_card(language.as_deref().unwrap_or("代码"), text, cx),
-            Block::Mermaid { text } => code_card("mermaid 源码", text, cx),
+            Block::Mermaid { text } => {
+                // 「查看源码」状态复用分区折叠的翻转集合,键加 `mm:` 前缀
+                let key = format!("mm:{path}");
+                let src_on = self.toggled.contains(&key);
+                crate::mermaid_view::render(path, text, src_on, cx.listener(move |this, _, _, cx| {
+                    if !this.toggled.remove(&key) {
+                        this.toggled.insert(key.clone());
+                    }
+                    cx.notify();
+                }), cx)
+            }
             Block::Image { source, caption: cap } => {
                 let local = !source.starts_with("http");
                 let exists = local && std::path::Path::new(source).exists();

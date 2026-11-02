@@ -139,6 +139,13 @@ pub fn render_assistant(session: &Entity<crate::model::SessionModel>, id: &str, 
         .children(blocks.into_iter().enumerate().map(|(n, b)| match b {
             Block::Markdown(md) => div().w_full().child(TextView::markdown(SharedString::from(format!("md-{id}-{n}")), md).selectable(true)).into_any_element(),
             Block::Chart(spec) => render_chart(id, n, &spec, cx),
+            Block::Source { kind, code } if kind == "mermaid" => {
+                // 「查看源码」状态存在会话的展开集合里(键前缀 `cb:` 让切换后重新测量所在行)
+                let key = format!("cb:{id}:mm{n}");
+                let on = session.read(cx).is_expanded(&key);
+                let s = session.clone();
+                crate::mermaid_view::render(&format!("{id}-{n}"), &code, on, move |_, _, cx| { s.update(cx, |m, cx| m.toggle(&key, cx)); }, cx)
+            }
             Block::Source { kind, code } => render_source(&kind, &code, cx),
             Block::Code { lang, code, closed } => {
                 // 展开状态:键 `cb:<条目 id>:<第几块>`,存在会话的展开集合里,切换时重新测量所在行

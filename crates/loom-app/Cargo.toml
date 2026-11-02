@@ -21,6 +21,7 @@ loom-claude = { path = "../loom-claude" }
 loom-lsp = { path = "../loom-lsp" }
 loom-sheet = { path = "../loom-sheet" }
 loom-search = { path = "../loom-search" }
+loom-mermaid = { path = "../loom-mermaid" }
 lsp-types = "0.97"
 tree-sitter-swift = "0.7.4"
 gpui-base = "0.8.0"

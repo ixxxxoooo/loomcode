@@ -55,7 +55,6 @@ pub struct NodeStyle {
 
 #[derive(Clone, Debug)]
 pub struct Node {
-    pub id: String,
     pub label: Vec<String>,
     pub shape: Shape,
     pub style: NodeStyle,
@@ -97,7 +96,7 @@ impl Flow {
         if let Some(&i) = self.index.get(id) {
             return i;
         }
-        self.nodes.push(Node { id: id.into(), label: vec![id.into()], shape: Shape::Rect, style: NodeStyle::default() });
+        self.nodes.push(Node { label: vec![id.into()], shape: Shape::Rect, style: NodeStyle::default() });
         self.index.insert(id.into(), self.nodes.len() - 1);
         self.nodes.len() - 1
     }
@@ -231,23 +230,30 @@ fn parse_node(flow: &mut Flow, s: &[char], mut i: usize, classes: &mut Vec<(usiz
     }
     let id: String = s[id_start..i].iter().collect();
     let mut shape_label: Option<(Shape, String)> = None;
-    // 先试长开符;`[/` 与 `[\` 有两种闭符,逐个尝试能找到闭符的组合
+    // 所有匹配的开符里取闭符最近的(同距取更长的开符),避免 `[/ … \]` 被后面别的节点的 `/]` 误配
+    let mut best: Option<(usize, usize, usize, Shape, usize)> = None;
     for (open, closes, shape) in SHAPES {
         if !starts(s, i, open) {
             continue;
         }
-        let body = i + open.chars().count();
-        let quoted = s.get(body) == Some(&'"');
+        let olen = open.chars().count();
+        let body = i + olen;
         let mut search = body;
-        if quoted && let Some(q) = (body + 1..s.len()).find(|&k| s[k] == '"') {
+        if s.get(body) == Some(&'"') && let Some(q) = (body + 1..s.len()).find(|&k| s[k] == '"') {
             search = q + 1;
         }
-        let found = closes.iter().find_map(|c| (search..s.len()).find(|&k| starts(s, k, c)).map(|k| (k, c.chars().count())));
-        if let Some((k, clen)) = found {
-            shape_label = Some((*shape, s[body..k].iter().collect()));
-            i = k + clen;
-            break;
+        for c in *closes {
+            if let Some(k) = (search..s.len()).find(|&k| starts(s, k, c)) {
+                let cand = (k, c.chars().count(), olen, *shape, body);
+                if best.is_none_or(|b| (cand.0, std::cmp::Reverse(cand.2)) < (b.0, std::cmp::Reverse(b.2))) {
+                    best = Some(cand);
+                }
+            }
         }
+    }
+    if let Some((k, clen, _, shape, body)) = best {
+        shape_label = Some((shape, s[body..k].iter().collect()));
+        i = k + clen;
     }
     let idx = flow.ensure(&id);
     if let Some((shape, label)) = shape_label {

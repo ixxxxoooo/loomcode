@@ -11,6 +11,10 @@ pub fn scenarios() -> Vec<Scenario> {
         Scenario { id: "markdown", title: "Markdown 与代码高亮:发布说明", group: "会话流样式", kind: Kind::Auto, prompt: "写一份 v2.0 发布说明", build: markdown },
         Scenario { id: "markdown-edge", title: "Markdown 边界:嵌套、宽表格与回退", group: "会话流样式", kind: Kind::Auto, prompt: "测试 Markdown 的边界情况", build: markdown_edge },
         Scenario { id: "mermaid", title: "Mermaid 图表:架构文档", group: "会话流样式", kind: Kind::Auto, prompt: "画出整体架构", build: mermaid },
+        Scenario { id: "mermaid-flow", title: "Mermaid 流程图:形状、方向、子图与样式", group: "会话流样式", kind: Kind::Auto, prompt: "把发布流程画成流程图,各种节点形状都用上", build: mermaid_flow },
+        Scenario { id: "mermaid-seq", title: "Mermaid 时序图:激活、便签与循环框", group: "会话流样式", kind: Kind::Auto, prompt: "画出登录与刷新令牌的时序", build: mermaid_seq },
+        Scenario { id: "mermaid-state", title: "Mermaid 状态图与饼图", group: "会话流样式", kind: Kind::Auto, prompt: "画出任务状态机和耗时占比", build: mermaid_state },
+        Scenario { id: "mermaid-edge", title: "Mermaid 边界:不支持的类型、语法错误与未闭合", group: "会话流样式", kind: Kind::Auto, prompt: "测试 Mermaid 的边界情况", build: mermaid_edge },
         Scenario { id: "chart", title: "内联图表:折线与 K 线", group: "会话流样式", kind: Kind::Auto, prompt: "画一下近 30 天的访问量", build: chart },
         Scenario { id: "tool-runs", title: "工具调用折叠:读 / 搜 / 改 / 跑混合的一轮", group: "会话流样式", kind: Kind::Auto, prompt: "帮我把 router 里的大小写匹配问题修一下", build: tool_runs },
         Scenario { id: "thinking-time", title: "思考用时:已思考 N 秒与回复操作条", group: "会话流样式", kind: Kind::Auto, prompt: "分析一下这个方案的利弊", build: thinking_time },
@@ -47,6 +51,34 @@ fn markdown_edge() -> Script {
 fn mermaid() -> Script {
     let mut b = ScriptBuilder::new();
     b.say("## 架构\n\n```mermaid\nflowchart LR\n  UI --> Session --> Claude\n  Session --> Store\n```\n\n```mermaid\nsequenceDiagram\n  User->>UI: 发送\n  UI->>Claude: stream-json\n  Claude-->>UI: 事件\n```\n\n```mermaid\npie title 耗时\n  \"渲染\" : 30\n  \"网络\" : 50\n  \"其他\" : 20\n```\n");
+    b.build()
+}
+
+fn mermaid_flow() -> Script {
+    let mut b = ScriptBuilder::new();
+    b.say("## 发布流程(自上而下,含分支、回环与子图)\n\n```mermaid\nflowchart TD\n  A([提交代码]) --> B{CI 通过?}\n  B -- 是 --> C[[构建产物]]\n  B -- 否 --> D[修复问题]\n  D --> A\n  subgraph 发布阶段\n    C --> E[(上传制品库)]\n    E --> F{{灰度 10%}}\n    F -->|指标正常| G((全量))\n    F -.->|异常| H[/回滚/]\n  end\n  G ==> I>完成]\n```\n");
+    b.say("## 从左到右 + 自定义样式 + 各种连线\n\n```mermaid\ngraph LR\n  A[需求] --> B[设计] --- C[开发]\n  C -.-> D[测试]\n  D ==> E[上线]\n  E --o F[监控]\n  F --x G[下线]\n  C <--> D\n  A & B --> H[评审]\n  style A fill:#f9d,stroke:#c36\n  classDef good fill:#2d7,stroke:#183,color:#fff\n  class E,F good\n```\n");
+    b.say("## 其余方向与特殊情况\n\n```mermaid\nflowchart RL\n  X[\"带引号 (括号) 的标签\"] --> Y[第一行<br/>第二行]\n  Y --> Y\n  Y --> Z[(终点)]\n```\n\n```mermaid\nflowchart BT\n  底层 --> 中层 --> 顶层\n  底层 --> 顶层\n```\n");
+    b.build()
+}
+
+fn mermaid_seq() -> Script {
+    let mut b = ScriptBuilder::new();
+    b.say("## 登录与刷新令牌\n\n```mermaid\nsequenceDiagram\n  title 登录流程\n  autonumber\n  actor U as 用户\n  participant W as 网页\n  participant S as 服务端\n  U->>W: 输入账号密码\n  W->>+S: POST /login\n  S-->>-W: 令牌\n  Note over W,S: 令牌 15 分钟过期\n  loop 每 10 分钟\n    W->>S: 刷新令牌\n    alt 刷新成功\n      S-->>W: 新令牌\n    else 已失效\n      S--xW: 401\n      W-)U: 要求重新登录\n    end\n  end\n  S->>S: 写审计日志\n  Note right of S: 保留 90 天\n  Note left of U: 用户视角\n```\n");
+    b.say("## 并行与可选\n\n```mermaid\nsequenceDiagram\n  participant A\n  participant B\n  participant C\n  par 并行请求\n    A->>B: 查询库存\n  and\n    A->>C: 查询价格\n  end\n  opt 有优惠券\n    A->>C: 校验优惠券\n  end\n  activate A\n  B-->>A: 完成\n  deactivate A\n```\n");
+    b.build()
+}
+
+fn mermaid_state() -> Script {
+    let mut b = ScriptBuilder::new();
+    b.say("## 任务状态机\n\n```mermaid\nstateDiagram-v2\n  [*] --> 待处理\n  待处理 --> 进行中 : 开始\n  进行中 --> 已完成 : 通过评审\n  进行中 --> 待处理 : 退回\n  state \"已取消(终态)\" as 取消\n  待处理 --> 取消\n  已完成 --> [*]\n  取消 --> [*]\n  note right of 进行中\n    同时最多 3 个\n  end note\n```\n");
+    b.say("## 耗时占比\n\n```mermaid\npie showData title 一次请求的耗时(ms)\n  \"渲染\" : 30\n  \"网络\" : 50\n  \"解析\" : 12\n  \"其他\" : 8\n```\n\n只有一项的饼图:\n\n```mermaid\npie title 全部\n  \"唯一\" : 1\n```\n");
+    b.build()
+}
+
+fn mermaid_edge() -> Script {
+    let mut b = ScriptBuilder::new();
+    b.say("暂不支持的类型会回退为带原因的源码卡片:\n\n```mermaid\ngantt\n  title 排期\n  section 开发\n  编码 :a1, 2026-01-01, 7d\n```\n\n```mermaid\nclassDiagram\n  Animal <|-- Dog\n```\n\n语法错误:\n\n```mermaid\nflowchart TD\n  A --> \n  ???\n```\n\n饼图数值不是数字:\n\n```mermaid\npie\n  \"a\" : x\n```\n\n空内容:\n\n```mermaid\n```\n\n未闭合的围栏(按普通 Markdown 显示):\n\n```mermaid\nflowchart LR\n  A --> B");
     b.build()
 }
 

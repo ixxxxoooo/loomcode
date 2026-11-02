@@ -3671,6 +3671,7 @@ dependencies = [
  "loom-demo",
  "loom-diag",
  "loom-lsp",
+ "loom-mermaid",
  "loom-search",
  "loom-sheet",
  "loom-term",

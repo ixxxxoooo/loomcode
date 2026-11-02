@@ -9,10 +9,11 @@ Rust + gpui-kit 0.8 的 Claude Code 工作台。只支持 Claude Code,直连本�
 | `loom-core` | 与界面无关的数据模型:时间线条目、`AgentEvent`/`AgentCommand`、`SessionState` 归约器、`AgentBackend` 抽象;`task`(后台任务 `BackgroundTask`/`TaskKind`/`TaskStatus`、停滞阈值、用时与 token 格式化) |
 | `loom-diag` | 诊断底座(位于依赖树最底层,不依赖界面与 gpui):文件日志(预开句柄、5 MB × 5 份轮转、级别过滤,`info!`/`warn!`/`error!`/`debug!` 宏)、面包屑 `crumb!`、慢操作计时 `span`、崩溃分层记录(`crash`:panic 钩子、原生异常处理器、运行标记、SIGTERM 正常退出、下次启动归类补记)、系统 `.ips` 摘要导入(`ips`)、崩溃记录文件(`records`)、资源采样(`monitor`)、主线程卡死看门狗(`hang`)、界面构建耗时(`frames`)、计数指标(`stats`) |
 | `loom-claude` | 真实后端:启动参数(含额外环境变量)、stream-json 翻译器、权限应答、历史读取与回放、`LazyBackend`、用量统计 `usage`(扫描 `~/.claude/projects` 带增量缓存) |
-| `loom-demo` | 演示后端:脚本化场景(56 个,含 `showcase-all` 全场景会话)、后台任务模拟器(`BgJob`:任务独立于回合继续推进、可被 `StopTask` 停止)与沙盒项目;侧栏每个场景一个会话,`scenario-lab` 项目收纳其余场景;沙盒里的 `home/` 是演示用的假 `~/.claude` 与 `~/.claude.json`,设置页的读写都落在这里 |
+| `loom-demo` | 演示后端:脚本化场景(60 个,含 `showcase-all` 全场景会话)、后台任务模拟器(`BgJob`:任务独立于回合继续推进、可被 `StopTask` 停止)与沙盒项目;侧栏每个场景一个会话,`scenario-lab` 项目收纳其余场景;沙盒里的 `home/` 是演示用的假 `~/.claude` 与 `~/.claude.json`,设置页的读写都落在这里 |
 | `loom-config` | `~/.loomcode/settings.json` 与 Claude 配置读写;`update`(应用更新:读 GitHub Release 的 appcast.json、下载校验 sha256、挂载暂存、退出后脚本替换重启):`claude`(用户 / 项目 / 本地三层的权限、MCP、钩子、env,原子写 + 备份)、`items`(命令、子 Agent、Skills、记忆文件)、`plugins`(插件与市场的读取、启停、CLI 参数校验)、`providers`(模型服务商与映射,密钥单独 0600 文件)、`diag`(诊断包、连通性、进程资源;日志本身已移到 `loom-diag`,这里只是薄封装) |
 | `loom-sheet` | 表格文件(csv / tsv / xlsx / xls / ods)的读取与浏览逻辑(与界面无关):CSV 解析(引号 / 转义 / 分隔符识别 / BOM / GBK 等编码识别)、`calamine` 读工作簿(按需读单张表)、列筛选与排序(`FilterState`,首行可作表头)、内容搜索;上限 10 万行 × 512 列 |
 | `loom-search` | 项目内搜索 / 替换内核(与界面无关):`query`(关键字 + 区分大小写 / 全词 / 正则、包含与排除 glob 逗号分隔且花括号内不拆)、`engine`(`ignore` 并行遍历并遵守 `.gitignore`,可取消,结果上限 2 万,跳过二进制 / 非 UTF-8 / 超 2 MiB 文件,每处匹配一条、列按字符计)、`preview`(去缩进 / 截断的预览与命中区间)、`replace`(`$1` 捕获组、保留大小写、只改指定匹配、原子写盘);按行匹配,正则不跨行 |
+| `loom-mermaid` | Mermaid 排版内核(与界面无关):解析 + 分层布局(破环、最长路径分层、重心法、保序回归定位、虚拟节点走线)→ 由矩形 / 折线 / 文字组成的 `Scene`,颜色用语义 `Role`;支持流程图(全部节点形状、`-->` `-.->` `==>` `--o` `--x` `<-->`、带文字连线、子图、style / classDef)、时序图(参与者、激活、便签、loop/alt/opt/par 框、autonumber)、饼图、状态图(复用流程图排版);其余类型返回 `Unsupported`,界面回退源码卡片 |
 | `loom-canvas` | Canvas 画布文档模型、校验与存储 |
 | `loom-automation` | 自动化的计划、存储与运行器 |
 | `loom-browser` | 内置阅读模式浏览器的抓取与正文提取 |
@@ -81,6 +82,7 @@ scripts/publish.sh                  # 发布:先在根 Cargo.toml 提升版本�
 - **新窗口(⇧⌘N / 文件 → 新建窗口)与最近项目**(`secondary.rs`、`app_menu.rs`):编辑器 / SCM / 设置都是一个进程一份,所以新窗口是再起一个本应用进程(`--new-window [--project <路径>]`,同模式),在 Agent / IDE 里都生效。新窗口进程是**从属**的:不写 `state.json` / `settings.json`(`persist_ui_state`、`save_settings` 里判断 `secondary::is()`,设置只把最近项目合并写回磁盘)、不记窗口位置、不建托盘、不自动检查更新、不恢复上次会话(同一会话不能两个进程同时跑),窗口错开 32px。「文件 → 打开最近的项目」子菜单由 `app_menu::set_menus(cx, 最近项目)` 生成,最近项目变化时(`update_settings`)与启动时重建;点击走 `Workbench::open_recent_project`(项目在侧栏就开它最近的会话,否则加入;IDE 开着则让它重新固定到该项目)。
 - **用户消息卡**(`user_message.rs` / `sticky_user.rs`,参考 ohmyagent `CollapsibleUserText`):卡片是与输入框同款的浮起卡(`popover` 底 + 描边 + 极淡阴影,`card_bg` / `card_border`,吸顶卡共用,必须不透明)。**编辑卡**:`SessionModel.editing` 是按消息 id 区分的列表(`begin_edit` / `end_edit(id)` / `submit_edit(id)`);点编辑卡以外的任何地方(`on_mouse_down_out`)、取消、发送、Esc 都会关闭这一张;悬浮编辑卡盖在自己消息的位置上,**不影响顶部的吸顶卡**(`sticky_user::render` 里吸顶卡与编辑卡同时画,只有吸顶的正是被编辑的那条才不画)。长消息按「估算显示行数」(`estimated_lines`:显式换行 + 每行 44 列折行,汉字算 2 列)超过 6 行就折成固定 6 行高的窗口并底部渐隐,「展开」后最多 24 行、再长卡内滚动(不再按逻辑行截断,所以粘贴的超长单行 curl 也不会撑出一大块)。吸顶卡正文换行压成空格、最多两行(高 60px,单行 40px)。演示场景 `user-variants` 含这种长行消息。
 - **输入框最小宽度**:`layout_rules::COMPOSER_MIN_W`(= 外边距 + 工具栏内边距 + 模式 chip 下限 + 模型 chip 下限 + 固定控件 + 间距,有测试保证不小于各部分之和)是 IDE 对话栏等放输入框的栏的宽度下限;工具栏的模式 / 模型 chip 窄时收缩并截断文字(`min_w` + `truncate`),图标与固定按钮不动,所以不会被挤出框外。改工具栏控件时同步改这些常量。
+- **Mermaid 渲染**(`loom-app/mermaid_view.rs`):会话流围栏 ```mermaid(`rich_text.rs`,「查看源码」状态存会话展开集合,键 `cb:<条目 id>:mm<块号>`)与 Canvas 的 `Mermaid` 块共用;排版按源码缓存,形状走画布路径、文字用绝对定位文本;排版失败显示原因 + 源码。演示场景 `mermaid` / `mermaid-flow` / `mermaid-seq` / `mermaid-state` / `mermaid-edge`,演示画布 `canvas-q3` 的「架构图」分区。
 - 编译零警告;改动后跑 `cargo test --workspace`。
 
 ## Claude 协议要点(已对真实 claude 2.1.x 验证)
