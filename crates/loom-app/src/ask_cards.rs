@@ -4,7 +4,6 @@
 
 use crate::ui::{icon, pill};
 use gpui_kit::assets::IconName;
-use gpui_kit::component::text::TextView;
 use gpui_kit::component::{ActiveTheme, h_flex, v_flex};
 use gpui_kit::prelude::FluentBuilder as _;
 use gpui_kit::*;
@@ -48,23 +47,5 @@ pub fn render_question(req: &QuestionRequest, cx: &App) -> AnyElement {
                     }).collect()
                 })
         }))
-        .into_any_element()
-}
-
-/// 计划卡:正文始终在时间线里(默认展开),状态标签标明待批准 / 已批准 / 已拒绝;批准按钮在输入框上方。
-pub fn render_plan(plan: &PlanApproval, cx: &App) -> AnyElement {
-    let t = cx.theme();
-    let (text, fg) = match plan.approved {
-        None => ("待批准", t.warning),
-        Some(true) => ("已批准", t.success),
-        Some(false) => ("已拒绝 · 继续规划", t.danger),
-    };
-    v_flex().w_full().p_3().gap_2().rounded(px(12.)).border_1().border_color(if plan.approved.is_none() { t.warning.opacity(0.6) } else { t.border }).bg(t.background)
-        .child(h_flex().gap_2().items_center()
-            .child(icon(IconName::ListTodo, 14., t.muted_foreground))
-            .child(div().text_size(px(13.)).font_weight(FontWeight::MEDIUM).child("计划"))
-            .child(div().flex_1())
-            .child(pill(text, fg, t.muted)))
-        .child(TextView::markdown(SharedString::from(format!("plan-{}", plan.id)), plan.markdown.clone()).selectable(true))
         .into_any_element()
 }

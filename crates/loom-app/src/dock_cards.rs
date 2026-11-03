@@ -1,12 +1,13 @@
-//! 输入框上方的「待你处理」卡片(对标 OhMyAgent):权限请求、提问向导、计划待批准。
-//! 这些卡片不进时间线;处理完后时间线上只留一行结果(见 `ask_cards`)。
+//! 输入框上方的「待你处理」卡片(对标 OhMyAgent):权限请求、提问向导。
+//! 这些卡片不进时间线;处理完后时间线上只留一行结果(见 `ask_cards`)。计划待批准不在这里:
+//! 它只在时间线里留一张卡片(`plan_card`),Build 按钮在卡片和右栏「计划」标签上。
 //!
 //! @author ixxxxoooo
 
 use crate::model::SessionModel;
 use crate::tool_card::tool_icon;
 use crate::tool_content::render_content;
-use crate::ui::{MONO, caption, icon, mono_box};
+use crate::ui::{MONO, icon, mono_box};
 use gpui_kit::assets::IconName;
 use gpui_kit::component::button::{Button, ButtonVariants};
 use gpui_kit::component::{ActiveTheme, Sizable, h_flex, v_flex};
@@ -18,10 +19,9 @@ use loom_core::*;
 pub enum Pending<'a> {
     Permission(&'a PermissionRequest),
     Question(&'a QuestionRequest),
-    Plan(&'a PlanApproval),
 }
 
-/// 找出所有等待用户处理的请求:权限全部列出,提问只呈现最早的一个(其余计入「还有 N 个」),计划取最后一个。
+/// 找出所有等待用户处理的请求:权限全部列出,提问只呈现最早的一个(其余计入「还有 N 个」)。
 ///
 /// 参数:`items` 时间线条目。返回:按时间顺序的待处理请求。
 pub fn pending_of(items: &[TimelineItem]) -> Vec<Pending<'_>> {
@@ -34,7 +34,6 @@ pub fn pending_of(items: &[TimelineItem]) -> Vec<Pending<'_>> {
                 asked = true;
                 out.push(Pending::Question(q));
             }
-            TimelineItem::PlanApproval(p) if p.approved.is_none() => out.push(Pending::Plan(p)),
             _ => {}
         }
     }
@@ -61,7 +60,6 @@ pub fn render(session: &Entity<SessionModel>, cx: &App) -> Option<AnyElement> {
         .map(|p| match p {
             Pending::Permission(r) => permission(session, r, cx),
             Pending::Question(q) => crate::wizard_card::render(session, q, queued, cx),
-            Pending::Plan(p) => plan_bar(session, p, cx),
         })
         .collect();
     Some(
@@ -107,43 +105,6 @@ fn permission(session: &Entity<SessionModel>, req: &PermissionRequest, cx: &App)
                 s.update(cx, |m, cx| m.resolve_permission(&rid, &oid, cx));
             })
         })))
-        .into_any_element()
-}
-
-/// 计划批准后的几种 Build 方式:(按钮文案, 之后的权限模式, 悬停说明)。
-const BUILDS: [(&str, PermissionMode, &str); 3] = [
-    ("Build · 逐项确认", PermissionMode::Default, "按计划实施,每次修改文件或运行命令前都问你"),
-    ("Build · 自动模式", PermissionMode::Auto, "按计划实施,自动模式下由分类器判断哪些操作无需确认"),
-    ("Build · 跳过权限确认", PermissionMode::BypassPermissions, "按计划实施,并跳过所有权限确认——只在完全信任这个计划时使用"),
-];
-
-/// 计划待批准条:计划正文在时间线的计划卡里,这里只保留决定。
-fn plan_bar(session: &Entity<SessionModel>, plan: &PlanApproval, cx: &App) -> AnyElement {
-    let t = cx.theme();
-    let name = plan.markdown.lines().map(|l| l.trim_start_matches('#').trim()).find(|l| !l.is_empty()).unwrap_or("计划").to_string();
-    v_flex().w_full().p_3().gap_2().rounded(px(12.)).border_1().border_color(t.border).bg(t.background).shadow_sm()
-        .child(
-            h_flex().gap_2().items_center()
-                .child(icon(IconName::ListTodo, 14., t.warning))
-                .child(div().text_size(px(13.)).font_weight(FontWeight::MEDIUM).child("计划待批准"))
-                .child(div().flex_1().min_w_0().truncate().text_size(px(12.)).text_color(t.muted_foreground).child(name)),
-        )
-        .child(caption("上面的计划卡里可以查看完整计划;确认没问题再选择 Build。", cx))
-        .child(
-            h_flex().flex_wrap().gap_2()
-                .children(BUILDS.iter().enumerate().map(|(i, (label, mode, hint))| {
-                    let (s, id, mode) = (session.clone(), plan.id.clone(), *mode);
-                    // 逐项确认(最稳妥的 Build)是唯一的实心主按钮
-                    let b = Button::new(SharedString::from(format!("{}-build{i}", plan.id))).small().label(*label).tooltip(*hint);
-                    let b = if i == 0 { b.primary() } else { b };
-                    b.on_click(move |_, _, cx| { s.update(cx, |m, cx| m.resolve_plan(&id, true, Some(mode), cx)); })
-                }))
-                .child({
-                    let (s, id) = (session.clone(), plan.id.clone());
-                    Button::new(SharedString::from(format!("{}-no", plan.id))).small().label("继续规划").tooltip("不批准,让 Claude 根据反馈继续完善计划")
-                        .on_click(move |_, _, cx| { s.update(cx, |m, cx| m.resolve_plan(&id, false, None, cx)); })
-                }),
-        )
         .into_any_element()
 }
 

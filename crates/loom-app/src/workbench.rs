@@ -1295,6 +1295,11 @@ impl Workbench {
                 let id = id.clone();
                 self.panel.update(cx, |p, cx| p.open_subagent(id, cx));
             }
+            UiRequest::OpenPlan(id) => {
+                self.right_open = true;
+                let id = id.clone();
+                self.panel.update(cx, |p, cx| p.open_plan(Some(id), cx));
+            }
             UiRequest::OpenTasks(id) => {
                 self.right_open = true;
                 let id = id.clone();

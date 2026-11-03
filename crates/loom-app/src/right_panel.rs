@@ -6,10 +6,9 @@
 use crate::diff;
 use crate::file_tree::FileTree;
 use crate::model::SessionModel;
-use crate::ui::{MONO, caption, empty_state, icon, pill};
+use crate::ui::{MONO, empty_state, icon};
 use crate::workbench::RightTab;
 use gpui_kit::assets::IconName;
-use gpui_kit::component::text::TextView;
 use gpui_kit::component::{ActiveTheme, h_flex, v_flex};
 use gpui_kit::prelude::FluentBuilder as _;
 use gpui_kit::*;
@@ -136,6 +135,8 @@ pub struct RightPanel {
     pub(crate) model: Option<Entity<SessionModel>>,
     /// 「子 Agent」标签正在看的子 Agent(条目 id)
     pub(crate) subagent: Option<String>,
+    /// 「计划」标签当前选中的计划(条目 id);`None` 显示最新的
+    pub(crate) plan: Option<String>,
     /// 「任务」标签正在查看输出的任务(task_id)
     pub(crate) task_sel: Option<String>,
     _sub: Option<Subscription>,
@@ -191,6 +192,7 @@ impl RightPanel {
             open_changes: HashSet::new(),
             files: FileTree::new(root.clone()),
             subagent: None,
+            plan: None,
             task_sel: None,
             root,
             _term_hub_sub: sub,
@@ -310,54 +312,6 @@ impl RightPanel {
                             .when(open, |d| d.child(div().border_t_1().border_color(t.border).pb_1().child(diff::render_flat(&lines, 400, crate::file_tree::language_for(std::path::Path::new(&c.path)), cx))))
                     })),
             )
-            .into_any_element()
-    }
-
-    // ---------- 计划 ----------
-
-    fn plan_view(&self, items: &[TimelineItem], cx: &mut Context<Self>) -> AnyElement {
-        let t = cx.theme().clone();
-        let mut todos: Option<&Vec<TodoItem>> = None;
-        let mut plan: Option<&PlanApproval> = None;
-        walk_items(items, &mut |item| match item {
-            TimelineItem::Todos { items, .. } => todos = Some(items),
-            TimelineItem::PlanApproval(p) => plan = Some(p),
-            _ => {}
-        });
-        if todos.is_none() && plan.is_none() {
-            return empty_state(IconName::ListTodo, "还没有计划", "待办与计划文档会显示在这里", cx).into_any_element();
-        }
-        v_flex().id("plan-scroll").size_full().overflow_y_scroll().p_3().gap_3()
-            .when_some(todos, |d, todos| {
-                let done = todos.iter().filter(|i| i.status == TodoStatus::Completed).count();
-                d.child(
-                    v_flex().gap_1p5()
-                        .child(h_flex().gap_2().items_center()
-                            .child(div().text_size(px(13.)).font_weight(FontWeight::MEDIUM).child("待办"))
-                            .child(caption(format!("{done}/{}", todos.len()), cx)))
-                        .children(todos.iter().map(|todo| {
-                            let (ic, color) = match todo.status {
-                                TodoStatus::Completed => (IconName::CircleCheck, t.success),
-                                TodoStatus::InProgress => (IconName::CircleDot, t.primary),
-                                TodoStatus::Pending => (IconName::Circle, t.muted_foreground),
-                            };
-                            h_flex().gap_2().items_start().text_size(px(13.))
-                                .child(div().mt(px(2.)).child(icon(ic, 14., color)))
-                                .child(div().flex_1().min_w_0()
-                                    .text_color(if todo.status == TodoStatus::Completed { t.muted_foreground } else { t.foreground })
-                                    .child(todo.content.clone()))
-                        })),
-                )
-            })
-            .when_some(plan, |d, plan| {
-                d.child(
-                    v_flex().gap_1p5()
-                        .child(h_flex().gap_2().items_center()
-                            .child(div().text_size(px(13.)).font_weight(FontWeight::MEDIUM).child("计划文档"))
-                            .when_some(plan.approved, |d, ok| d.child(pill(if ok { "已批准" } else { "已拒绝" }, if ok { t.success } else { t.danger }, t.muted))))
-                        .child(TextView::markdown(SharedString::from(format!("plan-doc-{}", plan.id)), plan.markdown.clone()).selectable(true)),
-                )
-            })
             .into_any_element()
     }
 }

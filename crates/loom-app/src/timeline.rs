@@ -98,7 +98,7 @@ pub fn render_item(session: &Entity<SessionModel>, item: &TimelineItem, depth: u
         TimelineItem::Subagent(card) => crate::subagent_card::render(session, card, depth, window, cx),
         TimelineItem::Permission(req) => crate::ask_cards::render_permission(req, cx),
         TimelineItem::Question(req) => crate::ask_cards::render_question(req, cx),
-        TimelineItem::PlanApproval(plan) => crate::ask_cards::render_plan(plan, cx),
+        TimelineItem::PlanApproval(plan) => crate::plan_card::render_card(session, plan, cx),
         TimelineItem::Notice { id, level, text } => cards::render_notice(session, id, *level, text, cx),
         TimelineItem::Canvas { id, title } => cards::render_canvas(session, id, title, cx),
         TimelineItem::Changes { files, .. } => cards::render_changes(session, files, cx),

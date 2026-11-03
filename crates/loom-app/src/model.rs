@@ -575,6 +575,8 @@ pub enum UiRequest {
     SessionSettled,
     /// 在右侧标签里打开某个子 Agent 的完整对话(条目 id)
     OpenSubagent(String),
+    /// 在右侧「计划」标签里打开某个计划(条目 id)
+    OpenPlan(String),
     /// 在右侧「文件」里预览某个文件
     OpenFile(String),
     /// 打开右侧「任务」标签,并选中某个任务(`None` 只打开)

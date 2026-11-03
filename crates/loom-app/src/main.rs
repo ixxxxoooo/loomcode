@@ -32,6 +32,8 @@ mod perm_keys;
 mod task_ui;
 mod tasks_tab;
 mod subagent_tab;
+mod plan_card;
+mod plan_tab;
 mod tool_present;
 mod wizard_card;
 mod wizard_input;
