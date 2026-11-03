@@ -56,6 +56,14 @@ pub fn editor_menu(editor: &Entity<EditorState>, view: WeakEntity<IdeView>) -> i
 }
 
 impl IdeView {
+    /// 切换迷你地图(写回全局偏好,所有编辑器一起变;设置 → 编辑器里是同一个开关)。
+    pub(crate) fn toggle_minimap(&mut self, cx: &mut Context<Self>) {
+        if let Some(wb) = cx.try_global::<crate::WorkbenchRef>().and_then(|r| r.0.upgrade()) {
+            let on = crate::prefs(cx).editor.minimap;
+            wb.update(cx, |wb, cx| wb.update_settings(cx, |s| s.editor.minimap = !on));
+        }
+    }
+
     /// 切换自动换行(写回全局偏好,所有编辑器一起变)。
     pub(crate) fn toggle_word_wrap(&mut self, cx: &mut Context<Self>) {
         if let Some(wb) = cx.try_global::<crate::WorkbenchRef>().and_then(|r| r.0.upgrade()) {

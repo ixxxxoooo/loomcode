@@ -276,7 +276,13 @@ impl SessionModel {
         }
         self.scroller.update(cx, |s, _| s.pause_following());
         let input = cx.new(|cx| TextareaState::new(window, cx).auto_grow(1, 10).submit_on_enter(true));
-        input.update(cx, |i, cx| { i.set_value(crate::user_mentions::content_from_text(text), window, cx); i.focus(window, cx); });
+        input.update(cx, |i, cx| {
+            i.set_value(crate::user_mentions::content_from_text(text), window, cx);
+            // 光标落在正文末尾(set_value 默认回到开头),接着往后写最顺手
+            let end = i.value().len();
+            i.set_selected_range(end..end, cx);
+            i.focus(window, cx);
+        });
         let edit_id = id.to_string();
         let sub = cx.subscribe_in(&input, window, move |this, _, ev: &InputEvent, window, cx| match ev {
             // 文本框随内容增高:重新测量这一行

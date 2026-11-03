@@ -106,10 +106,12 @@ pub fn tab_bar(items: Vec<TabItem>, scroll: ScrollHandle, root: &str, wrap: bool
             }
         })));
     let view = cx.entity().downgrade();
+    let minimap_on = crate::prefs(cx).editor.minimap;
+    let v_mm = view.clone();
     let more = move |menu: PopupMenu, _: &mut Window, _: &mut Context<PopupMenu>| {
         let item = |label: &'static str| PopupMenuItem::new(label);
         let (v1, v2, v3) = (view.clone(), view.clone(), view.clone());
-        let (s1, s2, s3) = (view.clone(), view.clone(), view.clone());
+        let (s1, s2, s3, v4) = (view.clone(), view.clone(), view.clone(), v_mm.clone());
         let mut menu = menu
             .item(item("向右拆分").icon(IconName::PanelRight).on_click(move |_, window, cx| {
                 let _ = s1.update(cx, |this, cx| this.split_active(false, window, cx));
@@ -127,6 +129,9 @@ pub fn tab_bar(items: Vec<TabItem>, scroll: ScrollHandle, root: &str, wrap: bool
                 this.wrap_tabs = !this.wrap_tabs;
                 cx.notify();
             });
+        }))
+        .item(item("显示迷你地图").checked(minimap_on).on_click(move |_, _, cx| {
+            let _ = v4.update(cx, |this, cx| this.toggle_minimap(cx));
         }))
         .separator()
         .item(item("关闭已保存").on_click(move |_, window, cx| {
