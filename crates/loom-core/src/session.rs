@@ -38,6 +38,8 @@ pub struct SessionState {
     pub last_stop: Option<StopReason>,
     /// 条目 id → 用时(秒):思考条目是这次思考的用时,用户消息条目是它引出的整个回合的用时
     pub durations: std::collections::HashMap<String, u64>,
+    /// 用户消息条目 id → 该回合的消耗统计(token、费用、延迟)
+    pub turn_stats: std::collections::HashMap<String, crate::event::TurnStats>,
     /// 后台任务表(按开始顺序);含已结束的,界面用 `counts_as_running` 过滤
     pub tasks: Vec<BackgroundTask>,
     /// 用户消息条目 id → claude 消息 uuid(文件检查点回退用,见 `rewind.rs`)
@@ -60,6 +62,7 @@ impl Default for SessionState {
             usage: Usage::default(),
             mcp: Vec::new(),
             durations: Default::default(),
+            turn_stats: Default::default(),
             tasks: Vec::new(),
             last_stop: None,
             user_uuids: Default::default(),
@@ -122,6 +125,12 @@ impl SessionState {
             AgentEvent::TurnStarted => self.phase = Phase::Running,
             AgentEvent::Duration { id, secs } => {
                 self.durations.insert(id, secs);
+            }
+            AgentEvent::TurnStats { id, stats } => {
+                let uid = id.or_else(|| self.items.iter().rev().find_map(|i| if let TimelineItem::User { id, .. } = i { Some(id.clone()) } else { None }));
+                if let Some(uid) = uid.filter(|_| !stats.is_empty()) {
+                    self.turn_stats.insert(uid, stats);
+                }
             }
             AgentEvent::UserUuid { id, uuid } => {
                 self.user_uuids.insert(id, uuid);

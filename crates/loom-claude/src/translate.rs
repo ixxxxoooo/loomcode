@@ -833,6 +833,10 @@ impl Translator {
         let total = &mut self.usage.cache_total;
         (total.read, total.written, total.uncached) = (total.read + turn_cache.read, total.written + turn_cache.written, total.uncached + turn_cache.uncached);
         out.push(AgentEvent::Usage(self.usage.clone()));
+        let stats = turn_stats(v);
+        if !stats.is_empty() {
+            out.push(AgentEvent::TurnStats { id: None, stats });
+        }
 
         let is_error = v.get("is_error").and_then(Value::as_bool).unwrap_or(false);
         // 合成的 API 错误消息被跳过了,而这次 `result` 又没标错误:把错误文字补成提示,不能丢
@@ -1173,6 +1177,27 @@ fn parse_questions(input: &Value) -> Vec<Question> {
 }
 
 /// 工具结果内容 → (文本, 图片本地路径列表;落盘失败的为 `None`)。
+/// 从 `result` 事件取出本回合的消耗统计。
+///
+/// `usage` 是本回合所有模型调用的合计;费用用 `model_usage_since_last_result`(单回合,
+/// `total_cost_usd` 是会话累计值,不能直接用);没有费用(或为 0,如第三方服务商)时为 `None`。
+fn turn_stats(v: &Value) -> TurnStats {
+    let u = &v["usage"];
+    let n = |k: &str| u.get(k).and_then(Value::as_u64).unwrap_or(0);
+    let cost: f64 = v.get("model_usage_since_last_result").and_then(Value::as_object).map_or(0., |m| m.values().filter_map(|x| x.get("costUSD").and_then(Value::as_f64)).sum());
+    TurnStats {
+        input: n("input_tokens"),
+        output: n("output_tokens"),
+        thinking: u.pointer("/output_tokens_details/thinking_tokens").and_then(Value::as_u64).unwrap_or(0),
+        cache_read: n("cache_read_input_tokens"),
+        cache_write: n("cache_creation_input_tokens"),
+        cost_usd: (cost > 0.).then_some(cost),
+        api_ms: v.get("duration_api_ms").and_then(Value::as_u64),
+        ttft_ms: v.get("ttft_ms").and_then(Value::as_u64),
+        calls: v.get("num_turns").and_then(Value::as_u64).map(|n| n as u32),
+    }
+}
+
 fn result_text(content: &Value) -> (String, Vec<Option<String>>) {
     match content {
         Value::String(s) => (s.clone(), Vec::new()),
@@ -1299,6 +1324,22 @@ pub fn build_tool(id: &str, name: &str, input: &Value, cwd: &str) -> ToolCall {
 
 #[cfg(test)]
 mod tests {
+    #[::core::prelude::v1::test]
+    fn result_带出回合消耗统计() {
+        let mut t = Translator::new("/x");
+        let ev = t.handle(&json!({"type":"result","subtype":"success","is_error":false,"result":"ok","duration_api_ms":4233,"ttft_ms":2916,"num_turns":2,"total_cost_usd":9.9,
+            "usage":{"input_tokens":4,"output_tokens":230,"output_tokens_details":{"thinking_tokens":149},"cache_read_input_tokens":35613,"cache_creation_input_tokens":19732},
+            "model_usage_since_last_result":{"claude-haiku-5-5":{"costUSD":0.0044}}}));
+        let stats = ev.iter().find_map(|e| if let AgentEvent::TurnStats { stats, .. } = e { Some(*stats) } else { None }).expect("有 TurnStats");
+        assert_eq!((stats.input, stats.output, stats.thinking, stats.cache_read, stats.cache_write), (4, 230, 149, 35613, 19732));
+        // 费用取单回合的 model_usage_since_last_result,不是会话累计的 total_cost_usd
+        assert_eq!(stats.cost_usd, Some(0.0044));
+        assert_eq!((stats.api_ms, stats.ttft_ms, stats.calls), (Some(4233), Some(2916), Some(2)));
+        // TurnStats 在 TurnEnded 之前
+        let (a, b) = (ev.iter().position(|e| matches!(e, AgentEvent::TurnStats { .. })), ev.iter().position(|e| matches!(e, AgentEvent::TurnEnded(_))));
+        assert!(a < b);
+    }
+
     use super::*;
     use serde_json::json;
 

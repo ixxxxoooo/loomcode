@@ -207,7 +207,13 @@ impl Player {
         match outcome {
             Outcome::Shutdown => {}
             Outcome::Cancelled => self.send(AgentEvent::TurnEnded(StopReason::Cancelled)),
-            Outcome::Finished => self.send(AgentEvent::TurnEnded(script.stop.unwrap_or(StopReason::EndTurn))),
+            Outcome::Finished => {
+                let reason = script.stop.unwrap_or(StopReason::EndTurn);
+                if reason == StopReason::EndTurn {
+                    self.send(AgentEvent::TurnStats { id: None, stats: demo_stats(script.steps.len()) });
+                }
+                self.send(AgentEvent::TurnEnded(reason));
+            }
         }
     }
 
@@ -298,5 +304,21 @@ impl Player {
             }
             other => self.handle_idle(other),
         }
+    }
+}
+
+/// 演示用的回合消耗统计:按脚本步数确定性地造一份(同一场景每次一样),覆盖「有费用 / 有缓存 / 有思考」。
+fn demo_stats(steps: usize) -> TurnStats {
+    let n = steps as u64 + 1;
+    TurnStats {
+        input: 3 + n % 5,
+        output: 180 + n * 37,
+        thinking: 60 + n * 11,
+        cache_read: 24_000 + n * 1_300,
+        cache_write: 2_000 + n * 210,
+        cost_usd: Some(0.004 + n as f64 * 0.0013),
+        api_ms: Some(3_200 + n * 410),
+        ttft_ms: Some(1_800 + n * 25),
+        calls: Some(1 + (n / 3) as u32),
     }
 }

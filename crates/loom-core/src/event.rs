@@ -163,6 +163,117 @@ impl CacheTokens {
     }
 }
 
+/// 一个回合的消耗统计(挂在回合的用户消息上,显示在助手回复下面的操作条里)。
+///
+/// 实时回合取自 `result` 事件;回放历史时由各条助手消息的 `usage` 汇总,没有的项为 `None`。
+#[derive(Debug, Clone, Copy, Default, PartialEq)]
+pub struct TurnStats {
+    /// 未命中缓存的输入 token
+    pub input: u64,
+    /// 输出 token(含思考)
+    pub output: u64,
+    /// 其中思考 token
+    pub thinking: u64,
+    /// 缓存读取的输入 token
+    pub cache_read: u64,
+    /// 缓存写入的输入 token
+    pub cache_write: u64,
+    /// 本回合花费(美元);服务商算不出费用时为 `None`
+    pub cost_usd: Option<f64>,
+    /// 模型调用总耗时(毫秒)
+    pub api_ms: Option<u64>,
+    /// 首字延迟(毫秒)
+    pub ttft_ms: Option<u64>,
+    /// 模型调用轮数(`num_turns`)
+    pub calls: Option<u32>,
+}
+
+impl TurnStats {
+    /// 输入总量:未缓存 + 缓存读取 + 缓存写入。
+    pub fn input_total(&self) -> u64 {
+        self.input + self.cache_read + self.cache_write
+    }
+
+    /// 缓存命中率(0..=100,取整);没有输入为 0。
+    pub fn hit_percent(&self) -> u32 {
+        match self.input_total() {
+            0 => 0,
+            t => (self.cache_read as f64 / t as f64 * 100.0).round() as u32,
+        }
+    }
+
+    /// 是否有可显示的内容。
+    pub fn is_empty(&self) -> bool {
+        self.input_total() == 0 && self.output == 0
+    }
+
+    /// 费用文案:不到 1 分钱保留三位小数(`$0.004`),否则两位(`$0.12`)。
+    pub fn cost_text(cost: f64) -> String {
+        if cost < 0.01 { format!("${cost:.3}") } else { format!("${cost:.2}") }
+    }
+
+    /// 操作条上的简短文案:`↑ 21.1k ↓ 230 · 缓存 98% · $0.004`(没有的项跳过)。
+    pub fn short_text(&self) -> String {
+        use crate::task::format_tokens as k;
+        let mut parts = vec![format!("↑ {} ↓ {}", k(self.input_total()), k(self.output))];
+        if self.input_total() > 0 && (self.cache_read > 0 || self.cache_write > 0) {
+            parts.push(format!("缓存 {}%", self.hit_percent()));
+        }
+        if let Some(c) = self.cost_usd {
+            parts.push(Self::cost_text(c));
+        }
+        parts.join(" · ")
+    }
+
+    /// 悬停明细:逐项列出 token 分类、费用、延迟与调用轮数(多行)。
+    pub fn detail_text(&self) -> String {
+        use crate::task::format_tokens as k;
+        let mut lines = vec![
+            format!("输入 {}(未缓存 {} · 缓存读取 {} · 缓存写入 {})", k(self.input_total()), k(self.input), k(self.cache_read), k(self.cache_write)),
+            if self.thinking > 0 { format!("输出 {}(其中思考 {})", k(self.output), k(self.thinking)) } else { format!("输出 {}", k(self.output)) },
+        ];
+        if self.input_total() > 0 {
+            lines.push(format!("缓存命中率 {}%", self.hit_percent()));
+        }
+        if let Some(c) = self.cost_usd {
+            lines.push(format!("费用 {}", Self::cost_text(c)));
+        }
+        let secs = |ms: u64| format!("{:.1}s", ms as f64 / 1000.0);
+        let mut timing = Vec::new();
+        if let Some(ms) = self.ttft_ms {
+            timing.push(format!("首字 {}", secs(ms)));
+        }
+        if let Some(ms) = self.api_ms {
+            timing.push(format!("模型耗时 {}", secs(ms)));
+        }
+        if let Some(n) = self.calls {
+            timing.push(format!("{n} 次调用"));
+        }
+        if !timing.is_empty() {
+            lines.push(timing.join(" · "));
+        }
+        lines.join("\n")
+    }
+}
+
+#[cfg(test)]
+mod turn_stats_tests {
+    use super::*;
+
+    #[test]
+    fn 简短文案与明细() {
+        let s = TurnStats { input: 4, output: 230, thinking: 149, cache_read: 35_613, cache_write: 19_732, cost_usd: Some(0.0044), api_ms: Some(4233), ttft_ms: Some(2916), calls: Some(2) };
+        assert_eq!(s.short_text(), "↑ 55.3k ↓ 230 · 缓存 64% · $0.004");
+        let d = s.detail_text();
+        assert!(d.contains("其中思考 149") && d.contains("首字 2.9s") && d.contains("2 次调用"), "{d}");
+        // 没有费用(第三方服务商 / 历史回放)不显示费用,没有缓存不显示命中率
+        let h = TurnStats { input: 120, output: 40, ..Default::default() };
+        assert_eq!(h.short_text(), "↑ 120 ↓ 40");
+        assert_eq!(TurnStats::cost_text(0.123), "$0.12");
+        assert!(TurnStats::default().is_empty());
+    }
+}
+
 /// 账户限额的查询状态。
 #[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
 pub enum LimitsState {
@@ -244,6 +355,8 @@ pub enum AgentEvent {
     TasksChanged(Vec<BackgroundTask>),
     /// 后台任务产生了新输出(追加到任务的输出缓冲)
     TaskOutput { task_id: String, text: String },
+    /// 回合消耗统计;`id` 为用户消息 id,`None` 表示最近一条用户消息(实时回合在 `TurnEnded` 之前发出)
+    TurnStats { id: Option<String>, stats: TurnStats },
     TurnEnded(StopReason),
 }
 

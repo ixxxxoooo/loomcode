@@ -4,7 +4,7 @@ use crate::translate::Translator;
 use serde_json::Value;
 use std::path::{Path, PathBuf};
 use std::time::SystemTime;
-use loom_core::AgentEvent;
+use loom_core::{AgentEvent, TurnStats};
 
 /// 一个历史会话的概要。
 #[derive(Debug, Clone)]
@@ -134,6 +134,39 @@ pub fn load_session(path: &Path, cwd: &str) -> std::io::Result<Vec<AgentEvent>> 
     Ok(replay_lines(text.lines(), cwd))
 }
 
+/// 记下一条助手记录的用量:同一条消息(`message.id`)会有多行记录,后出现的覆盖先出现的(输出 token 以最后一行为准)。
+fn record_usage(v: &Value, acc: &mut Vec<(String, TurnStats)>) {
+    let m = &v["message"];
+    let (Some(id), Some(u)) = (m.get("id").and_then(Value::as_str), m.get("usage")) else { return };
+    let n = |k: &str| u.get(k).and_then(Value::as_u64).unwrap_or(0);
+    let stats = TurnStats {
+        input: n("input_tokens"),
+        output: n("output_tokens"),
+        cache_read: n("cache_read_input_tokens"),
+        cache_write: n("cache_creation_input_tokens"),
+        ..Default::default()
+    };
+    match acc.iter_mut().find(|(i, _)| i == id) {
+        Some(slot) => slot.1 = stats,
+        None => acc.push((id.to_string(), stats)),
+    }
+}
+
+/// 把当前回合累积的各消息用量加总,作为 `TurnStats` 事件追加;没有用量就什么也不加。
+fn flush_stats(uid: &mut Option<String>, acc: &mut Vec<(String, TurnStats)>, out: &mut Vec<AgentEvent>) {
+    let total = acc.drain(..).fold(TurnStats::default(), |mut t, (_, s)| {
+        t.input += s.input;
+        t.output += s.output;
+        t.cache_read += s.cache_read;
+        t.cache_write += s.cache_write;
+        t.calls = Some(t.calls.unwrap_or(0) + 1);
+        t
+    });
+    if let Some(id) = uid.take().filter(|_| !total.is_empty()) {
+        out.push(AgentEvent::TurnStats { id: Some(id), stats: total });
+    }
+}
+
 /// 回放若干行 jsonl。
 ///
 /// 除了条目事件,还会用每条记录的 `timestamp` 算出思考与整个回合的用时,作为 `Duration` 事件附在末尾。
@@ -147,6 +180,9 @@ pub fn replay_lines<'a>(lines: impl Iterator<Item = &'a str>, cwd: &str) -> Vec<
     let mut prev_ts: Option<i64> = None;
     let mut turn: Option<(String, i64)> = None;
     let mut durations: Vec<AgentEvent> = Vec::new();
+    // 当前回合各条助手消息的用量(消息 id → 用量;同一条消息的多行记录取后出现的),回合结束时汇总成 `TurnStats`
+    let mut turn_usage: Vec<(String, TurnStats)> = Vec::new();
+    let mut cur_uid: Option<String> = None;
     for line in lines {
         let Ok(v) = serde_json::from_str::<Value>(line) else { continue };
         if v.get("isSidechain").and_then(Value::as_bool).unwrap_or(false) {
@@ -156,6 +192,9 @@ pub fn replay_lines<'a>(lines: impl Iterator<Item = &'a str>, cwd: &str) -> Vec<
             Some("ai-title") => title = v.get("aiTitle").and_then(Value::as_str).map(String::from),
             Some("user" | "assistant") => {
                 let ts = v.get("timestamp").and_then(Value::as_str).and_then(parse_iso_ms);
+                if v.get("type").and_then(Value::as_str) == Some("assistant") {
+                    record_usage(&v, &mut turn_usage);
+                }
                 let evs = tr.handle(&v);
                 for e in &evs {
                     match e {
@@ -164,6 +203,8 @@ pub fn replay_lines<'a>(lines: impl Iterator<Item = &'a str>, cwd: &str) -> Vec<
                             if let (Some((uid, start)), Some(end)) = (turn.take(), prev_ts) {
                                 durations.extend(secs_between(start, end, 86_400).map(|secs| AgentEvent::Duration { id: uid, secs }));
                             }
+                            flush_stats(&mut cur_uid, &mut turn_usage, &mut durations);
+                            cur_uid = Some(id.clone());
                             turn = ts.map(|t| (id.clone(), t));
                         }
                         // 思考:从上一条记录到这一条的时间
@@ -186,6 +227,7 @@ pub fn replay_lines<'a>(lines: impl Iterator<Item = &'a str>, cwd: &str) -> Vec<
     if let (Some((uid, start)), Some(end)) = (turn.take(), prev_ts) {
         durations.extend(secs_between(start, end, 86_400).map(|secs| AgentEvent::Duration { id: uid, secs }));
     }
+    flush_stats(&mut cur_uid, &mut turn_usage, &mut durations);
     events.extend(durations);
     if let Some(t) = title {
         events.insert(0, AgentEvent::TitleChanged(t));
@@ -195,6 +237,29 @@ pub fn replay_lines<'a>(lines: impl Iterator<Item = &'a str>, cwd: &str) -> Vec<
 
 #[cfg(test)]
 mod tests {
+    #[test]
+    fn 回放按回合汇总用量() {
+        let lines = [
+            r#"{"type":"user","timestamp":"2026-01-01T00:00:00Z","message":{"role":"user","content":"问一"}}"#,
+            // 同一条消息两行记录:后出现的覆盖先出现的
+            r#"{"type":"assistant","timestamp":"2026-01-01T00:00:02Z","message":{"id":"m1","content":[{"type":"text","text":"a"}],"usage":{"input_tokens":2,"output_tokens":5,"cache_read_input_tokens":100,"cache_creation_input_tokens":10}}}"#,
+            r#"{"type":"assistant","timestamp":"2026-01-01T00:00:03Z","message":{"id":"m1","content":[{"type":"text","text":"b"}],"usage":{"input_tokens":2,"output_tokens":40,"cache_read_input_tokens":100,"cache_creation_input_tokens":10}}}"#,
+            r#"{"type":"assistant","timestamp":"2026-01-01T00:00:04Z","message":{"id":"m2","content":[{"type":"text","text":"c"}],"usage":{"input_tokens":1,"output_tokens":10,"cache_read_input_tokens":50,"cache_creation_input_tokens":0}}}"#,
+            r#"{"type":"user","timestamp":"2026-01-01T00:01:00Z","message":{"role":"user","content":"问二"}}"#,
+            r#"{"type":"assistant","timestamp":"2026-01-01T00:01:02Z","message":{"id":"m3","content":[{"type":"text","text":"d"}],"usage":{"input_tokens":7,"output_tokens":9,"cache_read_input_tokens":0,"cache_creation_input_tokens":0}}}"#,
+        ];
+        let mut s = SessionState::default();
+        for e in replay_lines(lines.iter().copied(), "/x") {
+            s.apply(e);
+        }
+        let users: Vec<&str> = s.items.iter().filter_map(|i| if let TimelineItem::User { id, .. } = i { Some(id.as_str()) } else { None }).collect();
+        let a = s.turn_stats.get(users[0]).copied().expect("第一回合有统计");
+        assert_eq!((a.input, a.output, a.cache_read, a.cache_write, a.calls), (3, 50, 150, 10, Some(2)));
+        assert_eq!(a.cost_usd, None, "历史里没有费用");
+        let b = s.turn_stats.get(users[1]).copied().expect("最后一个回合收尾时也要汇总");
+        assert_eq!((b.input, b.output), (7, 9));
+    }
+
     use super::*;
     use loom_core::{SessionState, TimelineItem};
 
