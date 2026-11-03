@@ -166,7 +166,7 @@ pub fn chat_scroller(
         .child(canvas(move |_, _, _| probe_frame.begin_frame(), |_, _, _, _| {}).absolute().size_full())
         .child(
             div().size_full().min_h_0().min_w_0()
-                .child(gpui_kit::base::ScrollBounce::new(SharedString::from("timeline-bounce"), &list, list_el).on_scroll(move |_, cx| {
+                .child(gpui_kit::base::ScrollBounce::new(SharedString::from("timeline-bounce"), &list, list_el).enabled(false).on_scroll(move |_, cx| {
                     let _ = weak.update(cx, |_, cx| cx.notify());
                 }))
                 .vertical_scrollbar(&list),
