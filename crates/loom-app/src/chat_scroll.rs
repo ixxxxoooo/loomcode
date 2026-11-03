@@ -43,7 +43,7 @@ pub struct ChatScroll {
 impl ChatScroll {
     /// 创建状态,开启尾部跟随。参数:`item_count` 初始行数。
     pub fn new(item_count: usize, _cx: &mut Context<Self>) -> Self {
-        let list = ListState::new(item_count, ListAlignment::Top, OVERDRAW).with_uniform_item_height(EST_ROW_H);
+        let list = ListState::new(item_count, ListAlignment::Top, OVERDRAW).measure_all().with_uniform_item_height(EST_ROW_H);
         list.set_follow_mode(FollowMode::Tail);
         Self { list, probe: Rc::new(RowProbe::default()) }
     }
@@ -197,6 +197,15 @@ pub fn chat_scroller(
                 }))
                 .vertical_scrollbar(&list),
         )
+        // 一次测完(`measure_all`)发生在列表预绘制里;绘制阶段取走统计记日志,看首帧耗时
+        .child({
+            let stats = list.clone();
+            canvas(|_, _, _| {}, move |_, _, _, _| {
+                if let Some((rows, took)) = stats.take_measure_all_stats() {
+                    loom_diag::info!("会话流一次测完 rows={} 耗时={:.1}ms", rows, took.as_secs_f64() * 1000.);
+                }
+            }).absolute().size_full()
+        })
         // 底部(输入框上方)渐隐过渡
         .child(
             div().absolute().left_0().right_0().bottom_0().h(px(28.))

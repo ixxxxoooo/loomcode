@@ -16,7 +16,10 @@
 
 来源:crates.io 的 `gpui-pre 0.3.9`,经根 `Cargo.toml` 的 `[patch.crates-io]` 替换。
 
-**改动一处**:`src/elements/list.rs` 的 `List::prepaint`:首次布局或列表宽度变化时,原实现把所有行的高度提示清成 `None`(未测量的行按 0 高度计);改为保留旧高度(`item.size_hint()`)。
+**改动三处**(都在 `src/elements/list.rs`):
+1. `List::prepaint`:首次布局或列表宽度变化时,原实现把所有行的高度提示清成 `None`(未测量的行按 0 高度计);改为保留旧高度(`item.size_hint()`)。
+2. 同处:宽度变化时不再 `measuring_behavior.reset()`。原实现会让 `measure_all` 在每次宽度变化后重测全部行,拖动窗口 / 分栏时每帧都测一遍会卡死;现在「一次测完」只在 `reset`(载入历史)后做一次。
+3. 新增 `ListState::take_measure_all_stats()`:取走最近一次「一次测完」的(行数, 耗时),`chat_scroll.rs` 在绘制阶段取走并记日志「会话流一次测完 rows=… 耗时=…ms」。
 用途:会话流虚拟列表。按 0 高度计时,往上滚进还没渲染过的历史,「滚动位置 → 行」的换算会塌缩,一次跨过十几行,表现为滚着滚着突然跳走;配合 `chat_scroll.rs` 给每行设的估高(`EST_ROW_H`)才有效。
 
 升级 gpui 时:重做这一处;若上游已保留提示,直接删掉本目录与 `[patch]`。

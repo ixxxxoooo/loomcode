@@ -15,7 +15,7 @@ use crate::{
 };
 use collections::VecDeque;
 use refineable::Refineable as _;
-use std::{cell::RefCell, ops::Range, rc::Rc};
+use std::{cell::RefCell, ops::Range, rc::Rc, time::Duration};
 use sum_tree::{Bias, Dimensions, SumTree};
 
 type RenderItemFn = dyn FnMut(usize, &mut Window, &mut App) -> AnyElement + 'static;
@@ -71,6 +71,8 @@ struct StateInner {
     scroll_handler: Option<Box<dyn FnMut(&ListScrollEvent, &mut Window, &mut App)>>,
     scrollbar_drag_start_height: Option<Pixels>,
     measuring_behavior: ListMeasuringBehavior,
+    /// LoomCode 补丁:最近一次「一次测完」的行数与耗时,供调用方取走记日志。
+    measure_all_stats: Option<(usize, Duration)>,
     pending_scroll: Option<PendingScroll>,
     follow_state: FollowState,
 }
@@ -323,6 +325,7 @@ impl ListState {
             reset: false,
             scrollbar_drag_start_height: None,
             measuring_behavior: ListMeasuringBehavior::default(),
+            measure_all_stats: None,
             pending_scroll: None,
             follow_state: FollowState::default(),
         })));
@@ -336,6 +339,11 @@ impl ListState {
     pub fn measure_all(self) -> Self {
         self.0.borrow_mut().measuring_behavior = ListMeasuringBehavior::Measure(false);
         self
+    }
+
+    /// LoomCode 补丁:取走最近一次「一次测完」的统计(行数, 耗时);没有新的返回 None。
+    pub fn take_measure_all_stats(&self) -> Option<(usize, Duration)> {
+        self.0.borrow_mut().measure_all_stats.take()
     }
 
     /// Pre-populate every unmeasured item with a uniform height hint so the scrollbar thumb
@@ -1001,6 +1009,7 @@ impl StateInner {
             }
         }
 
+        let started = std::time::Instant::now();
         let mut cursor = self.items.cursor::<Count>(());
         let available_item_space = size(
             AvailableSpace::Definite(available_width),
@@ -1021,6 +1030,7 @@ impl StateInner {
             });
         }
 
+        self.measure_all_stats = Some((measured_items.len(), started.elapsed()));
         self.items = SumTree::from_iter(measured_items, ());
     }
 
@@ -1556,7 +1566,8 @@ impl Element for List {
             );
 
             state.items = new_items;
-            state.measuring_behavior.reset();
+            // LoomCode 补丁:宽度变化不再触发「一次测完」(拖动窗口 / 分栏时每帧测全部行会卡死),
+            // 沿用旧高度作提示,行滚进视口时再换成真实高度
         }
 
         let padding = style
