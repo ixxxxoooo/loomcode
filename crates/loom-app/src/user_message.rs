@@ -220,7 +220,7 @@ fn text_window(id: &str, text: &str, long: bool, folded: bool, cx: &App) -> AnyE
     }
     let bg = card_bg(cx);
     div().relative().max_h(px(LINE_H * FOLD_LINES as f32)).overflow_hidden().child(body)
-        .child(div().absolute().bottom_0().left_0().right_0().h(px(FADE_H)).bg(linear_gradient(0., linear_color_stop(bg.opacity(0.), 0.), linear_color_stop(bg, 1.))))
+        .child(div().absolute().bottom_0().left_0().right_0().h(px(FADE_H)).bg(linear_gradient(180., linear_color_stop(bg.opacity(0.), 0.), linear_color_stop(bg, 1.))))
         .into_any_element()
 }
 
