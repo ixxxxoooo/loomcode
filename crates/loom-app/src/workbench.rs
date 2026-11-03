@@ -510,6 +510,10 @@ impl Workbench {
                 wb.panel.update(cx, |p, cx| p.set_tab(tab, cx));
             }
         }
+        // 调试用:LOOM_SUBAGENT=<子 Agent 条目 id> 直接打开它的「子 Agent」标签
+        if let Ok(id) = std::env::var("LOOM_SUBAGENT") {
+            wb.panel.update(cx, |p, cx| p.open_subagent(id, cx));
+        }
         if std::env::var("LOOM_IDE").is_ok_and(|v| v == "1") {
             // 独立窗口要新开窗口,推迟到构造完成后
             cx.defer_in(window, |this, window, cx| this.toggle_ide(window, cx));

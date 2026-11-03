@@ -50,16 +50,17 @@ impl RightPanel {
                 gpui_kit::component::button::Button::new("sub-tab-stop").xsmall().ghost().icon(IconName::Square).label("停止")
                     .on_click(move |_, _, cx| { m.update(cx, |m, cx| m.stop_task(&task, cx)); }),
             ));
-        let stats = v_flex().w_full().px_3().py_1().gap_0p5().border_b_1().border_color(t.border).text_size(px(11.)).text_color(t.muted_foreground)
-            .when(!meta.is_empty(), |d| d.child(meta))
-            .when(!card.summary.is_empty(), |d| d.child(div().text_size(px(12.)).text_color(t.foreground).child(card.summary.clone())));
+        // 用时 / 工具数 / token 与结果摘要放进滚动区里(固定在外面时,摘要一长就把下面的滚动区挤没了);
+        // 摘要走与主会话助手正文同一套渲染(Markdown、代码块、图表)
+        let summary = (!card.summary.is_empty()).then(|| crate::rich_text::render_assistant(&model, &format!("sub-sum-{}", card.id), &card.summary, cx));
         v_flex().size_full()
             .child(head)
-            .child(stats)
             .child(
                 v_flex().id("subagent-scroll").flex_1().min_h_0().overflow_y_scroll().p_3().gap_2()
+                    .when(!meta.is_empty(), |d| d.child(div().text_size(px(11.)).text_color(t.muted_foreground).child(meta)))
+                    .children(summary)
                     .children(body)
-                    .when(card.children.is_empty(), |d| d.child(div().text_size(px(12.)).text_color(t.muted_foreground).child("暂无活动"))),
+                    .when(card.children.is_empty() && card.summary.is_empty(), |d| d.child(div().text_size(px(12.)).text_color(t.muted_foreground).child("暂无活动"))),
             )
             .into_any_element()
     }
