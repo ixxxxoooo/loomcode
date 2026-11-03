@@ -142,7 +142,7 @@ fn render_thinking(session: &Entity<SessionModel>, id: &str, text: &str, streami
                 .child(session.read(cx).motion.chevron(id, expanded, 12., t.muted_foreground)),
         )
         .when(expanded && !streaming, |d| {
-            d.child(div().pl(px(20.)).text_size(px(13.)).text_color(t.muted_foreground).child(text.to_string()))
+            d.child(div().pl(px(20.)).text_size(px(13.)).text_color(t.muted_foreground).child(gpui_base::SelectableText::new(SharedString::from(format!("think-sel-{id}")), text.to_string())))
         })
         // 流式中:固定高度的尾部窗口贴底跟随、顶部渐隐(对标 Cursor),不随字数忽现忽隐
         .when(streaming && !text.trim().is_empty(), |d| d.child(thinking_tail(id, text, cx)))
@@ -162,7 +162,7 @@ fn thinking_tail(id: &str, text: &str, cx: &App) -> AnyElement {
     handle.scroll_to_bottom();
     div().relative().pl(px(20.)).w_full()
         .child(div().id(sid).w_full().max_h(px(THINK_TAIL_H)).overflow_y_scroll().track_scroll(&handle)
-            .text_size(px(13.)).line_height(px(20.)).text_color(t.muted_foreground.opacity(0.85)).child(text.to_string()))
+            .text_size(px(13.)).line_height(px(20.)).text_color(t.muted_foreground.opacity(0.85)).child(gpui_base::SelectableText::new(SharedString::from(format!("think-tail-sel-{id}")), text.to_string())))
         // 估算超出一窗(约 3 行)才加渐隐,短内容不遮第一行
         .when(text.lines().count() > 3 || text.chars().count() > 150, |d| d.child(div().absolute().top_0().left(px(20.)).right_0().h(px(18.))
             .bg(linear_gradient(180., linear_color_stop(t.background, 0.), linear_color_stop(t.background.opacity(0.), 1.)))))

@@ -20,6 +20,25 @@ fn clip_lines(text: &str, max: usize) -> (String, usize) {
     (text.lines().take(max).collect::<Vec<_>>().join("\n"), total - max)
 }
 
+/// 可选中复制的等宽文本:加入窗口级的文字选择(可与会话流里其它文字连选,⌘C 复制),语法色 / ANSI 色照常显示。
+fn selectable(id: SharedString, text: String, runs: Vec<(std::ops::Range<usize>, HighlightStyle)>) -> gpui_base::SelectableText {
+    gpui_base::SelectableText::new(id, text).highlights(runs)
+}
+
+/// 选择状态的元素 id:有稳定的 id 就用它(流式输出变长时选择不丢),否则退回内容哈希。
+fn sel_id(kind: &str, run_id: Option<&str>, fold: &Option<(SharedString, crate::code_box::Fold, bool)>, text: &str) -> SharedString {
+    if let Some((id, ..)) = fold {
+        return SharedString::from(format!("{id}-{kind}-sel"));
+    }
+    if let Some(r) = run_id {
+        return SharedString::from(format!("{r}-{kind}-sel"));
+    }
+    use std::hash::{Hash, Hasher};
+    let mut h = std::collections::hash_map::DefaultHasher::new();
+    text.hash(&mut h);
+    SharedString::from(format!("{kind}-{:x}-sel", h.finish()))
+}
+
 /// 渲染一个内容块。
 /// 参数:`run_id` 所属工具调用的 id;终端块用它显示「在终端面板查看」;`lang` 文本内容的语言(`text` 不着色);
 /// `fold` 限高滚动用的 (元素 id, 展开状态, 是否运行中贴底跟随),`None` 时不限高(只按行数截断)。
@@ -29,7 +48,7 @@ pub fn render_content(content: &ToolContent, run_id: Option<&str>, lang: &str, f
         ToolContent::Text(text) => {
             let (shown, more) = clip_lines(text, if fold.is_some() { 2000 } else { 60 });
             let total = shown.lines().count();
-            let styled = StyledText::new(shown.clone()).with_highlights(crate::code_hl::styles(&shown, lang, cx));
+            let styled = selectable(sel_id("text", run_id, &fold, &shown), shown.clone(), crate::code_hl::styles(&shown, lang, cx));
             let body = match &fold {
                 Some((id, f, follow)) => crate::code_box::fold_body(id.clone(), styled, total, Some(f), *follow, cx),
                 None => styled.into_any_element(),
@@ -44,7 +63,7 @@ pub fn render_content(content: &ToolContent, run_id: Option<&str>, lang: &str, f
             let parsed = ansi::parse(&shown);
             let total = shown.lines().count();
             let out_el = {
-                let styled = StyledText::new(parsed.text).with_highlights(parsed.runs);
+                let styled = selectable(sel_id("term", run_id, &fold, &shown), parsed.text, parsed.runs);
                 match &fold {
                     Some((id, f, follow)) => crate::code_box::fold_body(id.clone(), styled, total, Some(f), *follow, cx),
                     None => styled.into_any_element(),

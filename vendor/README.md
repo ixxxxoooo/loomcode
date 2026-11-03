@@ -30,10 +30,13 @@
 
 来源:crates.io 的 `gpui-base 0.8.0`,经根 `Cargo.toml` 的 `[patch.crates-io]` 替换。
 
-**改动一处**:`src/text/state.rs` 的 `MAX_SYNC_FULL_REPLACE_BYTES` 从 4 KiB 改成 256 KiB。
+**改动两处**:
+1. `src/text/state.rs` 的 `MAX_SYNC_FULL_REPLACE_BYTES` 从 4 KiB 改成 256 KiB。
 用途:`TextView` 对超过阈值的 Markdown 在后台线程解析,首次布局只有占位高度,解析完才突然变高。会话流里长回复进入视口、或被列表「一次测完」测量时,行高与滚动条会跳几千像素(「滚动乱跳、滚动条乱跳」的根因)。同步解析几十 KB 的 Markdown 只要几毫秒;超过 256 KiB 的仍走后台。
 
-升级 gpui-kit 时:换成新版本源码,重做这一处;若上游已提供更合理的策略,直接删掉本目录与 `[patch]`。
+2. `src/selectable_text.rs` 给 `SelectableText` 加 `highlights(...)`:在可选中的纯文本上叠加按字节范围的样式(语法色、ANSI 色),不影响选中与复制的文字。用途:工具输出(文本 / 终端)与思考内容要可选中复制,又要保留着色。
+
+升级 gpui-kit 时:换成新版本源码,重做上面两处;若上游已提供更合理的策略,直接删掉本目录与 `[patch]`。
 
 
 ## tree-sitter-sequel 0.3.11(补丁版)
