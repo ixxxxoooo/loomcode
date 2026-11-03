@@ -514,6 +514,11 @@ impl Workbench {
         if let Ok(id) = std::env::var("LOOM_SUBAGENT") {
             wb.panel.update(cx, |p, cx| p.open_subagent(id, cx));
         }
+        // 调试用:LOOM_DIAGRAM=demo(或一段 Mermaid 源码)启动即打开图表全屏查看器
+        if let Ok(src) = std::env::var("LOOM_DIAGRAM") {
+            let src = if src == "demo" { "flowchart LR\n  A[需求] --> B(设计) --> C{评审}\n  C -->|通过| D[开发] --> E[测试] --> F((上线))\n  C -.->|驳回| A".to_string() } else { src };
+            cx.defer_in(window, move |_, window, cx| crate::diagram_viewer::open_mermaid("Mermaid · 流程图", &src, window, cx));
+        }
         if std::env::var("LOOM_IDE").is_ok_and(|v| v == "1") {
             // 独立窗口要新开窗口,推迟到构造完成后
             cx.defer_in(window, |this, window, cx| this.toggle_ide(window, cx));
@@ -1814,5 +1819,6 @@ impl Workbench {
             })
             .when_some(self.palette.clone(), |d, p| d.child(p))
             .children(crate::lightbox::current(cx))
+            .children(crate::diagram_viewer::current(window, cx))
     }
 }

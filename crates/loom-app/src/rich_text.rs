@@ -3,9 +3,11 @@
 
 use crate::ui::{MONO, card, icon};
 use gpui_kit::assets::IconName;
+use gpui_kit::component::button::{Button, ButtonVariants};
 use gpui_kit::component::chart::{CandlestickChart, LineChart};
 use gpui_kit::component::text::TextView;
-use gpui_kit::component::{ActiveTheme, h_flex, v_flex};
+use gpui_kit::component::{ActiveTheme, Sizable, h_flex, v_flex};
+use gpui_kit::prelude::FluentBuilder as _;
 use gpui_kit::*;
 use serde_json::Value;
 
@@ -168,36 +170,59 @@ pub fn render_assistant(session: &Entity<crate::model::SessionModel>, id: &str, 
         .into_any_element()
 }
 
+impl ChartSpec {
+    pub fn title(&self) -> &str {
+        match self {
+            ChartSpec::Line { title, .. } | ChartSpec::Candle { title, .. } => title,
+        }
+    }
+
+    /// 内联卡片里的默认高度。
+    fn inline_height(&self) -> f32 {
+        match self {
+            ChartSpec::Line { .. } => 180.,
+            ChartSpec::Candle { .. } => 200.,
+        }
+    }
+}
+
+/// 图表本体,撑满 `w` × `h` 像素(内联卡片与全屏查看共用)。
+pub fn chart_body(key: &str, spec: &ChartSpec, w: Option<f32>, h: f32, cx: &App) -> AnyElement {
+    let t = cx.theme();
+    let frame = div().h(px(h)).when_some(w, |d, w| d.w(px(w))).when(w.is_none(), |d| d.w_full());
+    match spec {
+        ChartSpec::Line { data, .. } => {
+            let pts: Vec<(usize, f64)> = data.iter().copied().enumerate().collect();
+            frame.child(LineChart::new(pts).id(SharedString::from(key.to_string())).x(|p: &(usize, f64)| SharedString::from((p.0 + 1).to_string())).y(|p: &(usize, f64)| p.1).stroke(t.primary).dot()).into_any_element()
+        }
+        ChartSpec::Candle { data, .. } => {
+            let rows: Vec<(usize, [f64; 4])> = data.iter().copied().enumerate().collect();
+            frame.child(
+                CandlestickChart::new(rows)
+                    .id(SharedString::from(key.to_string()))
+                    .x(|r: &(usize, [f64; 4])| SharedString::from((r.0 + 1).to_string()))
+                    .open(|r: &(usize, [f64; 4])| r.1[0])
+                    .high(|r: &(usize, [f64; 4])| r.1[1])
+                    .low(|r: &(usize, [f64; 4])| r.1[2])
+                    .close(|r: &(usize, [f64; 4])| r.1[3]),
+            ).into_any_element()
+        }
+    }
+}
+
 fn render_chart(id: &str, n: usize, spec: &ChartSpec, cx: &App) -> AnyElement {
     let t = cx.theme();
-    let (title, body) = match spec {
-        ChartSpec::Line { title, data } => {
-            let pts: Vec<(usize, f64)> = data.iter().copied().enumerate().collect();
-            (
-                title.clone(),
-                div().h(px(180.)).w_full().child(
-                    LineChart::new(pts).id(SharedString::from(format!("chart-{id}-{n}"))).x(|p: &(usize, f64)| SharedString::from((p.0 + 1).to_string())).y(|p: &(usize, f64)| p.1).stroke(t.primary).dot(),
-                ),
-            )
-        }
-        ChartSpec::Candle { title, data } => {
-            let rows: Vec<(usize, [f64; 4])> = data.iter().copied().enumerate().collect();
-            (
-                title.clone(),
-                div().h(px(200.)).w_full().child(
-                    CandlestickChart::new(rows)
-                        .id(SharedString::from(format!("chart-{id}-{n}")))
-                        .x(|r: &(usize, [f64; 4])| SharedString::from((r.0 + 1).to_string()))
-                        .open(|r: &(usize, [f64; 4])| r.1[0])
-                        .high(|r: &(usize, [f64; 4])| r.1[1])
-                        .low(|r: &(usize, [f64; 4])| r.1[2])
-                        .close(|r: &(usize, [f64; 4])| r.1[3]),
-                ),
-            )
-        }
-    };
+    let body = chart_body(&format!("chart-{id}-{n}"), spec, None, spec.inline_height(), cx);
+    let open_spec = spec.clone();
     card(cx).p_3().gap_2()
-        .child(h_flex().gap_2().items_center().child(icon(IconName::ChartLine, 14., t.muted_foreground)).child(div().text_size(px(12.5)).font_weight(FontWeight::MEDIUM).child(title)))
+        .child(
+            h_flex().gap_2().items_center()
+                .child(icon(IconName::ChartLine, 14., t.muted_foreground))
+                .child(div().text_size(px(12.5)).font_weight(FontWeight::MEDIUM).child(spec.title().to_string()))
+                .child(div().flex_1())
+                .child(Button::new(SharedString::from(format!("chart-full-{id}-{n}"))).ghost().xsmall().icon(IconName::Maximize).tooltip("全屏查看(可缩放、拖动)")
+                    .on_click(move |_, window, cx| crate::diagram_viewer::open_chart(&open_spec, window, cx))),
+        )
         .child(body)
         .into_any_element()
 }

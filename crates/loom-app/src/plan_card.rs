@@ -90,17 +90,25 @@ pub fn render_card(session: &Entity<SessionModel>, plan: &PlanApproval, cx: &App
     let pending = plan.approved.is_none() && !plan.streaming;
     let (text, fg) = status(plan, cx);
     let excerpt = plan_excerpt(&plan.markdown, 3);
-    let (s, id) = (session.clone(), plan.id.clone());
+    let open = {
+        let (s, id) = (session.clone(), plan.id.clone());
+        move |cx: &mut App| { s.update(cx, |_, cx| cx.emit(UiRequest::OpenPlan(id.clone()))); }
+    };
+    let open_header = open.clone();
     v_flex().w_full().gap_2().p_3().rounded(px(12.)).border_1().bg(t.background)
         .border_color(if pending { t.warning.opacity(0.6) } else { t.border })
         .child(
             h_flex().id(SharedString::from(format!("plan-card-{}", plan.id))).w_full().gap_2().items_center().cursor_pointer()
-                .on_click(move |_, _, cx| { s.update(cx, |_, cx| cx.emit(UiRequest::OpenPlan(id.clone()))); })
+                .on_click(move |_, _, cx| open_header(cx))
                 .child(icon(IconName::ListTodo, 14., if pending { t.warning } else { t.muted_foreground }))
                 .child(div().flex_none().text_size(px(13.)).font_weight(FontWeight::MEDIUM).child("计划"))
                 .child(div().flex_1().min_w_0().truncate().text_size(px(13.)).child(display_title(plan)))
                 .child(pill(text, fg, t.muted))
-                .child(icon(IconName::ChevronRight, 12., t.muted_foreground)),
+                // 查看按钮取代原来的「>」:在右栏打开完整计划(整行标题也可点)
+                .child(
+                    Button::new(SharedString::from(format!("plan-view-{}", plan.id))).xsmall().outline().label("View").tooltip("在右侧查看完整计划")
+                        .on_click(move |_, _, cx| { cx.stop_propagation(); open(cx); }),
+                ),
         )
         .when(!excerpt.is_empty(), |d| d.child(
             v_flex().gap_0p5().pl_5().text_size(px(12.)).text_color(t.muted_foreground)
@@ -108,7 +116,7 @@ pub fn render_card(session: &Entity<SessionModel>, plan: &PlanApproval, cx: &App
         ))
         .when(pending, |d| d.child(
             v_flex().gap_1p5()
-                .child(div().text_size(px(11.)).text_color(t.muted_foreground).child("点击卡片在右侧查看完整计划;确认没问题再选择 Build。"))
+                .child(div().text_size(px(11.)).text_color(t.muted_foreground).child("点 View 在右侧查看完整计划;确认没问题再选择 Build。"))
                 .child(actions(session, plan, "card")),
         ))
         .into_any_element()

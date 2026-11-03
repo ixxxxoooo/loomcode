@@ -31,6 +31,14 @@ struct Glide {
 thread_local! {
     /// 每个窗口一份缓动状态(界面线程独占)。
     static GLIDES: RefCell<HashMap<WindowId, Glide>> = RefCell::new(HashMap::new());
+    /// 正在派发的滚轮事件是不是这里由鼠标滚轮「行」增量合成的(派发是同步的,处理函数里读它)。
+    static SYNTHETIC: std::cell::Cell<bool> = const { std::cell::Cell::new(false) };
+}
+
+/// 当前处理的滚轮事件是否来自鼠标滚轮(被平滑滚动层转成了像素增量)。
+/// 触控板的像素增量不经过这里,返回 false;需要区分「滚轮缩放 / 触控板平移」的视图(图表查看器)用它。
+pub fn is_wheel_synthetic() -> bool {
+    SYNTHETIC.get()
 }
 
 /// 放在窗口根元素的**第一个**子元素位置:不占布局、不绘制,只注册 capture 阶段的滚轮拦截。
@@ -108,6 +116,7 @@ fn tick(id: WindowId, window: &mut Window, cx: &mut App) {
         return;
     };
     if dx != 0. || dy != 0. {
+        SYNTHETIC.set(true);
         window.dispatch_event(
             PlatformInput::ScrollWheel(ScrollWheelEvent {
                 position: window.mouse_position(),
@@ -117,6 +126,7 @@ fn tick(id: WindowId, window: &mut Window, cx: &mut App) {
             }),
             cx,
         );
+        SYNTHETIC.set(false);
     }
     if more {
         window.on_next_frame(move |w, cx| tick(id, w, cx));

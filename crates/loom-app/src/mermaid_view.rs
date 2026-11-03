@@ -69,17 +69,17 @@ fn color(p: Paint, cx: &App) -> Hsla {
 /// 一个待画的形状:图元 + 已解析好的填充 / 描边色。
 type Shape = (Item, Option<Hsla>, Option<Hsla>);
 
-/// 画布闭包:按顺序画出全部矩形与折线。
-fn paint_shapes(shapes: &[Shape], origin: Point<Pixels>, window: &mut Window) {
+/// 画布闭包:按顺序画出全部矩形与折线;`s` 是缩放倍数(全屏查看时矢量重绘,放大不糊)。
+fn paint_shapes(shapes: &[Shape], origin: Point<Pixels>, s: f32, window: &mut Window) {
     for (item, fill_c, stroke_c) in shapes {
         match item {
             Item::Rect { x, y, w, h, r, width, .. } => {
-                let rect = Bounds::new(point(origin.x + px(*x), origin.y + px(*y)), size(px(*w), px(*h)));
-                let (bw, bc) = stroke_c.map_or((0., transparent_black()), |c| (*width, c));
-                window.paint_quad(quad(rect, px(*r), fill_c.unwrap_or_else(transparent_black), bw, bc, BorderStyle::default()));
+                let rect = Bounds::new(point(origin.x + px(*x * s), origin.y + px(*y * s)), size(px(*w * s), px(*h * s)));
+                let (bw, bc) = stroke_c.map_or((0., transparent_black()), |c| (*width * s, c));
+                window.paint_quad(quad(rect, px(*r * s), fill_c.unwrap_or_else(transparent_black), bw, bc, BorderStyle::default()));
             }
             Item::Poly { pts, closed, width, .. } if pts.len() >= 2 => {
-                let at = |p: &(f32, f32)| point(origin.x + px(p.0), origin.y + px(p.1));
+                let at = |p: &(f32, f32)| point(origin.x + px(p.0 * s), origin.y + px(p.1 * s));
                 if let (true, Some(c)) = (*closed, fill_c) {
                     let mut b = PathBuilder::fill();
                     b.move_to(at(&pts[0]));
@@ -90,7 +90,7 @@ fn paint_shapes(shapes: &[Shape], origin: Point<Pixels>, window: &mut Window) {
                     }
                 }
                 if let Some(c) = stroke_c {
-                    let mut b = PathBuilder::stroke(px(*width));
+                    let mut b = PathBuilder::stroke(px(*width * s));
                     b.move_to(at(&pts[0]));
                     pts[1..].iter().for_each(|p| b.line_to(at(p)));
                     if *closed {
@@ -106,8 +106,8 @@ fn paint_shapes(shapes: &[Shape], origin: Point<Pixels>, window: &mut Window) {
     }
 }
 
-/// 把场景画成元素(固定像素大小)。
-fn scene_element(scene: &Scene, cx: &App) -> impl IntoElement {
+/// 把场景按 `scale` 倍画成元素(文字字号、线宽、坐标全部按倍数换算,保持矢量清晰)。
+pub fn scene_element(scene: &Scene, scale: f32, cx: &App) -> impl IntoElement {
     let shapes: Vec<Shape> = scene
         .items
         .iter()
@@ -116,19 +116,20 @@ fn scene_element(scene: &Scene, cx: &App) -> impl IntoElement {
             Item::Text { .. } => None,
         })
         .collect();
-    let paint = canvas(|_, _, _| (), move |bounds, _, window, _| paint_shapes(&shapes, bounds.origin, window)).absolute().size_full();
+    let paint = canvas(|_, _, _| (), move |bounds, _, window, _| paint_shapes(&shapes, bounds.origin, scale, window)).absolute().size_full();
     let texts = scene.items.iter().filter_map(|i| {
         let Item::Text { x, y, text, size: fs, bold, anchor, paint } = i else { return None };
-        let lh = fs * 1.35;
-        let row = div().absolute().top(px(y - lh / 2.)).w(px(800.)).h(px(lh)).flex().items_center().whitespace_nowrap().text_size(px(*fs)).line_height(px(lh)).text_color(color(*paint, cx));
+        let (fs, lh) = (fs * scale, fs * 1.35 * scale);
+        let (x, y, box_w) = (x * scale, y * scale, 800. * scale);
+        let row = div().absolute().top(px(y - lh / 2.)).w(px(box_w)).h(px(lh)).flex().items_center().whitespace_nowrap().text_size(px(fs)).line_height(px(lh)).text_color(color(*paint, cx));
         let row = match anchor {
-            Anchor::Start => row.left(px(*x)).justify_start(),
-            Anchor::Middle => row.left(px(x - 400.)).justify_center(),
-            Anchor::End => row.left(px(x - 800.)).justify_end(),
+            Anchor::Start => row.left(px(x)).justify_start(),
+            Anchor::Middle => row.left(px(x - box_w / 2.)).justify_center(),
+            Anchor::End => row.left(px(x - box_w)).justify_end(),
         };
         Some(if *bold { row.font_weight(FontWeight::SEMIBOLD) } else { row }.child(text.clone()))
     });
-    div().relative().w(px(scene.width)).h(px(scene.height)).flex_none().child(paint).children(texts)
+    div().relative().w(px(scene.width * scale)).h(px(scene.height * scale)).flex_none().child(paint).children(texts)
 }
 
 /// 渲染一张 Mermaid 图。
@@ -143,14 +144,31 @@ pub fn render(key: &str, src: &str, show_src: bool, on_toggle: impl Fn(&ClickEve
     let failed = result.as_ref().is_err();
     let src_text = src.trim_end().to_string();
     let copy_src = src_text.clone();
+    let title_open = title.clone();
     let head = h_flex().gap_2().items_center()
         .child(icon(IconName::Workflow, 14., t.muted_foreground))
         .child(div().text_size(px(12.)).text_color(t.muted_foreground).child(title))
         .child(div().flex_1())
         .child(Button::new(SharedString::from(format!("mm-copy-{key}"))).ghost().xsmall().icon(IconName::Copy).tooltip("复制源码").on_click(move |_, _, cx| cx.write_to_clipboard(ClipboardItem::new_string(copy_src.clone()))))
+        .when(!failed, |d| d.child({
+            let (title, src) = (title_open.clone(), src_text.clone());
+            Button::new(SharedString::from(format!("mm-full-{key}"))).ghost().xsmall().icon(IconName::Maximize).tooltip("全屏查看(可缩放、拖动)")
+                .on_click(move |_, window, cx| crate::diagram_viewer::open_mermaid(&title, &src, window, cx))
+        }))
         .when(!failed, |d| d.child(Button::new(SharedString::from(format!("mm-toggle-{key}"))).ghost().xsmall().label(if show_src { "查看图" } else { "查看源码" }).on_click(on_toggle)));
     let body: AnyElement = match result.as_ref() {
-        Ok(scene) if !show_src => div().id(SharedString::from(format!("mm-{key}"))).w_full().overflow_x_scroll().child(h_flex().min_w(px(scene.width)).justify_center().child(scene_element(scene, cx))).into_any_element(),
+        Ok(scene) if !show_src => {
+            // 双击图也能全屏查看
+            let (title, src) = (title_open.clone(), src_text.clone());
+            div().id(SharedString::from(format!("mm-{key}"))).w_full().overflow_x_scroll()
+                .on_click(move |ev, window, cx| {
+                    if matches!(ev, ClickEvent::Mouse(m) if m.down.click_count >= 2) {
+                        crate::diagram_viewer::open_mermaid(&title, &src, window, cx);
+                    }
+                })
+                .child(h_flex().min_w(px(scene.width)).justify_center().child(scene_element(scene, 1., cx)))
+                .into_any_element()
+        }
         other => {
             let note = other.as_ref().err().map(|e| e.to_string());
             v_flex().w_full().gap_1p5()
