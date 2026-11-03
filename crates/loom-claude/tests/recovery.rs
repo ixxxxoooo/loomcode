@@ -69,7 +69,7 @@ fn 进程退出后下一条提示自动重启() {
     assert!(has_notice(&evs, NoticeLevel::Error, "退出码 3"), "{evs:?}");
     // 进程退出后,查用量之类的命令不应拉起新进程,也不能卡住后续提示
     std::thread::sleep(Duration::from_millis(200));
-    h.send(AgentCommand::RefreshUsage);
+    h.send(AgentCommand::RefreshUsage { force: false });
     h.send(prompt("你好"));
     let evs = collect(&h, |e| matches!(e, AgentEvent::PromoteToPermission { .. }));
     assert!(has_notice(&evs, NoticeLevel::Info, "重新启动"), "{evs:?}");

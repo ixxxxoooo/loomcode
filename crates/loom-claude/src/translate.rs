@@ -905,6 +905,7 @@ impl Translator {
             self.usage.five_hour_pct = five.or(self.usage.five_hour_pct);
             self.usage.weekly_pct = weekly.or(self.usage.weekly_pct);
             self.usage.limits_state = LimitsState::Idle;
+            self.usage.limits_at = Some(now_unix());
         } else {
             self.usage.limits_state = LimitsState::Unavailable;
         }
@@ -917,9 +918,11 @@ impl Translator {
         let pct = |k: &str| windows[k].get("utilization").and_then(Value::as_f64).map(|u| (u * 100.0) as f32);
         if let Some(p) = pct("five_hour") {
             self.usage.five_hour_pct = Some(p);
+            self.usage.limits_at = Some(now_unix());
         }
         if let Some(p) = pct("seven_day") {
             self.usage.weekly_pct = Some(p);
+            self.usage.limits_at = Some(now_unix());
         }
         let mut out = vec![AgentEvent::Usage(self.usage.clone())];
         let status = str_of(info, "status");
@@ -1735,4 +1738,9 @@ mod tests {
         assert_eq!(plans, vec![("# 一", Some(false)), ("# 二", Some(true)), ("# 三", None)]);
     }
 
+}
+
+/// 当前 Unix 秒。
+fn now_unix() -> i64 {
+    std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH).map(|d| d.as_secs() as i64).unwrap_or(0)
 }

@@ -305,6 +305,7 @@ impl ScriptBuilder {
             five_hour_pct: five,
             weekly_pct: weekly,
             limits_state: LimitsState::Idle,
+            limits_at: five.or(weekly).map(|_| now_secs() - 120),
             context_categories: demo_categories(used, size),
             cache_last: CacheTokens { read: used * 9 / 10, written: used / 20, uncached: used / 20 },
             cache_total: CacheTokens { read: used * 4, written: used / 2, uncached: used / 2 },

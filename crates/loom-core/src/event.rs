@@ -16,6 +16,10 @@ pub enum StopReason {
     Error,
 }
 
+/// 账户限额数据的缓存时长(秒):限额按小时 / 周重置,变化很慢,点开面板时数据还新就不再请求;
+/// 想要最新的,点面板里的「刷新」。
+pub const LIMITS_TTL_SECS: u64 = 300;
+
 /// 用量快照。
 #[derive(Debug, Clone, Default, PartialEq)]
 pub struct Usage {
@@ -39,7 +43,9 @@ pub struct Usage {
     pub cache_last: CacheTokens,
     /// 整段主对话累计的提示缓存情况
     pub cache_total: CacheTokens,
-    /// 限额查询状态(只在用户点开上下文弹层时才查询,不自动轮询)
+    /// 限额数据最近一次更新的时刻(Unix 秒);`None` 表示还没取到
+    pub limits_at: Option<i64>,
+    /// 限额查询状态(只在用户点开上下文弹层或点「刷新」时才查询,不自动轮询)
     pub limits_state: LimitsState,
 }
 
@@ -187,8 +193,9 @@ pub enum AgentCommand {
     StopTask { task_id: String },
     /// 把前台运行中的 Bash / 子 Agent 转入后台(Ctrl+B);`tool_use_id` 为空表示全部
     BackgroundCurrent { tool_use_id: Option<String> },
-    /// 查询账户用量与限额(官方 `get_usage` 控制请求);只在用户点开上下文弹层时发送
-    RefreshUsage,
+    /// 查询账户用量与限额(官方 `get_usage` 控制请求);只在用户点开上下文弹层或点「刷新」时发送。
+    /// `force` 为假时,限额数据还新(见 `LIMITS_TTL_SECS`)就不再请求;为真(用户点了「刷新」)则一定请求
+    RefreshUsage { force: bool },
     /// 替换注入 claude 的额外环境变量(切换模型服务商时用):惰性后端结束当前进程,
     /// 下一条提示用新环境 `--resume` 继续当前会话;其余后端忽略
     SetEnv(Vec<(String, String)>),

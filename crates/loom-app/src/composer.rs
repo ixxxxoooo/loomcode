@@ -391,7 +391,7 @@ impl Composer {
         self.open = if self.open == Some(kind) || just_closed { None } else { Some(kind) };
         // 点开上下文弹层才查一次账户限额,不自动查询
         if self.open == Some(Pick::Context) {
-            self.session.update(cx, |m, _| m.refresh_usage());
+            self.session.update(cx, |m, _| m.refresh_usage(false));
         }
         cx.notify();
     }
@@ -410,6 +410,12 @@ impl Composer {
         let cur = self.session.read(cx).state.effort;
         let ix = Effort::ALL.iter().position(|e| *e == cur).unwrap_or(0);
         self.choose_effort(Effort::ALL[(ix + 1) % Effort::ALL.len()], cx);
+    }
+
+    /// 手动刷新账户限额(越过缓存):只有用户点面板里的「刷新」才会走到这里。
+    pub(crate) fn refresh_limits(&mut self, cx: &mut Context<Self>) {
+        self.session.update(cx, |m, _| m.refresh_usage(true));
+        cx.notify();
     }
 
     /// 压缩上下文:作为斜杠命令发给 Claude(`/compact`)。

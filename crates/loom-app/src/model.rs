@@ -453,9 +453,10 @@ impl SessionModel {
         }
     }
 
-    /// 向官方接口查询账户用量与限额(只在用户点开上下文弹层时调用,不自动轮询)。
-    pub fn refresh_usage(&mut self) {
-        self.handle.send(AgentCommand::RefreshUsage);
+    /// 向官方接口查询账户用量与限额(只在用户点开上下文弹层或点「刷新」时调用,不自动轮询)。
+    /// `force` 为真时越过缓存(用户点了「刷新」)。
+    pub fn refresh_usage(&mut self, force: bool) {
+        self.handle.send(AgentCommand::RefreshUsage { force });
     }
 
     /// 是否有仍在运行的后台任务或子 Agent。

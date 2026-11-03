@@ -30,6 +30,18 @@ pub fn reset_text(secs: i64) -> String {
     }
 }
 
+/// 把「多少秒前更新」写成「刚刚 / N 分钟前 / N 小时前」。
+///
+/// 参数:`secs` 距上次更新的秒数。返回:提示文字(不带「更新于」前缀)。
+pub fn age_text(secs: i64) -> String {
+    match secs {
+        i64::MIN..=29 => "刚刚".to_string(),
+        30..=89 => "1 分钟前".to_string(),
+        90..=3599 => format!("{} 分钟前", (secs + 30) / 60),
+        _ => format!("{} 小时前", secs / 3600),
+    }
+}
+
 /// 当前 Unix 秒。
 fn now_secs() -> i64 {
     std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH).map(|d| d.as_secs() as i64).unwrap_or(0)
@@ -76,7 +88,7 @@ pub fn context_popup(usage: &Usage, this: Entity<Composer>, cx: &App) -> Div {
             .child(div().flex_1())
             .child(div().text_size(px(11.)).text_color(t.muted_foreground).child(tip))
     };
-    let (a, b) = (this.clone(), this);
+    let (a, b, c) = (this.clone(), this.clone(), this);
     let free = usage.context_size.saturating_sub(usage.context_used);
     // 分类配色:已使用的类别依次取图表色;压缩预留 / 按需加载用灰色,不占条
     let palette = [t.chart_3, t.success, t.warning, t.primary, t.info, t.danger];
@@ -102,11 +114,12 @@ pub fn context_popup(usage: &Usage, this: Entity<Composer>, cx: &App) -> Div {
             .child(div().w(px(40.)).flex_none().text_right().font_family(MONO).child(format!("{}%", l.hit_percent())))
             .child(div().w(px(108.)).flex_none().text_right().text_size(px(11.)).text_color(t.muted_foreground).child(format!("主对话 {}%", usage.cache_total.hit_percent())))
     });
+    let checking = usage.limits_state == LimitsState::Checking;
     let no_limits = usage.five_hour_pct.is_none() && usage.weekly_pct.is_none();
     let note = match usage.limits_state {
         LimitsState::Checking => "正在获取额度…",
         LimitsState::Unavailable => "暂时获取不到额度(第三方服务商或离线),稍后重新打开再试。",
-        LimitsState::Idle => "额度在打开此面板时获取一次。",
+        LimitsState::Idle => "额度在打开面板时获取,数据较新时不重复请求;点「刷新」可立即更新。",
     };
     // 在输入框正上方弹出,宽度与输入框一致;点外部由输入框统一关闭
     v_flex().absolute().bottom(relative(1.)).mb_2().left_0().right_0().px_4().py_3().gap_2p5().rounded(px(10.)).border_1().border_color(t.border).bg(t.popover).shadow_lg()
@@ -121,8 +134,21 @@ pub fn context_popup(usage: &Usage, this: Entity<Composer>, cx: &App) -> Div {
         .when(known, |d| d.child(h_flex().flex_wrap().gap_x_4().gap_y_1p5().children(legends)))
         .when_some(cache, |d, row| d.child(row))
         .child(div().h(px(1.)).bg(t.border))
-        .child(h_flex().items_baseline()
+        .child(h_flex().items_center().gap_2()
             .child(div().text_size(px(13.)).font_weight(FontWeight::SEMIBOLD).child("套餐用量"))
+            // 数据新旧 + 手动刷新(自动请求有缓存,想要最新的点这里;查询中显示「更新中…」)
+            .child(div().text_size(px(11.)).text_color(t.muted_foreground).child(match (usage.limits_state, usage.limits_at) {
+                (LimitsState::Checking, _) => "更新中…".to_string(),
+                (_, Some(at)) => format!("更新于 {}", age_text(now_secs() - at)),
+                _ => String::new(),
+            }))
+            .child(
+                div().id("ctx-limits-refresh").size(px(20.)).flex().items_center().justify_center().rounded(px(5.)).cursor_pointer()
+                    .hover(|d| d.bg(t.list_hover)).tooltip(|window, cx| gpui_kit::component::tooltip::Tooltip::new("刷新套餐用量").build(window, cx))
+                    .when(checking, |d| d.opacity(0.4))
+                    .on_click(move |_, _, cx| { if !checking { c.update(cx, |c, cx| c.refresh_limits(cx)); } })
+                    .child(icon(IconName::RotateCcw, 12., t.muted_foreground)),
+            )
             .child(div().flex_1())
             .child(h_flex().gap_1p5().text_size(px(12.))
                 .child(div().text_color(t.muted_foreground).child("本次会话"))
@@ -139,6 +165,15 @@ pub fn context_popup(usage: &Usage, this: Entity<Composer>, cx: &App) -> Div {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[::core::prelude::v1::test]
+    fn 更新时间提示() {
+        assert_eq!(age_text(-5), "刚刚");
+        assert_eq!(age_text(29), "刚刚");
+        assert_eq!(age_text(45), "1 分钟前");
+        assert_eq!(age_text(120), "2 分钟前");
+        assert_eq!(age_text(3 * 3600 + 5), "3 小时前");
+    }
 
     #[::core::prelude::v1::test]
     fn 重置提示() {
