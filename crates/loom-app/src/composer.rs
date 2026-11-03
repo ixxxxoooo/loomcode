@@ -33,6 +33,8 @@ enum Pick {
     Model,
     /// 思考强度(与模型是两个独立的选择框)
     Effort,
+    /// MCP 服务器:查看当前项目在用的、一键开关
+    Mcp,
     Mode,
     /// 上下文用量面板
     Context,
@@ -86,6 +88,7 @@ pub struct Composer {
     /// 输入框外层与「思考强度」chip 上一帧的位置:强度弹层要对齐到它的 chip 下面
     wrap_bounds: std::rc::Rc<std::cell::Cell<Bounds<Pixels>>>,
     effort_bounds: std::rc::Rc<std::cell::Cell<Bounds<Pixels>>>,
+    mcp_bounds: std::rc::Rc<std::cell::Cell<Bounds<Pixels>>>,
     _sub: Subscription,
 }
 
@@ -134,9 +137,10 @@ impl Composer {
             Ok("context") => Some(Pick::Context),
             Ok("mode") => Some(Pick::Mode),
             Ok("effort") => Some(Pick::Effort),
+            Ok("mcp") => Some(Pick::Mcp),
             _ => None,
         };
-        let mut this = Self { session, input, open, outside_closed: None, suggestions: Vec::new(), sel: 0, attachments: Vec::new(), attach_counter: 0, demo, rewrite: None, optimizing: false, optimize_error: None, custom_commands: Vec::new(), custom_agents: Vec::new(), wrap_bounds: Default::default(), effort_bounds: Default::default(), _sub: sub };
+        let mut this = Self { session, input, open, outside_closed: None, suggestions: Vec::new(), sel: 0, attachments: Vec::new(), attach_counter: 0, demo, rewrite: None, optimizing: false, optimize_error: None, custom_commands: Vec::new(), custom_agents: Vec::new(), wrap_bounds: Default::default(), effort_bounds: Default::default(), mcp_bounds: Default::default(), _sub: sub };
         // 调试用:LOOM_QUEUE=N 启动即排 N 条消息(只用于截图验证排队卡)
         if let Some(n) = std::env::var("LOOM_QUEUE").ok().and_then(|v| v.parse::<usize>().ok()) {
             this.session.update(cx, |m, cx| {
@@ -346,7 +350,7 @@ impl Composer {
         let st = &self.session.read(cx).state;
         match kind {
             // 模型与上下文有各自的弹层(composer_pop),这里只剩权限模式的简单列表
-            Pick::Model | Pick::Effort | Pick::Context => Vec::new(),
+            Pick::Model | Pick::Effort | Pick::Mcp | Pick::Context => Vec::new(),
             Pick::Mode => PermissionMode::ALL.iter().map(|m| (m.label().to_string(), m.cli_value().to_string(), *m == st.mode, m.cli_value().to_string())).collect(),
         }
     }
@@ -390,10 +394,43 @@ impl Composer {
         let just_closed = self.outside_closed.take().is_some_and(|t| t.elapsed() < std::time::Duration::from_millis(250));
         self.open = if self.open == Some(kind) || just_closed { None } else { Some(kind) };
         // 点开上下文弹层才查一次账户限额,不自动查询
+        // 点开 MCP 弹层时重读一次配置(外部改过 .mcp.json / claude mcp add 也能立刻看到)
+        if self.open == Some(Pick::Mcp) {
+            cx.defer(|cx| {
+                if let Some(wb) = cx.try_global::<crate::WorkbenchRef>().and_then(|r| r.0.upgrade()) {
+                    wb.update(cx, |wb, cx| { wb.reload_claude_cfg(); cx.notify(); });
+                }
+            });
+        }
         if self.open == Some(Pick::Context) {
             self.session.update(cx, |m, _| m.refresh_usage(false));
         }
         cx.notify();
+    }
+
+    /// 切换一个 MCP 服务器(只记在当前项目下);弹层保持打开,可以连着切。
+    pub(crate) fn toggle_mcp(&mut self, name: &str, scope: loom_config::Scope, enabled: bool, cx: &mut Context<Self>) {
+        let (name, me) = (name.to_string(), cx.entity().downgrade());
+        cx.defer(move |cx| {
+            if let Some(wb) = cx.try_global::<crate::WorkbenchRef>().and_then(|r| r.0.upgrade()) {
+                wb.update(cx, |wb, cx| wb.set_mcp_enabled_here(&name, scope, enabled, cx));
+            }
+            let _ = me.update(cx, |_, cx| cx.notify());
+        });
+    }
+
+    /// 打开「自定义 → MCP」管理页。
+    pub(crate) fn open_mcp_settings(&mut self, cx: &mut Context<Self>) {
+        self.open = None;
+        cx.notify();
+        cx.defer(|cx| {
+            if let Some(wb) = cx.try_global::<crate::WorkbenchRef>().and_then(|r| r.0.upgrade()) {
+                wb.update(cx, |wb, cx| {
+                    wb.customize_tab = crate::settings::CustomizeTab::Mcp;
+                    wb.set_page(crate::workbench::Page::Customize, cx);
+                });
+            }
+        });
     }
 
     /// 设置思考强度并关闭弹层。
@@ -442,6 +479,23 @@ impl Render for Composer {
             (m.state.phase, m.state.mode, m.state.model.clone(), name, m.state.effort, m.state.usage.clone())
         };
         let running = phase == Phase::Running;
+        // MCP:配置 + 本会话状态;配置按项目读,项目变了就在渲染后补读一次
+        let (mcp_rows, has_project) = {
+            let wb = cx.try_global::<crate::WorkbenchRef>().and_then(|r| r.0.upgrade());
+            match wb {
+                Some(wb) => {
+                    let (stale, rows, has_project) = {
+                        let w = wb.read(cx);
+                        (w.claude_cfg_root != w.active_project_path(), crate::composer_mcp::build_rows(&w.claude_cfg.mcp_servers, &self.session.read(cx).state.mcp), w.active_project_path().is_some())
+                    };
+                    if stale {
+                        cx.defer(move |cx| { wb.update(cx, |wb, cx| { wb.ensure_claude_cfg(); cx.notify(); }); });
+                    }
+                    (rows, has_project)
+                }
+                None => (Vec::new(), false),
+            }
+        };
         let mode_color = crate::mode_style::mode_color(mode, cx);
         let this = cx.entity();
 
@@ -466,6 +520,11 @@ impl Render for Composer {
                 let (wrap, chip) = (self.wrap_bounds.get(), self.effort_bounds.get());
                 let left = (chip.left() - wrap.left()).max(px(8.));
                 crate::composer_pop::effort_popup(effort, left, this.clone(), cx)
+            }
+            Pick::Mcp => {
+                let (wrap, chip) = (self.wrap_bounds.get(), self.mcp_bounds.get());
+                let left = (chip.left() - wrap.left()).max(px(8.));
+                crate::composer_mcp::mcp_popup(mcp_rows.clone(), &usage, has_project, running, left, this.clone(), cx)
             }
             Pick::Context => crate::context_panel::context_popup(&usage, this.clone(), cx),
             Pick::Mode => {
@@ -594,6 +653,13 @@ impl Render for Composer {
                                     // 思考强度:独立的选择框;顺带量出自己的位置,供弹层对齐
                                     let cell = self.effort_bounds.clone();
                                     chip("chip-effort", format!("思考 {}", effort.label()), t.muted_foreground, Pick::Effort, None, crate::layout_rules::EFFORT_CHIP_MIN, this.clone())
+                                        .relative().child(canvas(move |b, _, _| cell.set(b), |_, _, _, _| {}).absolute().size_full())
+                                })
+                                .child({
+                                    // MCP:图标 + 已启用个数;有连不上的服务器时用警告色
+                                    let cell = self.mcp_bounds.clone();
+                                    let color = if crate::composer_mcp::has_problem(&mcp_rows) { t.warning } else { t.muted_foreground };
+                                    chip("chip-mcp", format!("MCP {}", crate::composer_mcp::enabled_count(&mcp_rows)), color, Pick::Mcp, Some(icon(IconName::Plug, 13., color).into_any_element()), crate::layout_rules::MCP_CHIP_MIN, this.clone())
                                         .relative().child(canvas(move |b, _, _| cell.set(b), |_, _, _, _| {}).absolute().size_full())
                                 })
                                 .child(div().flex_1())

@@ -278,7 +278,7 @@ impl Translator {
                 if self.cwd.is_empty() {
                     self.cwd = str_of(v, "cwd").into();
                 }
-                Vec::new()
+                mcp_servers(v).map(|l| vec![AgentEvent::McpServers(l)]).unwrap_or_default()
             }
             "compact_boundary" => vec![notice(NoticeLevel::Info, "已压缩上下文")],
             "status" if str_of(v, "status") == "compacting" => {
@@ -1721,6 +1721,18 @@ mod tests {
     }
 
     #[test]
+    fn init_带出_mcp_服务器状态与工具数() {
+        let mut t = Translator::new("/p");
+        let ev = t.handle(&json!({"type":"system","subtype":"init","session_id":"s1","cwd":"/p",
+            "mcp_servers":[{"name":"github","status":"connected"},{"name":"db","status":"failed"},{"name":"x","status":"needs-auth"}],
+            "tools":["Bash","mcp__github__get_pr","mcp__github__list","mcp__db__query"]}));
+        let [AgentEvent::McpServers(l)] = &ev[..] else { panic!("{ev:?}") };
+        assert_eq!(l.iter().map(|s| (s.name.as_str(), s.conn, s.tools)).collect::<Vec<_>>(), vec![("github", McpConn::Connected, 2), ("db", McpConn::Failed, 1), ("x", McpConn::NeedsAuth, 0)]);
+        // 旧版没有 mcp_servers 字段:不发事件
+        assert!(t.handle(&json!({"type":"system","subtype":"init","session_id":"s1"})).is_empty());
+    }
+
+    #[test]
     fn 回合进行中每次调用模型都刷新上下文占用() {
         let mut t = Translator::new("/p");
         let start = |t: &mut Translator, input: u64, cache: u64| plan_stream(t, json!({"type":"message_start","message":{"id":"m1","usage":{"input_tokens":input,"cache_read_input_tokens":cache,"cache_creation_input_tokens":0,"output_tokens":1}}}));
@@ -1769,6 +1781,24 @@ mod tests {
         assert_eq!(plans, vec![("# 一", Some(false)), ("# 二", Some(true)), ("# 三", None)]);
     }
 
+}
+
+/// 从 `system init` 取各 MCP 服务器的状态与工具数:`mcp_servers` 给状态,`tools` 里的 `mcp__<服务器>__<工具>` 数个数。
+/// 没有 `mcp_servers` 字段(旧版 claude)返回 `None`。
+fn mcp_servers(init: &Value) -> Option<Vec<McpServerStatus>> {
+    let servers = init.get("mcp_servers")?.as_array()?;
+    let tools: Vec<&str> = init.get("tools").and_then(Value::as_array).map(|a| a.iter().filter_map(Value::as_str).collect()).unwrap_or_default();
+    Some(
+        servers
+            .iter()
+            .filter_map(|s| {
+                let name = s.get("name").and_then(Value::as_str)?.to_string();
+                let prefix = format!("mcp__{name}__");
+                let count = tools.iter().filter(|t| t.starts_with(&prefix)).count() as u32;
+                Some(McpServerStatus { conn: McpConn::parse(str_of(s, "status")), name, tools: count })
+            })
+            .collect(),
+    )
 }
 
 /// 一次 API 调用占用的上下文:输入 + 缓存读 + 缓存写 + 输出(都为 0 时返回 0,表示这份用量里没有输入侧数据)。

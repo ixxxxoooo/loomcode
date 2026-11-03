@@ -66,6 +66,12 @@ impl Player {
             model: self.model.clone(),
             mode: self.mode,
         });
+        // 演示的 MCP 状态(与沙盒 `.claude.json` 里的服务器对应):有连上的、要授权的、连不上的
+        self.send(AgentEvent::McpServers(vec![
+            McpServerStatus { name: "filesystem".into(), conn: McpConn::Connected, tools: 11 },
+            McpServerStatus { name: "github".into(), conn: McpConn::NeedsAuth, tools: 0 },
+            McpServerStatus { name: "router-docs".into(), conn: McpConn::Failed, tools: 0 },
+        ]));
         loop {
             self.tick_jobs();
             // 有后台任务在跑时要轮询推进它们,否则阻塞等命令

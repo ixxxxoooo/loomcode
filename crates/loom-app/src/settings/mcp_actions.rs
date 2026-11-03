@@ -92,7 +92,48 @@ impl Workbench {
     /// 启用 / 禁用服务器;项目层服务器启用即批准。
     pub fn toggle_mcp(&mut self, server: &McpServer, enabled: bool, cx: &mut Context<Self>) {
         let result = loom_config::claude::set_mcp_enabled(&self.claude_home, self.cfg_project(), server.scope, &server.name, enabled);
-        self.finish_cfg_write(result, cx);
+        if self.finish_cfg_write(result, cx) {
+            self.apply_mcp_change(cx);
+        }
+    }
+
+    /// 输入框里的 MCP 弹层切换服务器:只记在当前项目下,不碰设置页表单(设置页可能从没打开过)。
+    ///
+    /// 参数:`name` 服务器名;`scope` 它所在的层;`enabled` 目标状态。
+    pub fn set_mcp_enabled_here(&mut self, name: &str, scope: loom_config::Scope, enabled: bool, cx: &mut Context<Self>) {
+        let Some(root) = self.active_project_path() else { return };
+        match loom_config::claude::set_mcp_enabled(&self.claude_home, Some(std::path::Path::new(&root)), scope, name, enabled) {
+            Ok(()) => {
+                self.reload_claude_cfg();
+                self.apply_mcp_change(cx);
+            }
+            Err(e) => {
+                loom_diag::error!("写入 MCP 启停失败:{e}");
+                crate::notice::post(cx, crate::notice::Kind::Error, format!("切换 MCP 失败:{e}"), None);
+            }
+        }
+        cx.notify();
+    }
+
+    /// MCP 配置变了:这个项目下已启动的会话要用新配置重启(claude 只在启动时读 MCP)。
+    /// 空闲的会话立即结束后端、下一条消息用 `--resume` 接续;回合进行中的等回合结束再重启。
+    pub fn apply_mcp_change(&mut self, cx: &mut Context<Self>) {
+        let Some(root) = self.claude_cfg_root.clone() else { return };
+        let env = self.session_extra_env();
+        for v in self.views.values() {
+            let same = self.projects.get(v.project_ix).is_some_and(|p| self.work_root(&p.path) == root);
+            if !same {
+                continue;
+            }
+            let env = env.clone();
+            v.model.update(cx, |m, _| {
+                if m.state.phase == loom_core::Phase::Running {
+                    m.mcp_restart = true;
+                } else {
+                    m.handle.send(loom_core::AgentCommand::SetEnv(env));
+                }
+            });
+        }
     }
 }
 

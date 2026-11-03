@@ -15,7 +15,7 @@ pub const CENTER_MIN: f32 = 400.;
 ///
 /// 由各部分的固定宽度加起来(见 [`composer_floor`]),工具栏里的模式 / 模型 chip 在窄时收缩并截断文字,
 /// 其余控件固定宽度,所以不会出现按钮被挤出框外。
-pub const COMPOSER_MIN_W: f32 = 320.;
+pub const COMPOSER_MIN_W: f32 = 370.;
 /// 输入框外层左右内边距(各 16)。
 #[cfg(test)]
 pub const COMPOSER_OUTER_PAD: f32 = 32.;
@@ -28,17 +28,19 @@ pub const MODE_CHIP_MIN: f32 = 44.;
 pub const MODEL_CHIP_MIN: f32 = 80.;
 /// 思考强度 chip 收缩后的最小宽度(文字 + 下拉箭头 + 内边距)。
 pub const EFFORT_CHIP_MIN: f32 = 40.;
+/// MCP chip 收缩后的最小宽度(图标 + 数字 + 下拉箭头 + 内边距)。
+pub const MCP_CHIP_MIN: f32 = 44.;
 /// 上下文环、提示词优化、发送三个固定控件的宽度。
 #[cfg(test)]
 pub const COMPOSER_FIXED: f32 = 26. + 28. + 28.;
-/// 工具栏里 6 个控件之间的间距(gap_1 = 4,共 5 处)。
+/// 工具栏里 7 个控件之间的间距(gap_1 = 4,共 6 处)。
 #[cfg(test)]
-pub const COMPOSER_GAPS: f32 = 20.;
+pub const COMPOSER_GAPS: f32 = 24.;
 
 /// 输入框各部分固定宽度之和:`COMPOSER_MIN_W` 不得小于它(只在测试里校验)。
 #[cfg(test)]
 pub fn composer_floor() -> f32 {
-    COMPOSER_OUTER_PAD + COMPOSER_BAR_PAD + MODE_CHIP_MIN + MODEL_CHIP_MIN + EFFORT_CHIP_MIN + COMPOSER_FIXED + COMPOSER_GAPS
+    COMPOSER_OUTER_PAD + COMPOSER_BAR_PAD + MODE_CHIP_MIN + MODEL_CHIP_MIN + EFFORT_CHIP_MIN + MCP_CHIP_MIN + COMPOSER_FIXED + COMPOSER_GAPS
 }
 
 /// 窗口窄于这个宽度时自动收起侧栏。

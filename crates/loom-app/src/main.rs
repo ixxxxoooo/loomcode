@@ -194,6 +194,7 @@ mod workspace_actions;
 mod worktree_actions;
 mod workspace_form;
 mod window_memory;
+mod composer_mcp;
 mod workbench;
 mod workbench_compat;
 

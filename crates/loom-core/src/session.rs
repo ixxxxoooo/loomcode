@@ -1,6 +1,6 @@
 //! 会话状态:对 `AgentEvent` 的纯函数式归约。
 
-use crate::event::{AgentEvent, StopReason, Usage};
+use crate::event::{AgentEvent, McpServerStatus, StopReason, Usage};
 use crate::task::*;
 use crate::modes::{Effort, ModelInfo, PermissionMode, default_models};
 use crate::timeline::*;
@@ -32,6 +32,8 @@ pub struct SessionState {
     pub mode: PermissionMode,
     pub effort: Effort,
     pub usage: Usage,
+    /// 各 MCP 服务器在本会话里的状态;会话还没启动(没发过消息)时为空
+    pub mcp: Vec<McpServerStatus>,
     /// 最近一次回合的结束原因
     pub last_stop: Option<StopReason>,
     /// 条目 id → 用时(秒):思考条目是这次思考的用时,用户消息条目是它引出的整个回合的用时
@@ -56,6 +58,7 @@ impl Default for SessionState {
             mode: PermissionMode::Default,
             effort: Effort::Medium,
             usage: Usage::default(),
+            mcp: Vec::new(),
             durations: Default::default(),
             tasks: Vec::new(),
             last_stop: None,
@@ -259,6 +262,7 @@ impl SessionState {
                 }
             }
             AgentEvent::Usage(u) => self.usage = u,
+            AgentEvent::McpServers(list) => self.mcp = list,
             AgentEvent::ModeChanged(m) => self.mode = m,
             AgentEvent::ModelChanged(m) => self.model = m,
             AgentEvent::TitleChanged(t) => self.title = t,

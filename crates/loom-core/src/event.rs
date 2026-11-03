@@ -20,6 +20,49 @@ pub enum StopReason {
 /// 想要最新的,点面板里的「刷新」。
 pub const LIMITS_TTL_SECS: u64 = 300;
 
+/// MCP 服务器的连接状态(取自 claude `system init` 的 `mcp_servers`)。
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
+pub enum McpConn {
+    /// 已连接
+    Connected,
+    /// 正在连接
+    Pending,
+    /// 连接失败
+    Failed,
+    /// 需要授权
+    NeedsAuth,
+    /// 还没有信息(会话尚未启动)或无法识别
+    #[default]
+    Unknown,
+}
+
+impl McpConn {
+    /// 把 claude 报的状态文字归类(`connected` / `pending` / `failed` / `needs-auth` 等)。
+    pub fn parse(s: &str) -> Self {
+        let l = s.to_lowercase();
+        if l.contains("auth") {
+            Self::NeedsAuth
+        } else if l.contains("fail") || l.contains("error") {
+            Self::Failed
+        } else if l.contains("pending") || l.contains("connecting") {
+            Self::Pending
+        } else if l.contains("connect") {
+            Self::Connected
+        } else {
+            Self::Unknown
+        }
+    }
+}
+
+/// 一个 MCP 服务器在当前会话里的实际情况。
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct McpServerStatus {
+    pub name: String,
+    pub conn: McpConn,
+    /// 它向模型提供的工具个数(数 `mcp__<名称>__*`)
+    pub tools: u32,
+}
+
 /// 用量快照。
 #[derive(Debug, Clone, Default, PartialEq)]
 pub struct Usage {
@@ -157,6 +200,8 @@ pub enum AgentEvent {
     /// 计划正文更新(流式生成中 `streaming = true`;最终定稿 `false`)
     PlanUpdated { id: String, markdown: String, streaming: bool },
     Usage(Usage),
+    /// 会话启动后各 MCP 服务器的连接状态与工具数(`system init`)
+    McpServers(Vec<McpServerStatus>),
     ModeChanged(PermissionMode),
     ModelChanged(String),
     TitleChanged(String),
