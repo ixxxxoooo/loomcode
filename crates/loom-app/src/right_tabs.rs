@@ -4,6 +4,7 @@
 //! @author ixxxxoooo
 
 use crate::right_panel::RightPanel;
+use crate::term_store::ProjectTerminals;
 use crate::ui::{empty_state, icon, pill};
 use crate::workbench::RightTab;
 use gpui_kit::assets::IconName;
@@ -37,8 +38,20 @@ impl RightPanel {
             self.open.push(tab);
         }
         self.tab = tab;
+        if tab == RightTab::Terminal && self.run_tabs.is_empty() {
+            self.ensure_terminal(cx);
+        }
         cx.emit(crate::right_panel::PanelEvent::StateChanged);
         cx.notify();
+    }
+
+    /// 当前项目一个终端都没有时,自动新建一个(打开「终端」标签至少有一个可用)。
+    fn ensure_terminal(&mut self, cx: &mut Context<Self>) {
+        let hub = ProjectTerminals::hub(cx);
+        let root = self.root.clone();
+        if hub.read(cx).tabs(&root).is_empty() && let Err(e) = hub.update(cx, |h, cx| h.spawn(&root, None, cx)) {
+            loom_diag::error!("自动打开终端失败:{e}");
+        }
     }
 
     /// 关闭一个标签;关掉的是当前标签时,切到右边(没有则左边)的相邻标签。
@@ -58,7 +71,7 @@ impl RightPanel {
         let (cur, trailing) = (self.tab, self.trailing.clone());
         let weak = cx.entity().downgrade();
         let menu = move |menu: PopupMenu, _: &mut Window, _: &mut Context<PopupMenu>| {
-            let mut menu = menu;
+            let mut menu = menu.min_w(px(100.)).max_w(px(140.));
             for rt in RightTab::ALL {
                 let w = weak.clone();
                 menu = menu.item(PopupMenuItem::new(rt.label()).icon(rt.icon()).on_click(move |_, _, cx| {
@@ -94,7 +107,7 @@ impl RightPanel {
                 .when(rt == RightTab::Changes && changes > 0, |d| d.child(pill(changes.to_string(), t.primary_foreground, t.primary)))
                 .child(
                     div().id(SharedString::from(format!("rt-x-{}", rt.key()))).size(px(16.)).flex().items_center().justify_center().rounded(px(4.))
-                        .when(!on, |d| d.invisible().group_hover(group, |d| d.visible()))
+                        .invisible().group_hover(group, |d| d.visible())
                         .hover(|d| d.bg(t.border))
                         .on_mouse_down(MouseButton::Left, cx.listener(move |this, _, _, cx| { cx.stop_propagation(); this.close_tab(rt, cx); }))
                         .child(icon(IconName::X, 10., t.muted_foreground)),
