@@ -43,6 +43,7 @@ impl Workbench {
         if crate::secondary::is() {
             return;
         }
+        self.spawn_periodic_check(cx);
         // 调试用:LOOM_UPDATE_DEMO=1 模拟一次完整的下载过程(下载 → 校验 → 解包 → 可重启);=hold 停在 42% 方便截图
         if let Ok(mode) = std::env::var("LOOM_UPDATE_DEMO") {
             self.simulate_update(mode == "hold", cx);
@@ -57,6 +58,25 @@ impl Workbench {
         } else if self.settings.auto_update_check && std::env::var_os("LOOM_DEV").is_none() {
             self.check_update(cx);
         }
+    }
+
+    /// 每 3 小时检查一次更新(启动时的那一次由 `startup_update` 负责)。
+    /// 开发版、关闭了自动检查、已有待安装 / 正在下载的更新时跳过本轮。
+    fn spawn_periodic_check(&mut self, cx: &mut Context<Self>) {
+        const INTERVAL: std::time::Duration = std::time::Duration::from_secs(3 * 60 * 60);
+        cx.spawn(async move |this, cx| loop {
+            cx.background_executor().timer(INTERVAL).await;
+            let alive = this.update(cx, |this, cx| {
+                let busy = matches!(this.update, UpdateState::Ready(_) | UpdateState::Available(_) | UpdateState::Checking | UpdateState::Downloading(..));
+                if this.settings.auto_update_check && std::env::var_os("LOOM_DEV").is_none() && !busy {
+                    this.check_update(cx);
+                }
+            });
+            if alive.is_err() {
+                break;
+            }
+        })
+        .detach();
     }
 
     /// 模拟下载过程(只改界面状态,不联网)。`hold` 为真时停在 42%。
