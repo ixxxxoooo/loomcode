@@ -492,12 +492,13 @@ impl SessionModel {
         }
     }
 
-    /// 滚轮事件:累计位移,手势停下 150ms 后,若手势开始时本来贴底、结果只是被轻微拉开(净位移 < 40px)
+    /// 滚轮事件:累计滚动路程(绝对值之和),手势停下 150ms 后,若手势开始时本来贴底、结果只是被轻微拉开(总路程 < 40px)
     /// 就吸附回底部并恢复跟随,避免触控板误触让会话流脱离底部;在历史中间读内容时的小幅滚动不受影响。
     ///
     /// 参数:`dy` 本次滚轮的垂直位移(像素)。
     pub fn on_wheel(&mut self, dy: f32, cx: &mut Context<Self>) {
-        self.wheel_acc += dy;
+        // 累加绝对路程而不是带符号和:上下来回滚时正负不能抵消,否则大幅滚动会被误当成轻微误触
+        self.wheel_acc += dy.abs();
         if self.wheel_pending {
             return;
         }
@@ -513,7 +514,7 @@ impl SessionModel {
                 if !settled {
                     return false;
                 }
-                let net = m.wheel_acc.abs();
+                let net = m.wheel_acc;
                 m.wheel_acc = 0.;
                 m.wheel_last = 0.;
                 m.wheel_pending = false;
