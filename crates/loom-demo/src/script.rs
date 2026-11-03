@@ -307,6 +307,7 @@ impl ScriptBuilder {
             limits_state: LimitsState::Idle,
             limits_at: five.or(weekly).map(|_| now_secs() - 120),
             context_categories: demo_categories(used, size),
+            mcp_tools: demo_mcp_tools(),
             cache_last: CacheTokens { read: used * 9 / 10, written: used / 20, uncached: used / 20 },
             cache_total: CacheTokens { read: used * 4, written: used / 2, uncached: used / 2 },
             five_hour_resets: five.map(|_| now_secs() + 4 * 3600 + 1500),
@@ -453,6 +454,21 @@ fn now_secs() -> i64 {
 }
 
 /// 演示用的上下文分类:固定开销按比例,其余是消息,再加压缩预留与剩余。
+/// 演示的 MCP 服务器(与沙盒 `.claude.json` 里的对应):连上的、要授权的、连不上的。
+pub fn demo_mcp_servers() -> Vec<McpServerStatus> {
+    let tools = |names: &[&str]| names.iter().map(|n| n.to_string()).collect::<Vec<_>>();
+    vec![
+        McpServerStatus { name: "filesystem".into(), conn: McpConn::Connected, tools: tools(&["read_file", "write_file", "edit_file", "list_directory", "search_files", "move_file", "create_directory"]), error: None },
+        McpServerStatus { name: "github".into(), conn: McpConn::NeedsAuth, tools: Vec::new(), error: None },
+        McpServerStatus { name: "router-docs".into(), conn: McpConn::Failed, tools: Vec::new(), error: Some("Connection refused (localhost:4000)".into()) },
+    ]
+}
+
+/// 演示的各 MCP 工具占用:filesystem 的工具都已加载。
+fn demo_mcp_tools() -> Vec<McpToolUsage> {
+    demo_mcp_servers().into_iter().flat_map(|s| s.tools.into_iter().map(move |t| McpToolUsage { server: s.name.clone(), tool: t, tokens: 380, loaded: true })).collect()
+}
+
 fn demo_categories(used: u64, size: u64) -> Vec<ContextCategory> {
     if size == 0 {
         return Vec::new();

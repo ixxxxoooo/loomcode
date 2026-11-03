@@ -31,6 +31,8 @@ pub enum McpConn {
     Failed,
     /// 需要授权
     NeedsAuth,
+    /// 已被停用(`mcp_toggle` 或配置里关掉)
+    Disabled,
     /// 还没有信息(会话尚未启动)或无法识别
     #[default]
     Unknown,
@@ -40,7 +42,9 @@ impl McpConn {
     /// 把 claude 报的状态文字归类(`connected` / `pending` / `failed` / `needs-auth` 等)。
     pub fn parse(s: &str) -> Self {
         let l = s.to_lowercase();
-        if l.contains("auth") {
+        if l.contains("disabled") {
+            Self::Disabled
+        } else if l.contains("auth") {
             Self::NeedsAuth
         } else if l.contains("fail") || l.contains("error") {
             Self::Failed
@@ -59,8 +63,28 @@ impl McpConn {
 pub struct McpServerStatus {
     pub name: String,
     pub conn: McpConn,
-    /// 它向模型提供的工具个数(数 `mcp__<名称>__*`)
-    pub tools: u32,
+    /// 它提供的工具名(不带 `mcp__<名称>__` 前缀)
+    pub tools: Vec<String>,
+    /// 连接失败时的原因(取第一行,已截断)
+    pub error: Option<String>,
+}
+
+/// MCP 服务器名在工具名里的写法:claude 把名字里字母数字 `_` `-` 之外的字符换成 `_`
+/// (如 `claude.ai Claude Docs` → `claude_ai_Claude_Docs`),工具全名是 `mcp__<写法>__<工具>`。
+pub fn mcp_norm_name(name: &str) -> String {
+    name.chars().map(|c| if c.is_ascii_alphanumeric() || c == '_' || c == '-' { c } else { '_' }).collect()
+}
+
+/// 一个 MCP 工具在上下文里的占用(`get_context_usage` 的 `mcpTools`)。
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct McpToolUsage {
+    /// 服务器名的工具名写法(见 `mcp_norm_name`)
+    pub server: String,
+    /// 工具名(不带前缀)
+    pub tool: String,
+    pub tokens: u64,
+    /// 完整定义已加载进上下文(`false` = 按需加载,不占窗口)
+    pub loaded: bool,
 }
 
 /// 用量快照。
@@ -86,6 +110,8 @@ pub struct Usage {
     pub cache_last: CacheTokens,
     /// 整段主对话累计的提示缓存情况
     pub cache_total: CacheTokens,
+    /// 各 MCP 工具的占用(上下文明细里带的;没查到为空)
+    pub mcp_tools: Vec<McpToolUsage>,
     /// 限额数据最近一次更新的时刻(Unix 秒);`None` 表示还没取到
     pub limits_at: Option<i64>,
     /// 限额查询状态(只在用户点开上下文弹层或点「刷新」时才查询,不自动轮询)
@@ -241,6 +267,10 @@ pub enum AgentCommand {
     /// 查询账户用量与限额(官方 `get_usage` 控制请求);只在用户点开上下文弹层或点「刷新」时发送。
     /// `force` 为假时,限额数据还新(见 `LIMITS_TTL_SECS`)就不再请求;为真(用户点了「刷新」)则一定请求
     RefreshUsage { force: bool },
+    /// 刷新 MCP 服务器状态与各工具的上下文占用(`mcp_status` + `get_context_usage`);**不**查账户限额
+    RefreshMcp,
+    /// 热切换一个 MCP 服务器(`mcp_toggle`):立即生效、不重启;后端没启动时忽略(配置已写盘,启动时读取)
+    McpToggle { name: String, enabled: bool },
     /// 替换注入 claude 的额外环境变量(切换模型服务商时用):惰性后端结束当前进程,
     /// 下一条提示用新环境 `--resume` 继续当前会话;其余后端忽略
     SetEnv(Vec<(String, String)>),

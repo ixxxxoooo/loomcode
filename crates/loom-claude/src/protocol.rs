@@ -84,6 +84,16 @@ pub fn get_context_usage(request_id: &str) -> Value {
     control_request(request_id, json!({"subtype": "get_context_usage", "detail": "summary"}))
 }
 
+/// 查询各 MCP 服务器的状态、错误与工具列表(进程启动后即可查,不需要先发消息)。
+pub fn mcp_status(request_id: &str) -> Value {
+    control_request(request_id, json!({"subtype": "mcp_status"}))
+}
+
+/// 热切换一个 MCP 服务器:`enabled = false` 立即移除它的工具,`true` 重新连接。
+pub fn mcp_toggle(request_id: &str, name: &str, enabled: bool) -> Value {
+    control_request(request_id, json!({"subtype": "mcp_toggle", "serverName": name, "enabled": enabled}))
+}
+
 /// 查询账户用量与限额(`/usage` 同源)。
 pub fn get_usage(request_id: &str) -> Value {
     control_request(request_id, json!({"subtype": "get_usage", "skip_behaviors": true}))

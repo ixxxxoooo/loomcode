@@ -30,6 +30,8 @@ pub struct Player {
     jobs: Vec<LiveJob>,
     /// 当前是否有回合在进行(后台任务的续写只在空闲时发出)
     in_turn: bool,
+    /// 演示的 MCP 服务器状态(`McpToggle` 会改它)
+    mcp: Vec<McpServerStatus>,
 }
 
 /// 一个正在推进的后台任务。
@@ -46,7 +48,7 @@ impl Player {
     pub fn new(cmd_rx: Receiver<AgentCommand>, ev_tx: Sender<AgentEvent>, speed: f32, config: BackendConfig) -> Self {
         let mode = config.mode.unwrap_or_default();
         let model = config.model.clone().unwrap_or_else(|| "sonnet".into());
-        Self { cmd_rx, ev_tx, speed, config, resolved: HashSet::new(), mode, model, seq: 0, jobs: Vec::new(), in_turn: false }
+        Self { cmd_rx, ev_tx, speed, config, resolved: HashSet::new(), mode, model, seq: 0, jobs: Vec::new(), in_turn: false, mcp: crate::script::demo_mcp_servers() }
     }
 
     fn send(&self, e: AgentEvent) {
@@ -66,12 +68,7 @@ impl Player {
             model: self.model.clone(),
             mode: self.mode,
         });
-        // 演示的 MCP 状态(与沙盒 `.claude.json` 里的服务器对应):有连上的、要授权的、连不上的
-        self.send(AgentEvent::McpServers(vec![
-            McpServerStatus { name: "filesystem".into(), conn: McpConn::Connected, tools: 11 },
-            McpServerStatus { name: "github".into(), conn: McpConn::NeedsAuth, tools: 0 },
-            McpServerStatus { name: "router-docs".into(), conn: McpConn::Failed, tools: 0 },
-        ]));
+        self.send(AgentEvent::McpServers(self.mcp.clone()));
         loop {
             self.tick_jobs();
             // 有后台任务在跑时要轮询推进它们,否则阻塞等命令
@@ -159,6 +156,13 @@ impl Player {
                 self.model = m.clone();
                 self.send(AgentEvent::ModelChanged(m));
             }
+            AgentCommand::McpToggle { name, enabled } => {
+                if let Some(s) = self.mcp.iter_mut().find(|s| s.name == name) {
+                    s.conn = if enabled { McpConn::Connected } else { McpConn::Disabled };
+                }
+                self.send(AgentEvent::McpServers(self.mcp.clone()));
+            }
+            AgentCommand::RefreshMcp => self.send(AgentEvent::McpServers(self.mcp.clone())),
             AgentCommand::StopTask { task_id } => self.stop_job(&task_id),
             AgentCommand::RewindFiles { uuid, dry_run } => self.send(AgentEvent::Rewind(crate::rewind::outcome(&uuid, dry_run))),
             _ => {}

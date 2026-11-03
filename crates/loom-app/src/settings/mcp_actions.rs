@@ -93,7 +93,7 @@ impl Workbench {
     pub fn toggle_mcp(&mut self, server: &McpServer, enabled: bool, cx: &mut Context<Self>) {
         let result = loom_config::claude::set_mcp_enabled(&self.claude_home, self.cfg_project(), server.scope, &server.name, enabled);
         if self.finish_cfg_write(result, cx) {
-            self.apply_mcp_change(cx);
+            self.apply_mcp_toggle(&server.name, enabled, cx);
         }
     }
 
@@ -105,7 +105,7 @@ impl Workbench {
         match loom_config::claude::set_mcp_enabled(&self.claude_home, Some(std::path::Path::new(&root)), scope, name, enabled) {
             Ok(()) => {
                 self.reload_claude_cfg();
-                self.apply_mcp_change(cx);
+                self.apply_mcp_toggle(name, enabled, cx);
             }
             Err(e) => {
                 loom_diag::error!("写入 MCP 启停失败:{e}");
@@ -115,25 +115,44 @@ impl Workbench {
         cx.notify();
     }
 
-    /// MCP 配置变了:这个项目下已启动的会话要用新配置重启(claude 只在启动时读 MCP)。
-    /// 空闲的会话立即结束后端、下一条消息用 `--resume` 接续;回合进行中的等回合结束再重启。
-    pub fn apply_mcp_change(&mut self, cx: &mut Context<Self>) {
-        let Some(root) = self.claude_cfg_root.clone() else { return };
-        let env = self.session_extra_env();
-        for v in self.views.values() {
-            let same = self.projects.get(v.project_ix).is_some_and(|p| self.work_root(&p.path) == root);
-            if !same {
-                continue;
-            }
-            let env = env.clone();
-            v.model.update(cx, |m, _| {
-                if m.state.phase == loom_core::Phase::Running {
-                    m.mcp_restart = true;
-                } else {
-                    m.handle.send(loom_core::AgentCommand::SetEnv(env));
-                }
-            });
+    /// 把服务器的启停热切换到这个项目下已启动的会话(`mcp_toggle`,立即生效、不重启)。
+    /// 后端还没启动的会话不用管:配置已经写盘,启动时会读到。
+    pub fn apply_mcp_toggle(&mut self, name: &str, enabled: bool, cx: &mut Context<Self>) {
+        for model in self.models_of_project(cx) {
+            model.update(cx, |m, _| m.handle.send(loom_core::AgentCommand::McpToggle { name: name.to_string(), enabled }));
         }
+    }
+
+    /// 这个项目(当前配置所属项目)下所有已打开会话的模型。
+    fn models_of_project(&self, _cx: &App) -> Vec<Entity<crate::model::SessionModel>> {
+        let Some(root) = self.claude_cfg_root.clone() else { return Vec::new() };
+        self.views.values().filter(|v| self.projects.get(v.project_ix).is_some_and(|p| self.work_root(&p.path) == root)).map(|v| v.model.clone()).collect()
+    }
+
+    /// 输入框里切换某个 MCP 工具:写成本地层 `permissions.deny` 的 `mcp__<服务器>__<工具>` 规则。
+    /// claude 会实时重读设置文件(实测:删掉规则几秒内工具就回来),所以不用发命令;过一会儿刷新占用数字。
+    ///
+    /// 参数:`server` 服务器名的工具名写法(`mcp_norm_name`);`tool` 工具名;`enabled` 目标状态。
+    pub fn set_mcp_tool_enabled(&mut self, server: &str, tool: &str, enabled: bool, cx: &mut Context<Self>) {
+        let Some(root) = self.active_project_path() else { return };
+        let Some(file) = loom_config::claude::scope_file(&self.claude_home, Some(std::path::Path::new(&root)), loom_config::Scope::Local) else { return };
+        let rule = format!("mcp__{server}__{tool}");
+        let result = if enabled { loom_config::claude::remove_permission_rule(&file, "deny", &rule) } else { loom_config::claude::add_permission_rule(&file, "deny", &rule) };
+        if let Err(e) = result {
+            loom_diag::error!("写入 MCP 工具启停失败:{e}");
+            crate::notice::post(cx, crate::notice::Kind::Error, format!("切换工具失败:{e}"), None);
+            return;
+        }
+        self.reload_claude_cfg();
+        let models = self.models_of_project(cx);
+        cx.spawn(async move |_, cx| {
+            cx.background_executor().timer(std::time::Duration::from_millis(1500)).await;
+            for m in models {
+                let _ = m.update(cx, |m, _| m.handle.send(loom_core::AgentCommand::RefreshMcp));
+            }
+        })
+        .detach();
+        cx.notify();
     }
 }
 

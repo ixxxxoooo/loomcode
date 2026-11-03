@@ -148,6 +148,10 @@ enum ReqKind {
     Other(&'static str),
     Usage,
     Context,
+    /// `mcp_status`
+    McpStatus,
+    /// `mcp_toggle`:应答后再刷新一次状态与占用
+    McpToggle,
     Rewind { uuid: String, dry_run: bool },
 }
 
@@ -249,6 +253,16 @@ impl Actor {
         let _ = self.stdin.write_all(line.as_bytes()).and_then(|_| self.stdin.flush());
     }
 
+    /// 刷新 MCP 服务器状态与各工具的上下文占用(不碰账户限额);同类请求在途时不重复发。
+    fn refresh_mcp(&mut self) {
+        if !self.reqs.values().any(|k| matches!(k, ReqKind::McpStatus)) {
+            self.request(ReqKind::McpStatus, protocol::mcp_status);
+        }
+        if !self.reqs.values().any(|k| matches!(k, ReqKind::Context)) {
+            self.request(ReqKind::Context, protocol::get_context_usage);
+        }
+    }
+
     fn request(&mut self, kind: ReqKind, build: impl FnOnce(&str) -> Value) {
         self.req_seq += 1;
         let id = if matches!(kind, ReqKind::Init) { "req_init".to_string() } else { format!("req_{}", self.req_seq) };
@@ -345,6 +359,10 @@ impl Actor {
                 let ev = self.translator.usage_checking();
                 self.request(ReqKind::Usage, protocol::get_usage);
                 return self.emit(ev);
+            }
+            AgentCommand::RefreshMcp => self.refresh_mcp(),
+            AgentCommand::McpToggle { name, enabled } => {
+                self.request(ReqKind::McpToggle, |id| protocol::mcp_toggle(id, &name, enabled));
             }
             AgentCommand::RunScenario(_) | AgentCommand::SetEnv(_) => {}
             AgentCommand::Shutdown => {
@@ -472,6 +490,18 @@ impl Actor {
                     let back = self.confirmed_mode;
                     self.emit_all(vec![warn("切换权限模式"), AgentEvent::ModeChanged(back)])
                 }
+            }
+            ReqKind::McpStatus => match self.translator.mcp_status_event(&resp["response"], ok) {
+                Some(ev) => self.emit(ev),
+                None => true,
+            },
+            ReqKind::McpToggle => {
+                if !ok {
+                    loom_diag::warn!("mcp_toggle 失败:{error}");
+                }
+                // 不管成败都刷新一次:列表以后端实际状态为准
+                self.refresh_mcp();
+                true
             }
             ReqKind::Context => match self.translator.context_breakdown(&resp["response"], ok) {
                 Some(ev) => self.emit(ev),

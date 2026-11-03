@@ -89,6 +89,8 @@ pub struct Composer {
     wrap_bounds: std::rc::Rc<std::cell::Cell<Bounds<Pixels>>>,
     effort_bounds: std::rc::Rc<std::cell::Cell<Bounds<Pixels>>>,
     mcp_bounds: std::rc::Rc<std::cell::Cell<Bounds<Pixels>>>,
+    /// MCP 弹层里展开了工具列表的服务器
+    mcp_open: Option<String>,
     _sub: Subscription,
 }
 
@@ -140,7 +142,7 @@ impl Composer {
             Ok("mcp") => Some(Pick::Mcp),
             _ => None,
         };
-        let mut this = Self { session, input, open, outside_closed: None, suggestions: Vec::new(), sel: 0, attachments: Vec::new(), attach_counter: 0, demo, rewrite: None, optimizing: false, optimize_error: None, custom_commands: Vec::new(), custom_agents: Vec::new(), wrap_bounds: Default::default(), effort_bounds: Default::default(), mcp_bounds: Default::default(), _sub: sub };
+        let mut this = Self { session, input, open, outside_closed: None, suggestions: Vec::new(), sel: 0, attachments: Vec::new(), attach_counter: 0, demo, rewrite: None, optimizing: false, optimize_error: None, custom_commands: Vec::new(), custom_agents: Vec::new(), wrap_bounds: Default::default(), effort_bounds: Default::default(), mcp_bounds: Default::default(), mcp_open: std::env::var("LOOM_MCP_OPEN").ok(), _sub: sub };
         // 调试用:LOOM_QUEUE=N 启动即排 N 条消息(只用于截图验证排队卡)
         if let Some(n) = std::env::var("LOOM_QUEUE").ok().and_then(|v| v.parse::<usize>().ok()) {
             this.session.update(cx, |m, cx| {
@@ -394,8 +396,9 @@ impl Composer {
         let just_closed = self.outside_closed.take().is_some_and(|t| t.elapsed() < std::time::Duration::from_millis(250));
         self.open = if self.open == Some(kind) || just_closed { None } else { Some(kind) };
         // 点开上下文弹层才查一次账户限额,不自动查询
-        // 点开 MCP 弹层时重读一次配置(外部改过 .mcp.json / claude mcp add 也能立刻看到)
+        // 点开 MCP 弹层时重读一次配置(外部改过 .mcp.json / claude mcp add 也能立刻看到),并让后端刷新状态与各工具占用
         if self.open == Some(Pick::Mcp) {
+            self.session.update(cx, |m, _| m.refresh_mcp());
             cx.defer(|cx| {
                 if let Some(wb) = cx.try_global::<crate::WorkbenchRef>().and_then(|r| r.0.upgrade()) {
                     wb.update(cx, |wb, cx| { wb.reload_claude_cfg(); cx.notify(); });
@@ -414,6 +417,23 @@ impl Composer {
         cx.defer(move |cx| {
             if let Some(wb) = cx.try_global::<crate::WorkbenchRef>().and_then(|r| r.0.upgrade()) {
                 wb.update(cx, |wb, cx| wb.set_mcp_enabled_here(&name, scope, enabled, cx));
+            }
+            let _ = me.update(cx, |_, cx| cx.notify());
+        });
+    }
+
+    /// 展开 / 收起某个服务器的工具列表。
+    pub(crate) fn toggle_mcp_open(&mut self, name: &str, cx: &mut Context<Self>) {
+        self.mcp_open = if self.mcp_open.as_deref() == Some(name) { None } else { Some(name.to_string()) };
+        cx.notify();
+    }
+
+    /// 切换一个 MCP 工具(写成本地层的禁用规则)。
+    pub(crate) fn toggle_mcp_tool(&mut self, server: &str, tool: &str, enabled: bool, cx: &mut Context<Self>) {
+        let (server, tool, me) = (server.to_string(), tool.to_string(), cx.entity().downgrade());
+        cx.defer(move |cx| {
+            if let Some(wb) = cx.try_global::<crate::WorkbenchRef>().and_then(|r| r.0.upgrade()) {
+                wb.update(cx, |wb, cx| wb.set_mcp_tool_enabled(&server, &tool, enabled, cx));
             }
             let _ = me.update(cx, |_, cx| cx.notify());
         });
@@ -486,7 +506,7 @@ impl Render for Composer {
                 Some(wb) => {
                     let (stale, rows, has_project) = {
                         let w = wb.read(cx);
-                        (w.claude_cfg_root != w.active_project_path(), crate::composer_mcp::build_rows(&w.claude_cfg.mcp_servers, &self.session.read(cx).state.mcp), w.active_project_path().is_some())
+                        (w.claude_cfg_root != w.active_project_path(), { let st = &self.session.read(cx).state; crate::composer_mcp::build_rows(&w.claude_cfg.mcp_servers, &st.mcp, &st.usage.mcp_tools, &w.claude_cfg.permissions.deny) }, w.active_project_path().is_some())
                     };
                     if stale {
                         cx.defer(move |cx| { wb.update(cx, |wb, cx| { wb.ensure_claude_cfg(); cx.notify(); }); });
@@ -524,7 +544,7 @@ impl Render for Composer {
             Pick::Mcp => {
                 let (wrap, chip) = (self.wrap_bounds.get(), self.mcp_bounds.get());
                 let left = (chip.left() - wrap.left()).max(px(8.));
-                crate::composer_mcp::mcp_popup(mcp_rows.clone(), &usage, has_project, running, left, this.clone(), cx)
+                crate::composer_mcp::mcp_popup(mcp_rows.clone(), self.mcp_open.as_deref(), &usage, has_project, left, this.clone(), cx)
             }
             Pick::Context => crate::context_panel::context_popup(&usage, this.clone(), cx),
             Pick::Mode => {

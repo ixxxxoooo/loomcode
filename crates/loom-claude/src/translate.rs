@@ -878,6 +878,21 @@ impl Translator {
         AgentEvent::Usage(self.usage.clone())
     }
 
+    /// 处理 `mcp_status` 的应答:每个服务器的状态、连接失败的原因与工具列表(含插件与 claude.ai 连接器带来的)。
+    /// 格式不符或失败返回 `None`。
+    pub fn mcp_status_event(&mut self, body: &Value, ok: bool) -> Option<AgentEvent> {
+        let list = body.get("mcpServers")?.as_array().filter(|_| ok)?;
+        Some(AgentEvent::McpServers(
+            list.iter()
+                .filter_map(|s| {
+                    let name = s.get("name").and_then(Value::as_str)?.to_string();
+                    let tools = s.get("tools").and_then(Value::as_array).map(|a| a.iter().filter_map(|t| t.get("name").and_then(Value::as_str)).map(|t| bare_tool(t, &name).to_string()).collect()).unwrap_or_default();
+                    Some(McpServerStatus { conn: McpConn::parse(str_of(s, "status")), error: s.get("error").and_then(Value::as_str).and_then(short_error), name, tools })
+                })
+                .collect(),
+        ))
+    }
+
     /// 处理 `get_context_usage` 的应答:按类别的明细与总量;失败或格式不符时返回 `None`(旧版 claude 可能不支持)。
     pub fn context_breakdown(&mut self, body: &Value, ok: bool) -> Option<AgentEvent> {
         let cats = body.get("categories")?.as_array().filter(|_| ok)?;
@@ -903,6 +918,21 @@ impl Translator {
             self.usage.context_used = total;
         }
         self.usage.context_categories = list;
+        // 各 MCP 工具的占用(按服务器汇总用):服务器名字段已是工具名里的写法
+        self.usage.mcp_tools = body
+            .get("mcpTools")
+            .and_then(Value::as_array)
+            .map(|a| {
+                a.iter()
+                    .filter_map(|t| {
+                        let server = t.get("serverName").and_then(Value::as_str)?.to_string();
+                        let full = t.get("name").and_then(Value::as_str)?;
+                        let tool = full.strip_prefix(&format!("mcp__{server}__")).unwrap_or(full).to_string();
+                        Some(McpToolUsage { server, tool, tokens: t.get("tokens").and_then(Value::as_u64).unwrap_or(0), loaded: t.get("isLoaded").and_then(Value::as_bool).unwrap_or(true) })
+                    })
+                    .collect()
+            })
+            .unwrap_or_default();
         Some(AgentEvent::Usage(self.usage.clone()))
     }
 
@@ -1727,9 +1757,35 @@ mod tests {
             "mcp_servers":[{"name":"github","status":"connected"},{"name":"db","status":"failed"},{"name":"x","status":"needs-auth"}],
             "tools":["Bash","mcp__github__get_pr","mcp__github__list","mcp__db__query"]}));
         let [AgentEvent::McpServers(l)] = &ev[..] else { panic!("{ev:?}") };
-        assert_eq!(l.iter().map(|s| (s.name.as_str(), s.conn, s.tools)).collect::<Vec<_>>(), vec![("github", McpConn::Connected, 2), ("db", McpConn::Failed, 1), ("x", McpConn::NeedsAuth, 0)]);
+        assert_eq!(l.iter().map(|s| (s.name.as_str(), s.conn, s.tools.clone())).collect::<Vec<_>>(), vec![("github", McpConn::Connected, vec!["get_pr".to_string(), "list".to_string()]), ("db", McpConn::Failed, vec!["query".to_string()]), ("x", McpConn::NeedsAuth, vec![])]);
         // 旧版没有 mcp_servers 字段:不发事件
         assert!(t.handle(&json!({"type":"system","subtype":"init","session_id":"s1"})).is_empty());
+    }
+
+    #[test]
+    fn mcp_status_应答带出状态_错误与工具() {
+        let mut t = Translator::new("/p");
+        let body = json!({"mcpServers":[
+            {"name":"claude.ai Docs","status":"connected","tools":[{"name":"read","annotations":{}},{"name":"update"}]},
+            {"name":"gw","status":"failed","error":"\n  [{\"code\":1}]\nmore","tools":[]},
+            {"name":"off","status":"disabled"}]});
+        let Some(AgentEvent::McpServers(l)) = t.mcp_status_event(&body, true) else { panic!() };
+        assert_eq!((l[0].conn, l[0].tools.clone()), (McpConn::Connected, vec!["read".to_string(), "update".to_string()]));
+        assert_eq!((l[1].conn, l[1].error.as_deref()), (McpConn::Failed, Some("[{\"code\":1}]")));
+        assert_eq!((l[2].conn, l[2].tools.len()), (McpConn::Disabled, 0));
+        assert!(t.mcp_status_event(&body, false).is_none());
+    }
+
+    #[test]
+    fn 上下文明细带出各_mcp_工具占用() {
+        let mut t = Translator::new("/p");
+        let body = json!({"categories":[{"name":"MCP tools","tokens":300,"kind":"used"}],"maxTokens":1000,"totalTokens":300,
+            "mcpTools":[{"name":"mcp__claude_ai_Docs__read","serverName":"claude_ai_Docs","tokens":120,"isLoaded":true},{"name":"mcp__gw__q","serverName":"gw","tokens":900,"isLoaded":false}]});
+        let Some(AgentEvent::Usage(u)) = t.context_breakdown(&body, true) else { panic!() };
+        assert_eq!(u.mcp_tools, vec![
+            McpToolUsage { server: "claude_ai_Docs".into(), tool: "read".into(), tokens: 120, loaded: true },
+            McpToolUsage { server: "gw".into(), tool: "q".into(), tokens: 900, loaded: false },
+        ]);
     }
 
     #[test]
@@ -1783,7 +1839,12 @@ mod tests {
 
 }
 
-/// 从 `system init` 取各 MCP 服务器的状态与工具数:`mcp_servers` 给状态,`tools` 里的 `mcp__<服务器>__<工具>` 数个数。
+/// 工具全名去掉 `mcp__<服务器>__` 前缀。
+fn bare_tool<'a>(full: &'a str, server: &str) -> &'a str {
+    full.strip_prefix(&format!("mcp__{}__", mcp_norm_name(server))).unwrap_or(full)
+}
+
+/// 从 `system init` 取各 MCP 服务器的状态与工具:`mcp_servers` 给状态,`tools` 里的 `mcp__<服务器>__<工具>` 归到各服务器。
 /// 没有 `mcp_servers` 字段(旧版 claude)返回 `None`。
 fn mcp_servers(init: &Value) -> Option<Vec<McpServerStatus>> {
     let servers = init.get("mcp_servers")?.as_array()?;
@@ -1793,12 +1854,18 @@ fn mcp_servers(init: &Value) -> Option<Vec<McpServerStatus>> {
             .iter()
             .filter_map(|s| {
                 let name = s.get("name").and_then(Value::as_str)?.to_string();
-                let prefix = format!("mcp__{name}__");
-                let count = tools.iter().filter(|t| t.starts_with(&prefix)).count() as u32;
-                Some(McpServerStatus { conn: McpConn::parse(str_of(s, "status")), name, tools: count })
+                let prefix = format!("mcp__{}__", mcp_norm_name(&name));
+                let list: Vec<String> = tools.iter().filter_map(|t| t.strip_prefix(&prefix)).map(String::from).collect();
+                Some(McpServerStatus { conn: McpConn::parse(str_of(s, "status")), name, tools: list, error: None })
             })
             .collect(),
     )
+}
+
+/// 取错误文字的第一行并截断(连接失败的原因有时是一大段 JSON)。
+fn short_error(e: &str) -> Option<String> {
+    let line = e.lines().map(str::trim).find(|l| !l.is_empty())?;
+    Some(truncate(line, 120))
 }
 
 /// 一次 API 调用占用的上下文:输入 + 缓存读 + 缓存写 + 输出(都为 0 时返回 0,表示这份用量里没有输入侧数据)。

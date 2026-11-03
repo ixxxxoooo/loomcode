@@ -1327,13 +1327,6 @@ impl Workbench {
                 let id = id.clone();
                 self.panel.update(cx, |p, cx| p.open_plan(Some(id), cx));
             }
-            UiRequest::RestartForConfig => {
-                // 回合中改过 MCP 配置:回合结束后让这个会话的后端结束,下一条消息用新配置恢复
-                let env = self.session_extra_env();
-                if let Some(v) = self.views.values().find(|v| Some(v.model.entity_id()) == source) {
-                    v.model.update(cx, |m, _| m.handle.send(AgentCommand::SetEnv(env)));
-                }
-            }
             UiRequest::OpenTasks(id) => {
                 self.right_open = true;
                 let id = id.clone();

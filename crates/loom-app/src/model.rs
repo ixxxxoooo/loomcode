@@ -17,8 +17,6 @@ pub struct SessionModel {
     /// 本次运行里实时出现的计划条目 id:后端手里挂着它的权限请求,Build / 继续规划能直接应答;
     /// 不在其中的(从历史回放出来、还没批准的)计划后端已经没有对应请求,要换成「改模式 + 发提示」
     live_plans: HashSet<String>,
-    /// 回合进行中改过 MCP 配置:回合结束后请工作台重启后端(进行中不能打断)
-    pub mcp_restart: bool,
     /// 运行中排队的消息(回合结束后依次发送)
     pub queued: crate::prompt_queue::PromptQueue,
     /// 提问向导当前所在题号(按提问 id)
@@ -88,7 +86,6 @@ impl SessionModel {
             timeline: None,
             expanded: HashSet::new(),
             live_plans: HashSet::new(),
-            mcp_restart: false,
             queued: Default::default(),
             wizard_step: Default::default(),
             wizard_draft: Default::default(),
@@ -149,9 +146,6 @@ impl SessionModel {
         self.track_tasks(cx);
         // 回合结束:最后一条助手消息下面会出现操作条,行高变了
         if turn_ended {
-            if std::mem::take(&mut self.mcp_restart) {
-                cx.emit(UiRequest::RestartForConfig);
-            }
             if let Some(ix) = self.state.items.iter().rposition(|i| matches!(i, TimelineItem::Assistant { .. })) {
                 dirty_rows.push(ix);
             }
@@ -459,6 +453,11 @@ impl SessionModel {
         }
     }
 
+    /// 刷新 MCP 服务器状态与各工具的上下文占用(只在点开 MCP 弹层时调用;不查账户限额)。
+    pub fn refresh_mcp(&mut self) {
+        self.handle.send(AgentCommand::RefreshMcp);
+    }
+
     /// 向官方接口查询账户用量与限额(只在用户点开上下文弹层或点「刷新」时调用,不自动轮询)。
     /// `force` 为真时越过缓存(用户点了「刷新」)。
     pub fn refresh_usage(&mut self, force: bool) {
@@ -613,8 +612,6 @@ pub enum UiRequest {
     OpenFile(String),
     /// 打开右侧「任务」标签,并选中某个任务(`None` 只打开)
     OpenTasks(Option<String>),
-    /// 回合结束了,而回合中改过 MCP 配置:请工作台让后端用新配置重启(下一条消息起生效)
-    RestartForConfig,
 }
 
 impl EventEmitter<UiRequest> for SessionModel {}
