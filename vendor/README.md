@@ -35,3 +35,18 @@
 
 升级 gpui-kit 时:换成新版本源码,重做这一处;若上游已提供更合理的策略,直接删掉本目录与 `[patch]`。
 
+
+## tree-sitter-sequel 0.3.11(补丁版)
+
+来源:crates.io 的 `tree-sitter-sequel 0.3.11`(SQL 语法),经根 `Cargo.toml` 的 `[patch.crates-io]` 替换。
+
+**改动两处**:
+1. `Cargo.toml` 的构建依赖 `cc` 从 `~1.2.1` 放宽为 `1.2.1`(即 `^1.2.1`)。上游把 `cc` 钉死在 1.2.x,而工作区里 `tree-sitter-c-sharp` 等已用到 `cc` 1.9,两者无法同时解析,导致一直没法启用 SQL 高亮。
+2. `bindings/rust/build.rs` 编译 C 时加 `-Wno-sign-compare`(上游 `scanner.c` 的一条有符号比较警告,路径依赖不会像 crates.io 依赖那样被静默)。
+
+另删去运行不需要的 `grammar.js`、`grammar.json`、`Cargo.lock`(生成文件 `parser.c` 与 `node-types.json` 保留)。
+用途:编辑器、迷你地图、Markdown 代码块、Diff 的 `sql` 语法高亮(`gpui-kit` 的 `tree-sitter-sql` 特性)。
+
+升级 gpui-kit 时:若上游放宽了 `cc` 版本要求,直接删掉本目录与 `[patch]`。
+
+**注意**:这些 vendor 目录会被个人全局 gitignore 的 `vendor` 规则忽略,新增或修改后要 `git add -f vendor/...`(`gpui-base` 此前就漏提交了,已补上)。

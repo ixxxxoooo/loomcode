@@ -1,7 +1,7 @@
 //! 补全库里「只有解析器、高亮查询是空串」的语言(Swift、C#、CMake、Protobuf):
 //! 用各语法 crate 自带(或随仓库附带)的 highlights 查询重新注册,编辑器、迷你地图、Markdown 代码块、Diff 共用一个注册表,注册一次处处生效。
 //!
-//! 已知没有高亮的:GraphQL(语法 crate 不带查询)、SQL(依赖版本与 Swift 语法的构建依赖冲突,暂未启用)、XML / Dockerfile / INI(库里没有对应语法)。
+//! 已知没有高亮的:GraphQL(语法 crate 不带查询)、XML / Dockerfile / INI(库里没有对应语法)。
 //!
 //! @author ixxxxoooo
 
@@ -42,6 +42,11 @@ mod tests {
         assert!(spans("csharp", "class A { public int X = 1; }\n") > 0);
         assert!(spans("cmake", "cmake_minimum_required(VERSION 3.20)\nproject(x)\n") > 0);
         assert!(spans("proto", "syntax = \"proto3\";\nmessage A { string b = 1; }\n") > 0);
+    }
+
+    #[::core::prelude::v1::test]
+    fn sql有高亮() {
+        assert!(spans("sql", "SELECT id, name FROM users WHERE age > 18 ORDER BY id; -- 注释\n") > 0);
     }
 
     #[::core::prelude::v1::test]
