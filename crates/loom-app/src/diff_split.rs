@@ -50,6 +50,11 @@ pub fn pair_rows(lines: &[DiffLine]) -> Vec<SplitRow> {
     rows
 }
 
+/// 整段差异都是新增、或都是删除(没有任何未改动行 / 另一种改动):左右对比时有一侧永远是空的。
+pub fn is_one_sided(lines: &[DiffLine]) -> bool {
+    !lines.is_empty() && (lines.iter().all(|l| l.tag == ChangeTag::Insert) || lines.iter().all(|l| l.tag == ChangeTag::Delete))
+}
+
 /// 一侧的单元格:行号 + 带高亮的文本;`None` 画成留空的斜纹底(这里用淡底代替)。
 fn side(line: Option<&DiffLine>, no: Option<usize>, bg: Option<Hsla>, st: Vec<(std::ops::Range<usize>, HighlightStyle)>, cx: &App) -> Div {
     let t = cx.theme();
@@ -64,6 +69,10 @@ fn side(line: Option<&DiffLine>, no: Option<usize>, bg: Option<Hsla>, st: Vec<(s
 
 /// 渲染左右对比。`max_lines` 限制渲染的对数;`lang` 决定语法着色(左右两栏各自解析,旧 / 新文件互不干扰)。
 pub fn render_split(lines: &[DiffLine], max_lines: usize, lang: &str, cx: &App) -> Div {
+    // 纯新增(新文件)或纯删除:一侧永远是空的,不画空栏,整行只显示有内容的那一侧
+    if is_one_sided(lines) {
+        return crate::diff::render_with(lines, max_lines, false, lang, cx);
+    }
     let t = cx.theme();
     let (add_bg, del_bg) = diff_colors(cx);
     let rows = pair_rows(lines);
@@ -123,6 +132,15 @@ mod tests {
         assert_eq!(rows[1].left.as_ref().unwrap().text, "b");
         assert_eq!(rows[1].right.as_ref().unwrap().text, "X");
         assert!(rows[3].left.is_none() && rows[3].right.as_ref().unwrap().text == "Z");
+    }
+
+    #[::core::prelude::v1::test]
+    fn 整段纯新增或纯删除只留一侧() {
+        assert!(is_one_sided(&compute("", "a\nb\n").0));
+        assert!(is_one_sided(&compute("a\nb\n", "").0));
+        assert!(!is_one_sided(&compute("a\n", "a\nb\n").0));
+        assert!(!is_one_sided(&compute("a\n", "b\n").0));
+        assert!(!is_one_sided(&[]));
     }
 
     #[::core::prelude::v1::test]

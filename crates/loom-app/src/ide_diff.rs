@@ -119,6 +119,8 @@ pub struct DiffTab {
     pub src: DiffSource,
     /// 后台算好前为 `None`
     pub body: Option<DiffBody>,
+    /// 算好后创建的代码区(可选中、可复制的自绘视图,见 `diff_code`)
+    pub code: Option<Entity<crate::diff_code::DiffCode>>,
 }
 
 /// 算好的差异。
@@ -157,7 +159,7 @@ impl IdeView {
     pub fn open_diff(&mut self, src: DiffSource, preview: bool, window: &mut Window, cx: &mut Context<Self>) {
         self.note = None;
         let path = src.pseudo_path();
-        self.diffs.insert(path.clone(), DiffTab { src, body: None });
+        self.diffs.insert(path.clone(), DiffTab { src, body: None, code: None });
         let out = self.tabs.open(&path, preview);
         if let Some(old) = out.replaced {
             self.docs.remove(&old);
@@ -181,6 +183,7 @@ impl IdeView {
         let src = tab.src.clone();
         let max_bytes = u64::from(crate::prefs(cx).scm.diff_max_kb) * 1024;
         let key = path.to_path_buf();
+        let lang = crate::file_tree::language_for(&src.abs());
         cx.spawn(async move |this, cx| {
             let body = cx
                 .background_spawn(async move {
@@ -200,6 +203,11 @@ impl IdeView {
                 .await;
             let _ = this.update(cx, |this, cx| {
                 if let Some(tab) = this.diffs.get_mut(&key) {
+                    if body.note.is_none() {
+                        let split = crate::prefs(cx).scm.diff_split;
+                        let (hunks, tail) = (body.hunks.clone(), body.hidden_tail);
+                        tab.code = Some(cx.new(|cx| crate::diff_code::DiffCode::new(hunks, tail, lang.to_string(), split, cx)));
+                    }
                     tab.body = Some(body);
                     cx.notify();
                 }
@@ -213,7 +221,6 @@ impl IdeView {
         let t = cx.theme().clone();
         let Some(tab) = self.diffs.get(path) else { return div().into_any_element() };
         let split = crate::prefs(cx).scm.diff_split;
-        let lang = crate::file_tree::language_for(&tab.src.abs());
         let group_label = match (&tab.src.rev, tab.src.group) {
             (Some((hash, _)), _) => format!("提交 {}", hash.chars().take(7).collect::<String>()),
             (None, Group::Staged) => "暂存的更改".to_string(),
@@ -235,19 +242,14 @@ impl IdeView {
         let body: AnyElement = match &tab.body {
             None => div().p_4().text_size(px(12.)).text_color(t.muted_foreground).child("正在计算差异…").into_any_element(),
             Some(b) if b.note.is_some() => div().p_4().text_size(px(12.)).text_color(t.muted_foreground).child(b.note.clone().unwrap_or_default()).into_any_element(),
-            Some(b) => {
-                let sep = |n: usize| {
-                    div().h(px(22.)).w_full().flex().items_center().justify_center().bg(t.muted.opacity(0.5)).text_size(px(11.)).text_color(t.muted_foreground)
-                        .child(format!("⋯ 已折叠 {n} 行未更改"))
-                };
-                v_flex().w_full()
-                    .children(b.hunks.iter().flat_map(|h| {
-                        let part = if split { crate::diff_split::render_split(&h.lines, usize::MAX, &lang, cx) } else { crate::diff::render_with(&h.lines, usize::MAX, false, &lang, cx) };
-                        [(h.hidden_before > 0).then(|| sep(h.hidden_before).into_any_element()), Some(part.into_any_element())]
-                    }).flatten())
-                    .when(b.hidden_tail > 0, |d| d.child(sep(b.hidden_tail)))
-                    .into_any_element()
-            }
+            Some(_) => match tab.code.clone() {
+                // 自绘的代码区:可选中、可复制;偏好(左右 / 统一)或主题变了在这里同步
+                Some(code) => {
+                    code.update(cx, |c, cx| c.sync(split, cx));
+                    code.into_any_element()
+                }
+                None => div().into_any_element(),
+            },
         };
         v_flex().size_full().child(header)
             .child(div().id(SharedString::from(format!("diffv-{}", path.to_string_lossy()))).flex_1().min_h_0().overflow_y_scroll().child(body))
