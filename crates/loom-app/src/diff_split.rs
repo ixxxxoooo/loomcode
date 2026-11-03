@@ -3,10 +3,8 @@
 //!
 //! @author ixxxxoooo
 
-use crate::diff::{DiffLine, line_styles};
-use crate::theme::diff_colors;
-use crate::ui::MONO;
-use gpui_kit::component::{ActiveTheme, h_flex, v_flex};
+use crate::diff::DiffLine;
+use gpui_kit::component::{ActiveTheme, h_flex};
 use gpui_kit::prelude::FluentBuilder as _;
 use gpui_kit::*;
 use similar::ChangeTag;
@@ -50,54 +48,6 @@ pub fn pair_rows(lines: &[DiffLine]) -> Vec<SplitRow> {
     rows
 }
 
-/// 整段差异都是新增、或都是删除(没有任何未改动行 / 另一种改动):左右对比时有一侧永远是空的。
-pub fn is_one_sided(lines: &[DiffLine]) -> bool {
-    !lines.is_empty() && (lines.iter().all(|l| l.tag == ChangeTag::Insert) || lines.iter().all(|l| l.tag == ChangeTag::Delete))
-}
-
-/// 一侧的单元格:行号 + 带高亮的文本;`None` 画成留空的斜纹底(这里用淡底代替)。
-fn side(line: Option<&DiffLine>, no: Option<usize>, bg: Option<Hsla>, st: Vec<(std::ops::Range<usize>, HighlightStyle)>, cx: &App) -> Div {
-    let t = cx.theme();
-    let cell = h_flex().flex_1().min_w_0().overflow_hidden();
-    match line {
-        None => cell.bg(t.muted.opacity(0.35)).child(div().w(px(36.)).flex_none()).child(div().flex_1().child(" ")),
-        Some(l) => cell.when_some(bg, |d, b| d.bg(b))
-            .child(div().w(px(36.)).flex_none().px_1().text_right().text_color(t.muted_foreground).child(no.map(|n| n.to_string()).unwrap_or_default()))
-            .child(div().flex_1().min_w_0().px_1().pr_2().overflow_hidden().whitespace_nowrap().text_color(t.foreground).child(StyledText::new(l.text.clone()).with_highlights(st))),
-    }
-}
-
-/// 渲染左右对比。`max_lines` 限制渲染的对数;`lang` 决定语法着色(左右两栏各自解析,旧 / 新文件互不干扰)。
-pub fn render_split(lines: &[DiffLine], max_lines: usize, lang: &str, cx: &App) -> Div {
-    // 纯新增(新文件)或纯删除:一侧永远是空的,不画空栏,整行只显示有内容的那一侧
-    if is_one_sided(lines) {
-        return crate::diff::render_with(lines, max_lines, false, lang, cx);
-    }
-    let t = cx.theme();
-    let (add_bg, del_bg) = diff_colors(cx);
-    let rows = pair_rows(lines);
-    let shown = rows.len().min(max_lines);
-    let left: Vec<DiffLine> = rows[..shown].iter().filter_map(|r| r.left.clone()).collect();
-    let right: Vec<DiffLine> = rows[..shown].iter().filter_map(|r| r.right.clone()).collect();
-    let (mut ls, mut rs) = (line_styles(&left, lang, cx).into_iter(), line_styles(&right, lang, cx).into_iter());
-    let mut col = v_flex().w_full().overflow_hidden().font_family(MONO).text_size(px(12.));
-    for r in &rows[..shown] {
-        let lst = r.left.as_ref().and_then(|_| ls.next()).unwrap_or_default();
-        let rst = r.right.as_ref().and_then(|_| rs.next()).unwrap_or_default();
-        let (lbg, rbg) = (r.left.as_ref().filter(|l| l.tag == ChangeTag::Delete).map(|_| del_bg), r.right.as_ref().filter(|l| l.tag == ChangeTag::Insert).map(|_| add_bg));
-        col = col.child(
-            h_flex().w_full()
-                .child(side(r.left.as_ref(), r.left.as_ref().and_then(|l| l.old_no), lbg, lst, cx))
-                .child(div().w(px(1.)).flex_none().self_stretch().bg(t.border))
-                .child(side(r.right.as_ref(), r.right.as_ref().and_then(|l| l.new_no), rbg, rst, cx)),
-        );
-    }
-    if rows.len() > shown {
-        col = col.child(div().px_2().py_1().text_color(t.muted_foreground).child(format!("… 还有 {} 行未显示", rows.len() - shown)));
-    }
-    col
-}
-
 /// 「左右 / 统一」切换条:点哪个就把偏好改成哪个(经工作台保存并让所有差异块一起变)。
 pub fn mode_bar(split: bool, cx: &App) -> Div {
     let t = cx.theme();
@@ -132,15 +82,6 @@ mod tests {
         assert_eq!(rows[1].left.as_ref().unwrap().text, "b");
         assert_eq!(rows[1].right.as_ref().unwrap().text, "X");
         assert!(rows[3].left.is_none() && rows[3].right.as_ref().unwrap().text == "Z");
-    }
-
-    #[::core::prelude::v1::test]
-    fn 整段纯新增或纯删除只留一侧() {
-        assert!(is_one_sided(&compute("", "a\nb\n").0));
-        assert!(is_one_sided(&compute("a\nb\n", "").0));
-        assert!(!is_one_sided(&compute("a\n", "a\nb\n").0));
-        assert!(!is_one_sided(&compute("a\n", "b\n").0));
-        assert!(!is_one_sided(&[]));
     }
 
     #[::core::prelude::v1::test]

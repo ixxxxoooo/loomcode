@@ -17,8 +17,9 @@ use crate::ui::MONO;
 use gpui_kit::component::ActiveTheme;
 use gpui_kit::*;
 use similar::ChangeTag;
-use std::cell::RefCell;
+use std::cell::{Cell as StdCell, RefCell};
 use std::collections::HashMap;
+use std::hash::{Hash, Hasher};
 use std::ops::Range;
 use std::rc::Rc;
 
@@ -27,6 +28,20 @@ actions!(diff_code, [DiffCopy, DiffSelectAll]);
 /// 注册快捷键(应用启动时调用一次)。
 pub fn init(cx: &mut App) {
     cx.bind_keys([KeyBinding::new("cmd-c", DiffCopy, Some("DiffCode")), KeyBinding::new("cmd-a", DiffSelectAll, Some("DiffCode"))]);
+    // 内联 Diff 没有焦点,⌘C 靠全局按键观察:焦点不在输入框 / 终端 / 其它可选中文本时,复制它的选区
+    cx.observe_keystrokes(|ev, _, cx| {
+        let k = &ev.keystroke;
+        if k.key != "c" || !k.modifiers.platform || k.modifiers.shift || k.modifiers.alt {
+            return;
+        }
+        if ev.context_stack.iter().any(|c| ["Input", "TextView", "DiffCode", "Terminal", "IdeView"].iter().any(|n| c.contains(n))) {
+            return;
+        }
+        if let Some(text) = inline_selected_text() {
+            cx.write_to_clipboard(ClipboardItem::new_string(text));
+        }
+    })
+    .detach();
 }
 
 /// 行高 / 字号 / 行号栏宽 / 统一视图的 +− 标记栏宽 / 文字左右内边距(像素)。
@@ -48,8 +63,8 @@ pub struct Cell {
 /// 画布上的一行。
 #[derive(Clone)]
 pub enum DRow {
-    /// 被折叠的未改动行数
-    Sep(usize),
+    /// 分隔条(「已折叠 N 行未更改」「还有 N 行未显示」)的文字
+    Sep(String),
     /// 左右对比:(旧, 新),一侧没有内容时为 `None`
     Pair(Option<Cell>, Option<Cell>),
     /// 统一视图或只剩一栏时的一行
@@ -125,6 +140,78 @@ struct Geom {
     shaped: HashMap<(usize, u8), ShapedLine>,
 }
 
+/// 选择的状态机(按下 / 拖动 / 松开):实体版(`DiffCode`)与无状态的内联版共用。
+#[derive(Default, Clone, Copy)]
+struct SelState {
+    sel: Option<Sel>,
+    dragging: bool,
+}
+
+impl SelState {
+    /// 按下:单击落点,双击选词,三击选行。
+    fn press(&mut self, rows: &[DRow], geom: &Geom, pos: Point<Pixels>, clicks: usize) {
+        let Some((side, row, byte)) = hit_test(rows, geom, pos, None) else { return };
+        let len = cell_at(rows, row, side).map_or(0, |c| c.text.len());
+        self.dragging = false;
+        self.sel = Some(match clicks {
+            1 => {
+                self.dragging = true;
+                Sel { side, anchor: (row, byte), head: (row, byte) }
+            }
+            2 => {
+                let (a, b) = cell_at(rows, row, side).map_or((0, 0), |c| word_bounds(&c.text, byte));
+                Sel { side, anchor: (row, a), head: (row, b) }
+            }
+            _ => Sel { side, anchor: (row, 0), head: (row, len) },
+        });
+    }
+
+    /// 拖动:终点跟着鼠标,固定在按下时的那一栏。返回选区是否变了。
+    fn drag(&mut self, rows: &[DRow], geom: &Geom, pos: Point<Pixels>) -> bool {
+        if !self.dragging {
+            return false;
+        }
+        let Some(side) = self.sel.map(|s| s.side) else { return false };
+        let Some((_, row, byte)) = hit_test(rows, geom, pos, Some(side)) else { return false };
+        if let Some(s) = self.sel.as_mut() {
+            s.head = (row, byte);
+        }
+        true
+    }
+
+    /// 松开:没拖动(起点 = 终点)就清掉选区,点一下取消选择。
+    fn release(&mut self) {
+        if !self.dragging {
+            return;
+        }
+        self.dragging = false;
+        if self.sel.is_some_and(|s| s.anchor == s.head) {
+            self.sel = None;
+        }
+    }
+}
+
+/// 窗口坐标 → (栏, 行, 字节偏移)。`force_side` 拖动时固定在按下时的那一栏。
+fn hit_test(rows: &[DRow], g: &Geom, pos: Point<Pixels>, force_side: Option<u8>) -> Option<(u8, usize, usize)> {
+    if g.cols.is_empty() || rows.is_empty() {
+        return None;
+    }
+    let (lx, ly) = (f32::from(pos.x - g.origin.x), f32::from(pos.y - g.origin.y));
+    let row = ((ly / ROW_H).floor().max(0.) as usize).min(rows.len() - 1);
+    let col = match force_side {
+        Some(s) => *g.cols.iter().find(|c| c.side == s)?,
+        None => *g.cols.iter().find(|c| lx < c.x0 + c.w).or(g.cols.last())?,
+    };
+    let Some(cell) = cell_at(rows, row, col.side) else { return Some((col.side, row, 0)) };
+    let tx = lx - col.tx;
+    let byte = match g.shaped.get(&(row, col.side)) {
+        Some(sh) => sh.closest_index_for_x(px(tx.max(0.))),
+        None if tx <= 0. => 0,
+        None => cell.text.len(),
+    };
+    Some((col.side, row, byte.min(cell.text.len())))
+}
+
 pub struct DiffCode {
     hunks: Vec<Hunk>,
     hidden_tail: usize,
@@ -132,8 +219,7 @@ pub struct DiffCode {
     rows: Rc<Vec<DRow>>,
     layout: Layout,
     dark: bool,
-    sel: Option<Sel>,
-    dragging: bool,
+    st: SelState,
     focus: FocusHandle,
     geom: Rc<RefCell<Geom>>,
 }
@@ -147,7 +233,7 @@ fn build_rows(hunks: &[Hunk], hidden_tail: usize, layout: Layout, lang: &str, cx
     let mut rows = Vec::new();
     for h in hunks {
         if h.hidden_before > 0 {
-            rows.push(DRow::Sep(h.hidden_before));
+            rows.push(DRow::Sep(format!("⋯ 已折叠 {} 行未更改", h.hidden_before)));
         }
         if layout == Layout::Split {
             let pairs = pair_rows(&h.lines);
@@ -173,7 +259,7 @@ fn build_rows(hunks: &[Hunk], hidden_tail: usize, layout: Layout, lang: &str, cx
         }
     }
     if hidden_tail > 0 {
-        rows.push(DRow::Sep(hidden_tail));
+        rows.push(DRow::Sep(format!("⋯ 已折叠 {hidden_tail} 行未更改")));
     }
     rows
 }
@@ -182,13 +268,13 @@ impl DiffCode {
     pub fn new(hunks: Vec<Hunk>, hidden_tail: usize, lang: String, split: bool, cx: &mut Context<Self>) -> Self {
         let layout = Layout::decide(&hunks, split);
         let rows = Rc::new(build_rows(&hunks, hidden_tail, layout, &lang, cx));
-        let mut this = Self { hunks, hidden_tail, lang, rows, layout, dark: cx.theme().is_dark(), sel: None, dragging: false, focus: cx.focus_handle(), geom: Rc::default() };
+        let mut this = Self { hunks, hidden_tail, lang, rows, layout, dark: cx.theme().is_dark(), st: SelState::default(), focus: cx.focus_handle(), geom: Rc::default() };
         // 调试用:LOOM_DIFF_SELECT=1 打开差异标签即全选(截图验证选区绘制)
         if std::env::var_os("LOOM_DIFF_SELECT").is_some() {
             let side = this.default_side();
             let last = this.rows.len().saturating_sub(1);
             let end = this.cell(last, side).map_or(0, |c| c.text.len());
-            this.sel = Some(Sel { side, anchor: (0, 0), head: (last, end) });
+            this.st.sel = Some(Sel { side, anchor: (0, 0), head: (last, end) });
         }
         this
     }
@@ -203,7 +289,7 @@ impl DiffCode {
         self.layout = layout;
         self.dark = dark;
         self.rows = Rc::new(build_rows(&self.hunks, self.hidden_tail, layout, &self.lang, cx));
-        self.sel = None;
+        self.st.sel = None;
         cx.notify();
     }
 
@@ -211,31 +297,9 @@ impl DiffCode {
         cell_at(&self.rows, row, side)
     }
 
-    /// 窗口坐标 → (栏, 行, 字节偏移)。`force_side` 拖动时固定在按下时的那一栏。
-    fn hit(&self, pos: Point<Pixels>, force_side: Option<u8>) -> Option<(u8, usize, usize)> {
-        let g = self.geom.borrow();
-        if g.cols.is_empty() || self.rows.is_empty() {
-            return None;
-        }
-        let (lx, ly) = (f32::from(pos.x - g.origin.x), f32::from(pos.y - g.origin.y));
-        let row = ((ly / ROW_H).floor().max(0.) as usize).min(self.rows.len() - 1);
-        let col = match force_side {
-            Some(s) => *g.cols.iter().find(|c| c.side == s)?,
-            None => *g.cols.iter().find(|c| lx < c.x0 + c.w).or(g.cols.last())?,
-        };
-        let Some(cell) = self.cell(row, col.side) else { return Some((col.side, row, 0)) };
-        let tx = lx - col.tx;
-        let byte = match g.shaped.get(&(row, col.side)) {
-            Some(sh) => sh.closest_index_for_x(px(tx.max(0.))),
-            None if tx <= 0. => 0,
-            None => cell.text.len(),
-        };
-        Some((col.side, row, byte.min(cell.text.len())))
-    }
-
     /// 选中的文字(一栏内按行拼接,没有内容的行跳过)。
     pub fn selected_text(&self) -> Option<String> {
-        selected_text(&self.rows, self.sel.as_ref()?)
+        selected_text(&self.rows, self.st.sel.as_ref()?)
     }
 
     fn default_side(&self) -> u8 {
@@ -369,13 +433,12 @@ fn paint_all(rows: &[DRow], layout: Layout, sel: Option<Sel>, pal: Palette, geom
     for r in first..last {
         let top = bounds.top() + px(r as f32 * ROW_H);
         match &rows[r] {
-            DRow::Sep(n) => {
+            DRow::Sep(label) => {
                 // 先铺一层不透明底盖住左右对比的中缝竖线,再铺分隔条的淡色
                 let band = Bounds::new(point(bounds.left(), top), size(bounds.size.width, px(ROW_H)));
                 window.paint_quad(fill(band, pal.bg));
                 window.paint_quad(fill(band, pal.sep));
-                let label = format!("⋯ 已折叠 {n} 行未更改");
-                let sh = shape(&label, 11., &[(0..label.len(), None)], pal.muted, window);
+                let sh = shape(label, 11., &[(0..label.len(), None)], pal.muted, window);
                 let x = bounds.left() + (bounds.size.width - sh.width) / 2.;
                 let _ = sh.paint(point(x, top), px(ROW_H), TextAlign::Left, None, window, cx);
             }
@@ -439,7 +502,7 @@ impl Render for DiffCode {
             bg: t.background, fg: t.foreground, muted: t.muted_foreground, border: t.border, add_bg, del_bg, add_fg: t.success, del_fg: t.danger,
             blank: t.muted.opacity(0.35), sep: t.muted.opacity(0.5), selection: t.selection,
         };
-        let (rows, layout, sel, geom) = (self.rows.clone(), self.layout, self.sel, self.geom.clone());
+        let (rows, layout, sel, geom) = (self.rows.clone(), self.layout, self.st.sel, self.geom.clone());
         let height = px(self.rows.len() as f32 * ROW_H);
         div().id("diff-code").key_context("DiffCode").track_focus(&self.focus).w_full().h(height).cursor(CursorStyle::IBeam)
             .on_action(cx.listener(|this, _: &DiffCopy, _, cx| {
@@ -448,39 +511,21 @@ impl Render for DiffCode {
                 }
             }))
             .on_action(cx.listener(|this, _: &DiffSelectAll, _, cx| {
-                let side = this.sel.map_or_else(|| this.default_side(), |s| s.side);
+                let side = this.st.sel.map_or_else(|| this.default_side(), |s| s.side);
                 let last = this.rows.len().saturating_sub(1);
                 let end = this.cell(last, side).map_or(0, |c| c.text.len());
-                this.sel = Some(Sel { side, anchor: (0, 0), head: (last, end) });
+                this.st.sel = Some(Sel { side, anchor: (0, 0), head: (last, end) });
                 cx.notify();
             }))
             .on_mouse_down(MouseButton::Left, cx.listener(|this, ev: &MouseDownEvent, window, cx| {
                 window.focus(&this.focus, cx);
-                let Some((side, row, byte)) = this.hit(ev.position, None) else { return };
-                let len = this.cell(row, side).map_or(0, |c| c.text.len());
-                this.dragging = false;
-                this.sel = Some(match ev.click_count {
-                    1 => {
-                        this.dragging = true;
-                        Sel { side, anchor: (row, byte), head: (row, byte) }
-                    }
-                    2 => {
-                        let (a, b) = this.cell(row, side).map_or((0, 0), |c| word_bounds(&c.text, byte));
-                        Sel { side, anchor: (row, a), head: (row, b) }
-                    }
-                    _ => Sel { side, anchor: (row, 0), head: (row, len) },
-                });
+                let (rows, geom) = (this.rows.clone(), this.geom.clone());
+                this.st.press(&rows, &geom.borrow(), ev.position, ev.click_count);
                 cx.notify();
             }))
             .on_mouse_move(cx.listener(|this, ev: &MouseMoveEvent, _, cx| {
-                if !this.dragging {
-                    return;
-                }
-                let Some(side) = this.sel.map(|s| s.side) else { return };
-                if let Some((_, row, byte)) = this.hit(ev.position, Some(side)) {
-                    if let Some(s) = this.sel.as_mut() {
-                        s.head = (row, byte);
-                    }
+                let (rows, geom) = (this.rows.clone(), this.geom.clone());
+                if this.st.drag(&rows, &geom.borrow(), ev.position) {
                     cx.notify();
                 }
             }))
@@ -495,17 +540,123 @@ impl Render for DiffCode {
 }
 
 impl DiffCode {
-    /// 松开鼠标:没拖动(起点 = 终点)就清掉选区,点一下取消选择。
     fn finish_drag(&mut self, cx: &mut Context<Self>) {
-        if !self.dragging {
-            return;
-        }
-        self.dragging = false;
-        if self.sel.is_some_and(|s| s.anchor == s.head) {
-            self.sel = None;
-        }
+        self.st.release();
         cx.notify();
     }
+}
+
+// ---------- 内联版:工具卡 / Agent 右栏里的 Diff(调用点是无状态的渲染函数) ----------
+
+/// 一个内联 Diff 的状态:行、几何、选区。按内容哈希存在线程局部表里,重新渲染时认出同一份。
+struct Inline {
+    rows: Rc<Vec<DRow>>,
+    layout: Layout,
+    geom: Rc<RefCell<Geom>>,
+    st: RefCell<SelState>,
+}
+
+thread_local! {
+    static INLINE: RefCell<HashMap<u64, Rc<Inline>>> = RefCell::new(HashMap::new());
+    /// 当前持有选区的内联 Diff(同一时刻只有一个)
+    static OWNER: StdCell<Option<u64>> = const { StdCell::new(None) };
+}
+
+/// 表里最多保留的内联 Diff 数(超出就清空重来,丢掉选区而已)。
+const INLINE_MAX: usize = 64;
+
+fn inline_selected_text() -> Option<String> {
+    let id = OWNER.get()?;
+    let inl = INLINE.with_borrow(|m| m.get(&id).cloned())?;
+    let sel = inl.st.borrow().sel?;
+    selected_text(&inl.rows, &sel)
+}
+
+fn content_id(lines: &[DiffLine], max_lines: usize, lang: &str, split: bool, dark: bool) -> u64 {
+    let mut h = std::collections::hash_map::DefaultHasher::new();
+    (max_lines, lang, split, dark).hash(&mut h);
+    for l in lines {
+        (l.tag as u8, l.old_no, l.new_no, &l.text).hash(&mut h);
+    }
+    h.finish()
+}
+
+/// 内联 Diff:同样自绘、可拖选 / 双击选词 / 三击选行,选中后 ⌘C 复制(焦点不在输入框时)。
+/// 点 Diff 以外的任何地方取消选择。参数同 `diff::render_flat`(不含顶部的切换条)。
+pub fn inline(lines: &[DiffLine], max_lines: usize, lang: &str, cx: &App) -> AnyElement {
+    inline_with(lines, max_lines, lang, crate::prefs(cx).scm.diff_split, cx)
+}
+
+/// 同 [`inline`],但左右 / 统一由调用方指定(工具卡里的 Diff 固定统一视图)。
+pub fn inline_with(lines: &[DiffLine], max_lines: usize, lang: &str, split: bool, cx: &App) -> AnyElement {
+    let dark = cx.theme().is_dark();
+    let id = content_id(lines, max_lines, lang, split, dark);
+    let inl = INLINE.with_borrow_mut(|m| {
+        if m.len() >= INLINE_MAX && !m.contains_key(&id) {
+            m.clear();
+            OWNER.set(None);
+        }
+        m.entry(id)
+            .or_insert_with(|| {
+                let shown = &lines[..lines.len().min(max_lines)];
+                let hunks = vec![Hunk { hidden_before: 0, lines: shown.to_vec() }];
+                let layout = Layout::decide(&hunks, split);
+                let mut rows = build_rows(&hunks, 0, layout, lang, cx);
+                if lines.len() > shown.len() {
+                    rows.push(DRow::Sep(format!("… 还有 {} 行未显示", lines.len() - shown.len())));
+                }
+                Rc::new(Inline { rows: Rc::new(rows), layout, geom: Rc::default(), st: RefCell::default() })
+            })
+            .clone()
+    });
+    let t = cx.theme();
+    let (add_bg, del_bg) = diff_colors(cx);
+    let pal = Palette {
+        bg: t.background, fg: t.foreground, muted: t.muted_foreground, border: t.border, add_bg, del_bg, add_fg: t.success, del_fg: t.danger,
+        blank: t.muted.opacity(0.35), sep: t.muted.opacity(0.5), selection: t.selection,
+    };
+    let height = px(inl.rows.len() as f32 * ROW_H);
+    let (down, moving, up, up_out, paint) = (inl.clone(), inl.clone(), inl.clone(), inl.clone(), inl);
+    div().id(SharedString::from(format!("inline-diff-{id}"))).w_full().h(height).cursor(CursorStyle::IBeam)
+        .on_mouse_down(MouseButton::Left, move |ev, window, _| {
+            OWNER.set(Some(id));
+            down.st.borrow_mut().press(&down.rows, &down.geom.borrow(), ev.position, ev.click_count);
+            window.refresh();
+        })
+        .on_mouse_move(move |ev, window, _| {
+            if moving.st.borrow_mut().drag(&moving.rows, &moving.geom.borrow(), ev.position) {
+                window.refresh();
+            }
+        })
+        .on_mouse_up(MouseButton::Left, move |_, window, _| {
+            up.st.borrow_mut().release();
+            window.refresh();
+        })
+        .on_mouse_up_out(MouseButton::Left, move |_, window, _| {
+            up_out.st.borrow_mut().release();
+            window.refresh();
+        })
+        .child(
+            canvas(
+                |_, _, _| (),
+                move |bounds, _, window, cx| {
+                    let sel = paint.st.borrow().sel;
+                    paint_all(&paint.rows, paint.layout, sel, pal, &paint.geom, bounds, window, cx);
+                    // 点到这个 Diff 以外的地方:取消选择(也避免 ⌘C 时复制到过期的选区)
+                    let clear = paint.clone();
+                    window.on_mouse_event(move |ev: &MouseDownEvent, phase, window, _| {
+                        if phase == DispatchPhase::Capture && OWNER.get() == Some(id) && !bounds.contains(&ev.position) {
+                            clear.st.borrow_mut().sel = None;
+                            OWNER.set(None);
+                            window.refresh();
+                        }
+                    });
+                },
+            )
+            .absolute()
+            .size_full(),
+        )
+        .into_any_element()
 }
 
 #[cfg(test)]
@@ -550,7 +701,7 @@ mod tests {
     fn 选区文字按栏取并跳过空行() {
         let rows = vec![
             DRow::Pair(Some(cell("old1")), Some(cell("new1"))),
-            DRow::Sep(5),
+            DRow::Sep("x".into()),
             DRow::Pair(None, Some(cell("new2"))),
             DRow::Pair(Some(cell("old3")), Some(cell("new3"))),
         ];
@@ -581,6 +732,17 @@ mod tests {
         let c = "名称 = 值";
         assert_eq!(word_bounds(c, 3), (0, 6));
         assert_eq!(word_bounds("", 0), (0, 0));
+    }
+
+    #[::core::prelude::v1::test]
+    fn 内联_diff_的标识随内容与模式变化() {
+        let a = compute("a\n", "b\n").0;
+        let b = compute("a\n", "c\n").0;
+        let id = |l: &[DiffLine], split, dark| content_id(l, 120, "rust", split, dark);
+        assert_eq!(id(&a, true, false), id(&a, true, false));
+        assert_ne!(id(&a, true, false), id(&b, true, false));
+        assert_ne!(id(&a, true, false), id(&a, false, false));
+        assert_ne!(id(&a, true, false), id(&a, true, true));
     }
 
     #[::core::prelude::v1::test]

@@ -1,9 +1,6 @@
 //! 行级 Diff 渲染(统一视图)。
 
-use crate::theme::diff_colors;
-use crate::ui::MONO;
-use gpui_kit::component::{ActiveTheme, h_flex, v_flex};
-use gpui_kit::prelude::FluentBuilder as _;
+use gpui_kit::component::{ActiveTheme, v_flex};
 use gpui_kit::*;
 use similar::{ChangeTag, TextDiff};
 
@@ -39,17 +36,19 @@ pub fn compute(old: &str, new: &str) -> (Vec<DiffLine>, usize, usize) {
     (lines, added, removed)
 }
 
-/// 渲染 Diff;`max_lines` 限制渲染行数(超长 Diff 先显示前 N 行)。
+/// 渲染 Diff(统一视图,带圆角外框;工具卡里用);`max_lines` 限制渲染行数(超长 Diff 先显示前 N 行)。
+/// 自绘、可选中复制(见 `diff_code::inline`)。
 pub fn render(lines: &[DiffLine], max_lines: usize, lang: &str, cx: &App) -> Div {
-    render_with(lines, max_lines, true, lang, cx)
+    let t = cx.theme();
+    div().w_full().overflow_hidden().rounded(px(8.)).border_1().border_color(t.border).child(crate::diff_code::inline_with(lines, max_lines, lang, false, cx))
 }
 
 /// 无外框版本(嵌在已有卡片里时用,避免框中框):整行底色直接铺到卡片边缘。
 /// 按偏好(设置 → 源代码管理)选左右对比或统一视图,顶部带切换条。
+/// 自绘、可选中复制(拖选 / 双击选词 / 三击选行 / ⌘C),见 `diff_code::inline`。
 pub fn render_flat(lines: &[DiffLine], max_lines: usize, lang: &str, cx: &App) -> Div {
     let split = crate::prefs(cx).scm.diff_split;
-    let body = if split { crate::diff_split::render_split(lines, max_lines, lang, cx) } else { render_with(lines, max_lines, false, lang, cx) };
-    v_flex().w_full().child(crate::diff_split::mode_bar(split, cx)).child(body)
+    v_flex().w_full().child(crate::diff_split::mode_bar(split, cx)).child(crate::diff_code::inline(lines, max_lines, lang, cx))
 }
 
 /// 给要显示的各行算语法高亮:把这些行拼成一份文本整体解析,再按行切回(每行一组相对偏移的样式)。
@@ -74,37 +73,6 @@ pub(crate) fn line_styles(lines: &[DiffLine], lang: &str, cx: &App) -> Vec<Vec<(
         start = end + 1;
     }
     out
-}
-
-pub(crate) fn render_with(lines: &[DiffLine], max_lines: usize, bordered: bool, lang: &str, cx: &App) -> Div {
-    let t = cx.theme();
-    let (add_bg, del_bg) = diff_colors(cx);
-    let shown = lines.len().min(max_lines);
-    let styles = line_styles(&lines[..shown], lang, cx);
-    let mut col = v_flex().w_full().overflow_hidden().font_family(MONO).text_size(px(12.))
-        .when(bordered, |d| d.rounded(px(8.)).border_1().border_color(t.border));
-    for (line, st) in lines[..shown].iter().zip(styles) {
-        let (bg, mark, fg) = match line.tag {
-            ChangeTag::Insert => (Some(add_bg), "+", t.success),
-            ChangeTag::Delete => (Some(del_bg), "−", t.danger),
-            ChangeTag::Equal => (None, " ", t.muted_foreground),
-        };
-        let no = line.new_no.or(line.old_no).map(|n| n.to_string()).unwrap_or_default();
-        col = col.child(
-            h_flex()
-                .w_full()
-                .when_some(bg, |d, b| d.bg(b))
-                .child(div().w(px(36.)).flex_none().px_1().text_right().text_color(t.muted_foreground).child(no))
-                .child(div().w(px(14.)).flex_none().text_color(fg).child(mark))
-                .child(div().flex_1().min_w_0().pr_2().text_color(t.foreground).child(StyledText::new(line.text.clone()).with_highlights(st))),
-        );
-    }
-    if lines.len() > shown {
-        col = col.child(
-            div().px_2().py_1().text_color(t.muted_foreground).child(format!("… 还有 {} 行未显示", lines.len() - shown)),
-        );
-    }
-    col
 }
 
 #[cfg(test)]
