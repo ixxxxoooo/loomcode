@@ -471,6 +471,9 @@ pub(crate) fn build_doc(path: &Path, text: String, mtime: Option<std::time::Syst
     let theme = cx.theme().highlight_theme.clone();
     let minimap = std::rc::Rc::new(crate::ide_minimap::build_for(&text, language_for(path), prefs.syntax_highlight, &theme));
     let editor = crate::ide_prefs::new_editor(language_for(path), text, true, &prefs, window, cx);
+    // 关掉编辑器库自带的缩进线:它按「Tab = 缩进宽度个空格」估算位置,Tab 缩进的文件里会与括号线、当前块线错开成两条;
+    // 改由 `ide_guides::base_overlay` 按真实布局自己画
+    editor.update(cx, |e, cx| e.set_indent_guides(false, window, cx));
     // 右键菜单由我们自己的主题化弹出菜单(`ide_menu.rs`)接管,关掉编辑器自带的系统菜单
     editor.update(cx, |e, _| e.set_context_menu_enabled(false));
     // 编辑后标记未保存并固定预览标签;光标移动时刷新状态条
@@ -642,6 +645,7 @@ impl IdeView {
                 let prefs = crate::prefs(cx).editor;
                 let gutter = self.blame_gutter.then(|| crate::ide_blame::gutter(doc, &self.blame_ui, cx)).flatten();
                 let inline = crate::ide_blame::inline_blame(doc, cx);
+                let base_guide = crate::ide_guides::base_overlay(doc, cx);
                 let guide = crate::ide_guides::overlay(doc, cx);
                 let pair_guides = crate::prefs(cx).editor.bracket_guides.then(|| crate::ide_pairs::guides(doc));
                 let hover = crate::ide_hover::hover_card(doc, &path, cx.weak_entity(), window, cx);
@@ -680,6 +684,7 @@ impl IdeView {
                                 .child(div().size_full().context_menu(ctx_menu).child(Editor::new(&editor).bordered(false).appearance(false).size_full())))
                     })
                     .children(mm)
+                    .child(base_guide)
                     .child(guide)
                     .children(pair_guides)
                     .children(inline)

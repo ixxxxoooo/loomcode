@@ -90,6 +90,111 @@ pub fn text_view(ed: &EditorState, canvas: Bounds<Pixels>) -> Option<Bounds<Pixe
     Some(Bounds::new(point(tb.origin.x - ed.scroll_offset().x, canvas.top()), size(tb.size.width, canvas.size.height)))
 }
 
+/// 每一行的缩进层数(底层淡色缩进线用):缩进列数按 `tab` 向上取整,空白行沿用上一行的层数。
+///
+/// 参数:`indents` 逐行的缩进列数(空白行为 `None`);`tab` 缩进宽度。
+pub fn base_levels(indents: impl IntoIterator<Item = Option<usize>>, tab: usize) -> Vec<usize> {
+    let tab = tab.max(1);
+    let mut last = 0;
+    indents.into_iter().map(|i| {
+        if let Some(i) = i {
+            last = i.div_ceil(tab);
+        }
+        last
+    }).collect()
+}
+
+/// 底层淡色缩进线的矩形(窗口坐标):每一层一条,连续有该层缩进的行合并成一段。
+///
+/// 为什么自己画:编辑器库自带的缩进线按「一个 Tab = 缩进宽度个空格」估算横坐标,
+/// 而 Tab 字符实际占的宽度因字体而异(等宽字体里常常窄一些),Tab 缩进的文件(Go 等)里线会逐层右偏,
+/// 与括号配对线、当前块线并排成两条。这里的 x 取自编辑器真实布局(`range_to_bounds`),三者必然对齐。
+/// 位置取自编辑器**最近一次绘制**的布局,必须在绘制阶段调用。
+fn base_rects(ed: &EditorState, tab: usize, canvas: Bounds<Pixels>) -> Vec<Bounds<Pixels>> {
+    let ts = TabSize { tab_size: tab, hard_tabs: false };
+    let (Some(vis), Some(tb)) = (ed.visible_row_range(), text_view(ed, canvas)) else { return Vec::new() };
+    let text = ed.text();
+    let end = vis.end.min(text.lines_len());
+    if vis.start >= end {
+        return Vec::new();
+    }
+    let rows: Vec<usize> = (vis.start..end).collect();
+    let indents: Vec<Option<usize>> = rows.iter().map(|&l| {
+        let line = text.slice_line(l);
+        (!line.chars().all(char::is_whitespace)).then(|| ts.indent_count(&line))
+    }).collect();
+    let levels = base_levels(indents.iter().copied(), tab);
+    let deepest = levels.iter().copied().max().unwrap_or(0);
+    if deepest == 0 {
+        return Vec::new();
+    }
+    // 每行的上 / 下沿(取行首与行尾的布局;自动换行的长行会覆盖整段)
+    let ys: Vec<Option<(Pixels, Pixels)>> = rows.iter().map(|&l| {
+        let top = ed.range_to_bounds(&{ let o = text.line_start_offset(l); o..o })?;
+        let bottom = ed.range_to_bounds(&{ let o = text.line_end_offset(l); o..o })?;
+        Some((top.origin.y, bottom.origin.y + bottom.size.height))
+    }).collect();
+    let mut out = Vec::new();
+    for k in 0..deepest {
+        let col = k * tab;
+        // 量 x:找一行自己真的缩进过这一层的,数到该列的字节位置
+        let Some(x) = rows.iter().zip(&indents).find_map(|(&l, i)| {
+            if !i.is_some_and(|i| i > col) {
+                return None;
+            }
+            let line = text.slice_line(l);
+            let (mut width, mut bytes) = (0, 0);
+            for ch in line.chars() {
+                if width >= col {
+                    break;
+                }
+                width += if ch == '\t' { tab } else { 1 };
+                bytes += ch.len_utf8();
+            }
+            let at = text.line_start_offset(l) + bytes;
+            ed.range_to_bounds(&(at..at)).map(|b| b.origin.x)
+        }) else { continue };
+        if x < tb.left() {
+            continue;
+        }
+        let mut run: Option<(Pixels, Pixels)> = None;
+        let mut flush = |run: &mut Option<(Pixels, Pixels)>| {
+            if let Some((y0, y1)) = run.take() {
+                let (y0, y1) = (y0.max(tb.top()), y1.min(tb.bottom()));
+                if y1 > y0 {
+                    out.push(Bounds::new(point(x - px(0.5), y0), size(px(1.), y1 - y0)));
+                }
+            }
+        };
+        for (lv, y) in levels.iter().zip(&ys) {
+            match (*lv > k, y) {
+                (true, Some((top, bottom))) => run = Some((run.map_or(*top, |r| r.0), *bottom)),
+                _ => flush(&mut run),
+            }
+        }
+        flush(&mut run);
+    }
+    out
+}
+
+/// 底层淡色缩进线叠层(代替编辑器库自带的缩进线,见 [`base_rects`]);颜色同库自带线。
+pub fn base_overlay(doc: &IdeDoc, cx: &App) -> AnyElement {
+    let tab = usize::from(crate::prefs(cx).editor.tab_size.clamp(1, 16));
+    let editor = doc.editor.clone();
+    canvas(
+        |_, _, _| (),
+        move |canvas, _, window, cx| {
+            let color = cx.theme().border.opacity(0.85);
+            for r in base_rects(editor.read(cx), tab, canvas) {
+                window.paint_quad(fill(r, color));
+            }
+        },
+    )
+    .absolute()
+    .size_full()
+    .into_any_element()
+}
+
 /// 当前块高亮线的矩形(窗口坐标);光标在顶层、块不在视口里时为 `None`。
 ///
 /// 位置取自编辑器**最近一次绘制**的布局,所以必须在绘制阶段调用(见 `overlay`)。
@@ -204,6 +309,13 @@ mod tests {
         assert_eq!(guide(src, 1), Some(Guide { col: 0, start: 1, end: 3 }));
         // 光标在块内的空白行也能取到
         assert_eq!(guide(src, 2), Some(Guide { col: 0, start: 1, end: 3 }));
+    }
+
+    #[::core::prelude::v1::test]
+    fn 缩进层数_按宽度向上取整_空白行沿用上一行() {
+        assert_eq!(base_levels([Some(0), Some(4), Some(8), None, Some(6), Some(0), None], 4), vec![0, 1, 2, 2, 2, 0, 0]);
+        // Tab 缩进:每个 Tab 记 tab 列,三层 = 12 列
+        assert_eq!(base_levels([Some(12)], 4), vec![3]);
     }
 
     #[::core::prelude::v1::test]
