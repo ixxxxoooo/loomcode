@@ -240,7 +240,7 @@ impl Render for Palette {
             .bg(t.background.opacity(0.35))
             .child(div().absolute().inset_0().id("palette-backdrop").on_click(cx.listener(|this, _, _, cx| this.close(cx))))
             .child(
-                v_flex().relative().w(px(620.)).max_h(px(520.)).rounded(px(14.)).border_1().border_color(t.border).bg(t.popover).shadow_lg().overflow_hidden()
+                v_flex().relative().occlude().w(px(620.)).max_h(px(520.)).rounded(px(14.)).border_1().border_color(t.border).bg(t.popover).shadow_lg().overflow_hidden()
                     .capture_action(cx.listener(|this, _: &MoveUp, _, cx| this.move_sel(-1, cx)))
                     .capture_action(cx.listener(|this, _: &MoveDown, _, cx| this.move_sel(1, cx)))
                     .capture_action(cx.listener(|this, _: &crate::workbench::Escape, _, cx| this.close(cx)))
