@@ -410,8 +410,11 @@ impl Translator {
         match str_of(ev, "type") {
             "message_start" => {
                 self.cur_msg = ev["message"]["id"].as_str().unwrap_or_default().into();
-                Vec::new()
+                // 每次调用模型的开头就带着当前上下文的 token 数:回合进行中(长工具链)也让圆环实时跟着涨
+                self.live_context(&ev["message"]["usage"], parent.is_none())
             }
+            // 一条消息结束时的累计用量(含这条的输出)
+            "message_delta" => self.live_context(&ev["usage"], parent.is_none()),
             "content_block_start" => {
                 // ExitPlanMode:计划正文开始生成就让卡片出现在正文里(文字随 input_json_delta 补全),
                 // 不必等整段生成完、权限请求到达才出现。回放历史没有流事件,不走这里
@@ -781,6 +784,17 @@ impl Translator {
             patch.append_content.push(ToolContent::Image { label, path });
         }
         vec![AgentEvent::ToolUpdate { parent: parent.or(info.parent), id, patch }]
+    }
+
+    /// 回合进行中用某次 API 调用的用量刷新「当前上下文占用」:只认主对话(子 Agent 有自己的上下文),
+    /// 数没变或没有输入侧用量时不发事件(免得每个流事件都重绘)。
+    fn live_context(&mut self, usage: &Value, main: bool) -> Vec<AgentEvent> {
+        let used = context_tokens(usage);
+        if !main || used == 0 || used == self.usage.context_used {
+            return Vec::new();
+        }
+        self.usage.context_used = used;
+        vec![AgentEvent::Usage(self.usage.clone())]
     }
 
     // ---------- result / 限额 ----------
@@ -1707,6 +1721,23 @@ mod tests {
     }
 
     #[test]
+    fn 回合进行中每次调用模型都刷新上下文占用() {
+        let mut t = Translator::new("/p");
+        let start = |t: &mut Translator, input: u64, cache: u64| plan_stream(t, json!({"type":"message_start","message":{"id":"m1","usage":{"input_tokens":input,"cache_read_input_tokens":cache,"cache_creation_input_tokens":0,"output_tokens":1}}}));
+        let ev = start(&mut t, 10, 5_000);
+        assert!(matches!(&ev[..], [AgentEvent::Usage(u)] if u.context_used == 5_011));
+        // 数没变不重复发;工具链里下一次调用上下文变大了就更新
+        assert!(start(&mut t, 10, 5_000).is_empty());
+        let ev = start(&mut t, 10, 9_000);
+        assert!(matches!(&ev[..], [AgentEvent::Usage(u)] if u.context_used == 9_011));
+        // 没有输入侧用量(只有输出)的 message_delta 不动它
+        assert!(plan_stream(&mut t, json!({"type":"message_delta","usage":{"output_tokens":200}})).is_empty());
+        // 带完整用量的 message_delta 把输出算进去
+        let ev = plan_stream(&mut t, json!({"type":"message_delta","usage":{"input_tokens":10,"cache_read_input_tokens":9000,"output_tokens":200}}));
+        assert!(matches!(&ev[..], [AgentEvent::Usage(u)] if u.context_used == 9_210));
+    }
+
+    #[test]
     fn 计划生成一半回合结束按未批准收尾() {
         let mut t = Translator::new("/p");
         plan_stream(&mut t, json!({"type":"content_block_start","index":0,"content_block":{"type":"tool_use","id":"p2","name":"ExitPlanMode","input":{}}}));
@@ -1738,6 +1769,15 @@ mod tests {
         assert_eq!(plans, vec![("# 一", Some(false)), ("# 二", Some(true)), ("# 三", None)]);
     }
 
+}
+
+/// 一次 API 调用占用的上下文:输入 + 缓存读 + 缓存写 + 输出(都为 0 时返回 0,表示这份用量里没有输入侧数据)。
+fn context_tokens(usage: &Value) -> u64 {
+    let n = |k: &str| usage.get(k).and_then(Value::as_u64).unwrap_or(0);
+    if n("input_tokens") + n("cache_read_input_tokens") + n("cache_creation_input_tokens") == 0 {
+        return 0;
+    }
+    n("input_tokens") + n("cache_read_input_tokens") + n("cache_creation_input_tokens") + n("output_tokens")
 }
 
 /// 当前 Unix 秒。
