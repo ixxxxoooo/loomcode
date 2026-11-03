@@ -55,13 +55,13 @@ impl RightPanel {
     /// 标签条:各标签(悬停显示关闭)+「+」新增菜单 + 末尾的外部控件。
     pub(crate) fn tab_bar(&self, changes: usize, window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
         let t = cx.theme().clone();
-        let (cur, open, trailing) = (self.tab, self.open.clone(), self.trailing.clone());
+        let (cur, trailing) = (self.tab, self.trailing.clone());
         let weak = cx.entity().downgrade();
         let menu = move |menu: PopupMenu, _: &mut Window, _: &mut Context<PopupMenu>| {
             let mut menu = menu;
             for rt in RightTab::ALL {
-                let (w, on) = (weak.clone(), open.contains(&rt));
-                menu = menu.item(PopupMenuItem::new(format!("{}  ·  {}", rt.label(), rt.detail())).checked(on).on_click(move |_, _, cx| {
+                let w = weak.clone();
+                menu = menu.item(PopupMenuItem::new(rt.label()).icon(rt.icon()).on_click(move |_, _, cx| {
                     let _ = w.update(cx, |p, cx| p.open_tab(rt, cx));
                 }));
             }
