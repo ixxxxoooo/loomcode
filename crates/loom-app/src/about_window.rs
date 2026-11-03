@@ -135,12 +135,13 @@ impl Render for AboutView {
         let now = std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH).map_or(0, |d| d.as_secs() as i64);
         let (state, status) = { let w = self.wb.read(cx); (w.update.clone(), w.update_text()) };
         let wb = self.wb.clone();
-        let busy = matches!(state, UpdateState::Checking | UpdateState::Downloading(_));
+        let progress = match &state { UpdateState::Downloading(_, p) => p.fraction(), _ => None };
+        let busy = matches!(state, UpdateState::Checking | UpdateState::Downloading(..));
         let highlight = matches!(state, UpdateState::Available(_) | UpdateState::Ready(_));
         let label = match &state {
             UpdateState::Checking => "检查中…".to_string(),
             UpdateState::Available(i) => format!("下载更新 v{}", i.version),
-            UpdateState::Downloading(_) => "下载中…".to_string(),
+            UpdateState::Downloading(_, p) => match p { loom_config::update::Progress::Downloading { .. } => format!("下载中 {}", p.short()), _ => p.short() },
             UpdateState::Ready(_) => "重启更新".to_string(),
             _ => "检查更新…".to_string(),
         };
@@ -165,6 +166,11 @@ impl Render for AboutView {
             .child(div().mt_2().text_size(px(15.)).text_color(t.muted_foreground).child(format!("版本 {}", version_line())))
             .when(!time.is_empty(), |d| d.child(div().mt_1().text_size(px(12.)).text_color(t.muted_foreground.opacity(0.85)).child(time)))
             .child(div().mt_4().flex().gap_2().child(update_btn).child(copy_btn))
+            // 下载进度条(知道总大小时;不知道就只有下面那行文字)
+            .when_some(progress, |d, f| d.child(
+                div().mt_2().w(px(240.)).h(px(4.)).rounded_full().bg(t.muted).overflow_hidden()
+                    .child(div().h_full().w(relative(f)).rounded_full().bg(t.primary)),
+            ))
             .child(div().mt_2().h(px(16.)).text_size(px(12.)).text_color(if matches!(state, UpdateState::Failed(_)) { t.danger } else { t.muted_foreground }).max_w(px(340.)).truncate()
                 .child(if matches!(state, UpdateState::Idle) { String::new() } else { status }))
             .child(div().flex_1())

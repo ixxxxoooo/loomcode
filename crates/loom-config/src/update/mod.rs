@@ -7,7 +7,7 @@
 
 mod install;
 
-pub use install::{StagedUpdate, download, launch_replacer, load_staged, take_install_failure};
+pub use install::{Progress, StagedUpdate, download, download_with_progress, format_bytes, launch_replacer, load_staged, take_install_failure};
 
 use serde::{Deserialize, Serialize};
 use std::time::Duration;

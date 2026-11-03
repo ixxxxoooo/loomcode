@@ -467,6 +467,13 @@ impl Workbench {
         if !demo {
             wb.detect_claude(cx);
             wb.startup_update(cx);
+        } else if std::env::var_os("LOOM_UPDATE_DEMO").is_some() {
+            // 演示模式默认不管更新;调试用的下载进度模拟除外
+            wb.startup_update(cx);
+        }
+        // 调试用:LOOM_ABOUT=1 启动即打开「关于」窗口
+        if std::env::var_os("LOOM_ABOUT").is_some() {
+            cx.defer(crate::about_window::open);
         }
         if let Ok(tab) = std::env::var("LOOM_SETTINGS") {
             wb.page = Page::Settings;

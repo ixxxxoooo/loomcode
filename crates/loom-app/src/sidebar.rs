@@ -216,16 +216,20 @@ pub fn render(wb: &Workbench, cx: &mut Context<Workbench>) -> impl IntoElement {
 fn update_capsule(wb: &Workbench, cx: &mut Context<Workbench>) -> Option<Stateful<Div>> {
     use crate::updater::UpdateState as U;
     let t = cx.theme().clone();
-    let (text, tip): (String, &'static str) = match &wb.update {
-        U::Available(i) => (format!("更新 v{}", i.version), "点击下载新版本"),
-        U::Downloading(_) => ("下载中…".into(), "正在下载并校验新版本"),
-        U::Ready(_) => ("重启更新".into(), "新版本已下载并校验,点击重启完成更新"),
+    let (text, tip): (String, String) = match &wb.update {
+        U::Available(i) => (format!("更新 v{}", i.version), "点击下载新版本".into()),
+        U::Downloading(i, p) => (
+            // 下载阶段带上百分比(或已下载量),校验 / 解包阶段直接写阶段名
+            match p { loom_config::update::Progress::Downloading { .. } => format!("下载中 {}", p.short()), _ => p.short() },
+            format!("v{} · {}", i.version, p.detail()),
+        ),
+        U::Ready(_) => ("重启更新".into(), "新版本已下载并校验,点击重启完成更新".into()),
         _ => return None,
     };
-    let clickable = !matches!(wb.update, U::Downloading(_));
+    let clickable = !matches!(wb.update, U::Downloading(..));
     Some(
         div().id("update-capsule").when(clickable, |d| d.cursor_pointer()).child(crate::ui::pill(text, t.primary_foreground, t.primary))
-            .tooltip(move |window, cx| gpui_kit::component::tooltip::Tooltip::new(tip).build(window, cx))
+            .tooltip(move |window, cx| gpui_kit::component::tooltip::Tooltip::new(tip.clone()).build(window, cx))
             .on_click(cx.listener(|this, _, _, cx| match this.update {
                 U::Available(_) => this.download_update(cx),
                 U::Ready(_) => this.install_update(cx),

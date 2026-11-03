@@ -194,7 +194,7 @@ pub fn about(wb: &Workbench, cx: &mut Context<Workbench>) -> AnyElement {
         ], cx))
         .child(group("更新", rows![
             row("当前状态", &wb.update_text(), update_buttons(wb, cx), cx),
-            switch_row("about-auto-update", "启动时自动检查更新", "只提示新版本,下载与重启更新由你点击确认", wb.settings.auto_update_check, cx, |this, v, cx| this.update_settings(cx, |s| s.auto_update_check = v)),
+            switch_row("about-auto-update", "启动时自动检查更新", "发现新版本后自动下载并校验(进度显示在侧栏、状态栏与关于页),重启更新由你点击确认", wb.settings.auto_update_check, cx, |this, v, cx| this.update_settings(cx, |s| s.auto_update_check = v)),
         ], cx))
         .child(group("文件", rows![
             row("配置文件", "客户端偏好;Claude 自己的配置在 ~/.claude", div().font_family(MONO).text_size(px(12.)).text_color(t.muted_foreground).child(wb.settings_path.display().to_string()), cx),
@@ -211,7 +211,7 @@ pub fn about(wb: &Workbench, cx: &mut Context<Workbench>) -> AnyElement {
 /// 更新区右侧按钮:按状态显示「检查更新 / 下载 / 重启更新」,并提供发布页入口。
 fn update_buttons(wb: &Workbench, cx: &mut Context<Workbench>) -> Div {
     use crate::updater::UpdateState as U;
-    let busy = matches!(wb.update, U::Checking | U::Downloading(_));
+    let busy = matches!(wb.update, U::Checking | U::Downloading(..));
     let main = match &wb.update {
         U::Available(_) => Button::new("up-download").small().primary().label("下载更新").on_click(cx.listener(|this, _, _, cx| this.download_update(cx))),
         U::Ready(_) => Button::new("up-install").small().primary().label("重启更新").on_click(cx.listener(|this, _, _, cx| this.install_update(cx))),
