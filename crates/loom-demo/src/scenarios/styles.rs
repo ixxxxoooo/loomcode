@@ -92,6 +92,7 @@ fn user_variants() -> Script {
     let mut b = ScriptBuilder::new();
     b.user_rich("看看这张图", &["error.png"], &[]);
     b.user_rich("参考 @src/main.rs 和 @Cargo.toml 修改", &[], &["src/main.rs", "Cargo.toml"]);
+    b.user("@/Users/liwenjiao/Downloads/新空间报表负责人清单.xlsx 表负责人。给我具体的 sql");
     b.user("第一行\n第二行\n第三行\n第四行\n第五行\n第六行\n第七行(超过 6 行应自动折叠)\n第八行");
     b.user_rich("", &["a.png", "b.png", "c.png"], &[]);
     b.user("**不会被渲染成 Markdown** 的原样文本 `code`");

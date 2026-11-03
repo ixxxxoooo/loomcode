@@ -182,6 +182,7 @@ mod tool_content;
 mod ui;
 mod updater;
 mod user_message;
+mod user_mentions;
 mod view_cache;
 mod workspace_actions;
 mod worktree_actions;

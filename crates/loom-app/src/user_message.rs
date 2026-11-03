@@ -209,7 +209,9 @@ fn render_card(session: &Entity<SessionModel>, id: &str, text: &str, images: &[S
 
 /// 正文窗口:短消息原样显示;长消息折叠成固定行数的窗口(底部渐隐),展开后最多 [`EXPANDED_LINES`] 行、再长在卡内滚动。
 fn text_window(id: &str, text: &str, long: bool, folded: bool, cx: &App) -> AnyElement {
-    let body = div().min_w_0().text_size(px(14.)).line_height(px(LINE_H)).child(text.to_string());
+    let body = div().min_w_0().text_size(px(14.)).line_height(px(LINE_H));
+    // 含文件引用时按胶囊排版,否则原样文本
+    let body = if crate::user_mentions::has_mentions(text) { body.child(crate::user_mentions::render(text, LINE_H, cx)) } else { body.child(text.to_string()) };
     if !long {
         return body.into_any_element();
     }
