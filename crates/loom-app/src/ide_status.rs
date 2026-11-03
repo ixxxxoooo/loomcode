@@ -16,6 +16,8 @@ pub fn status_bar(project: Option<String>, branch: Option<String>, info: Option<
     let muted = t.muted_foreground;
     // 不用 StatusBar 组件:它不保证内容垂直居中。左右两组都 items_center,整条固定 24px 高
     let group = || h_flex().h_full().items_center().gap_3().px_2();
+    // 左组可收窄(min_w_0 + 裁切),语言服务器那串长状态文字单行截断;右组固定不动,窄窗口下光标位置与铃铛也不会被挤出去
+    let left = || group().flex_1().min_w_0().overflow_hidden();
     h_flex()
         .h(px(24.))
         .w_full()
@@ -27,12 +29,12 @@ pub fn status_bar(project: Option<String>, branch: Option<String>, info: Option<
         .text_size(px(11.))
         .text_color(muted)
         .child(
-            group()
-                .when_some(crate::ui::env_badges(demo, cx), |d, b| d.child(b))
-                .when_some(project, |d, n| d.child(h_flex().gap_1().items_center().child(icon(IconName::Folder, 11., muted)).child(n)))
+            left()
+                .when_some(crate::ui::env_badges(demo, cx), |d, b| d.child(b.flex_none()))
+                .when_some(project, |d, n| d.child(h_flex().flex_none().gap_1().items_center().child(icon(IconName::Folder, 11., muted)).child(n)))
                 .when_some(branch, |d, b| {
                     d.child(
-                        h_flex().id("status-branch").h_full().px_1().gap_1().items_center().cursor_pointer()
+                        h_flex().id("status-branch").flex_none().h_full().px_1().gap_1().items_center().cursor_pointer()
                             .hover(|d| d.bg(t.list_hover).text_color(t.foreground))
                             .on_click(move |_, window, cx| on_branch(window, cx))
                             .child(icon(IconName::GitBranch, 11., muted)).child(b),
@@ -44,15 +46,16 @@ pub fn status_bar(project: Option<String>, branch: Option<String>, info: Option<
                         h_flex()
                             .gap_2()
                             .items_center()
-                            .when(errors > 0, |d| d.child(h_flex().gap_1().items_center().text_color(t.danger).child(icon(IconName::CircleX, 11., t.danger)).child(errors.to_string())))
-                            .when(warnings > 0, |d| d.child(h_flex().gap_1().items_center().text_color(t.warning).child(icon(IconName::TriangleAlert, 11., t.warning)).child(warnings.to_string())))
-                            .child(div().child(label)),
+                            .min_w_0()
+                            .when(errors > 0, |d| d.child(h_flex().flex_none().gap_1().items_center().text_color(t.danger).child(icon(IconName::CircleX, 11., t.danger)).child(errors.to_string())))
+                            .when(warnings > 0, |d| d.child(h_flex().flex_none().gap_1().items_center().text_color(t.warning).child(icon(IconName::TriangleAlert, 11., t.warning)).child(warnings.to_string())))
+                            .child(div().min_w_0().truncate().child(label)),
                     )
                 }),
         )
-        .child(div().flex_1())
         .child(
             group()
+                .flex_none()
                 .font_family(MONO)
                 .when_some(mode, |d, m| d.child(div().child(format!("权限:{m}"))))
                 .when_some(info, |d, (line, col, lang, crlf)| {

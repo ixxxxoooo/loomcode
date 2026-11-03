@@ -323,9 +323,10 @@ impl IdeWindow {
         let (can_back, can_fwd) = { let nav = &self.ide.read(cx).nav; (nav.can_back(), nav.can_forward()) };
         // 高度与 Agent 窗口的顶部行一致,切换按钮在两个窗口里位置不变
         TitleBar::new().h(px(crate::window_header::HEADER_H)).child(
-            h_flex().w_full().items_center().gap_1().pr_2()
+            // flex_1 + min_w_0 而不是 w_full:标题栏自己在左边留了红绿灯的位置,w_full 会比剩余宽度多出这一段
+            h_flex().flex_1().min_w_0().items_center().gap_1().pr_2()
                 // 左侧按钮组与 Agent 窗口的 left_buttons 完全一致(同样的按钮、间距、起始位置),切换窗口时不跳动
-                .child(h_flex().gap_0p5()
+                .child(h_flex().gap_0p5().flex_none()
                     .child(no_drag(Button::new("iw-left").small().ghost().icon(IconName::PanelLeft).tooltip("侧栏(⌘B)")
                         .on_click(cx.listener(|this, _, _, cx| { this.left_open = !this.left_open; cx.notify(); }))))
                     .child(no_drag(Button::new("iw-search").small().ghost().icon(IconName::Search).tooltip("搜索(⌘K)")
@@ -334,19 +335,24 @@ impl IdeWindow {
                         .on_click(cx.listener(|this, _, window, cx| this.ide_navigate(false, window, cx)))))
                     .child(no_drag(Button::new("iw-fwd-nav").small().ghost().icon(IconName::ArrowRight).tooltip("前进(⌃⇧-)").disabled(!can_fwd)
                         .on_click(cx.listener(|this, _, window, cx| this.ide_navigate(true, window, cx))))))
-                .child(div().flex_1().flex().justify_center().child(no_drag(
-                    h_flex().id("iw-quick").cursor_pointer().on_click(cx.listener(|this, _, window, cx| this.toggle_quick(window, cx)))
-                        .w(px(420.)).max_w_full().h(px(26.)).px_3().gap_2().items_center().justify_center().rounded(px(7.))
-                        .border_1().border_color(t.border).bg(t.muted).text_size(px(12.)).text_color(t.muted_foreground)
-                        .child(icon(IconName::Search, 13., t.muted_foreground))
-                        .child(project),
-                )))
-                .child(no_drag(Button::new("iw-term").small().ghost().icon(IconName::PanelBottom).tooltip("终端(⌃`)").selected(self.term_open)
-                    .on_click(cx.listener(|this, _, window, cx| this.toggle_term(window, cx)))))
-                .child(no_drag(Button::new("iw-chat").small().ghost().icon(IconName::PanelRight).tooltip("对话栏(⌥⌘B)")
-                    .on_click(cx.listener(|this, _, _, cx| { this.chat_open = !this.chat_open; cx.notify(); }))))
-                .child(no_drag(crate::ui::mode_switch("iw-agent", "Agent", if fused { IconName::MessageSquare } else { IconName::ExternalLink }, true).tooltip("切换到 Agent(⇧⌘E)")
-                    .on_click(cx.listener(|this, _, _, cx| this.back_to_agent(cx))))),
+                // 中间的搜索框可以收窄(min_w_0),窗口窄时让出位置;两侧的按钮一律 flex_none,任何宽度下都不被挤走样
+                .child(div().flex_1().min_w_0().flex().justify_center().child(
+                    // 宽度限制要放在 no_drag 包的这一层(它才是中间容器的直接子元素),放在里面的搜索框上不起作用
+                    no_drag(
+                        h_flex().id("iw-quick").cursor_pointer().on_click(cx.listener(|this, _, window, cx| this.toggle_quick(window, cx)))
+                            .w_full().h(px(26.)).px_3().gap_2().items_center().justify_center().rounded(px(7.))
+                            .border_1().border_color(t.border).bg(t.muted).text_size(px(12.)).text_color(t.muted_foreground)
+                            .child(icon(IconName::Search, 13., t.muted_foreground).flex_none())
+                            .child(div().min_w_0().truncate().child(project)),
+                    ).flex_1().min_w_0().max_w(px(420.)),
+                ))
+                .child(h_flex().gap_1().items_center().flex_none()
+                    .child(no_drag(Button::new("iw-term").small().ghost().icon(IconName::PanelBottom).tooltip("终端(⌃`)").selected(self.term_open)
+                        .on_click(cx.listener(|this, _, window, cx| this.toggle_term(window, cx)))))
+                    .child(no_drag(Button::new("iw-chat").small().ghost().icon(IconName::PanelRight).tooltip("对话栏(⌥⌘B)")
+                        .on_click(cx.listener(|this, _, _, cx| { this.chat_open = !this.chat_open; cx.notify(); }))))
+                    .child(no_drag(crate::ui::mode_switch("iw-agent", "Agent", if fused { IconName::MessageSquare } else { IconName::ExternalLink }, true).tooltip("切换到 Agent(⇧⌘E)")
+                        .on_click(cx.listener(|this, _, _, cx| this.back_to_agent(cx)))))),
         )
     }
 }

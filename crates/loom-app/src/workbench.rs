@@ -1451,6 +1451,10 @@ impl Workbench {
             // 红绿灯位置与 Agent 窗口一致
             crate::window_header::apply_traffic_light(&mut options);
             options.window_bounds = Some(crate::window_memory::restore("ide", (1280., 820.), cx));
+            // 调试用:LOOM_WINDOW_SIZE=宽,高 同样覆盖独立 IDE 窗口的大小(验证窄窗口布局)
+            if let Some((w, h)) = std::env::var("LOOM_WINDOW_SIZE").ok().and_then(|v| v.split_once(',').and_then(|(a, b)| Some((a.trim().parse::<f32>().ok()?, b.trim().parse::<f32>().ok()?)))) {
+                options.window_bounds = Some(WindowBounds::Windowed(Bounds::centered(None, size(px(w), px(h)), cx)));
+            }
             options.window_min_size = Some(size(px(640.), px(480.)));
             let owner = wb.clone();
             match open_window(options, cx, move |window, cx| {

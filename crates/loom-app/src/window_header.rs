@@ -63,7 +63,7 @@ fn header_row(id: &'static str) -> Stateful<Div> {
 /// 「侧栏开关 + 搜索」两个按钮。
 fn left_buttons(wb: &Workbench, cx: &mut Context<Workbench>) -> impl IntoElement {
     let (can_back, can_fwd) = (wb.nav.can_back(), wb.nav.can_forward());
-    h_flex().gap_0p5()
+    h_flex().gap_0p5().flex_none()
         .child(no_drag(Button::new("hd-left").small().ghost().icon(IconName::PanelLeft).tooltip("侧栏(⌘B)")
             .on_click(cx.listener(|this, _, _, cx| { this.left_open = !this.left_open; cx.notify(); }))))
         .child(no_drag(Button::new("hd-search").small().ghost().icon(IconName::Search).tooltip("搜索(⌘K)")
@@ -132,7 +132,7 @@ impl Workbench {
     pub fn right_buttons(&self, cx: &mut Context<Self>) -> impl IntoElement {
         let ide_icon = if self.settings.fused_ide { IconName::Code } else { IconName::ExternalLink };
         let zoomed = self.right_zoom && self.right_visible();
-        h_flex().gap_1().items_center()
+        h_flex().gap_1().items_center().flex_none()
             .when(self.right_visible(), |d| d.child(no_drag(
                 Button::new("hd-right-zoom").small().ghost()
                     .icon(if zoomed { IconName::Minimize2 } else { IconName::Maximize2 })

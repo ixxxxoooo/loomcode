@@ -161,7 +161,8 @@ pub fn dialog_footer(ok_label: &'static str) -> gpui_kit::component::dialog::Dia
 pub fn mode_switch(id: &'static str, label: &'static str, icon_name: IconName, primary: bool) -> gpui_kit::component::button::Button {
     use gpui_kit::component::Sizable;
     use gpui_kit::component::button::{Button, ButtonVariants};
-    let b = Button::new(id).small().label(label).icon(icon_name).w(px(MODE_SWITCH_W));
+    // flex_none:固定宽度,任何布局下都不被挤窄
+    let b = Button::new(id).small().label(label).icon(icon_name).w(px(MODE_SWITCH_W)).flex_none();
     if primary { b.primary() } else { b.outline() }
 }
 
