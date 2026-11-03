@@ -128,11 +128,12 @@ impl Composer {
             }
             _ => {}
         });
-        // 调试用:LOOM_POPUP=model|context 启动即打开对应弹层(只用于截图验证)
+        // 调试用:LOOM_POPUP=model|effort|context 启动即打开对应弹层(只用于截图验证)
         let open = match std::env::var("LOOM_POPUP").as_deref() {
             Ok("model") => Some(Pick::Model),
             Ok("context") => Some(Pick::Context),
             Ok("mode") => Some(Pick::Mode),
+            Ok("effort") => Some(Pick::Effort),
             _ => None,
         };
         let mut this = Self { session, input, open, outside_closed: None, suggestions: Vec::new(), sel: 0, attachments: Vec::new(), attach_counter: 0, demo, rewrite: None, optimizing: false, optimize_error: None, custom_commands: Vec::new(), custom_agents: Vec::new(), wrap_bounds: Default::default(), effort_bounds: Default::default(), _sub: sub };

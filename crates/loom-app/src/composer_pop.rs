@@ -77,10 +77,10 @@ pub fn model_popup(picker: &Picker, running: bool, this: Entity<Composer>, cx: &
                     this.update(cx, |c, cx| if is_active { c.choose_model(&id, cx) } else { c.choose_provider_model(gid, id, cx) });
                 }))
                 .when(!enabled, |d| d.opacity(0.45))
-                // 名字完整显示(不压缩),说明占剩余宽度、过长截断
-                .child(div().w(px(14.)).flex_none().child(if on { icon(IconName::Check, 12., t.primary).into_any_element() } else { div().into_any_element() }))
+                // 名字完整显示(宽度跟着内容走),对号在最右
                 .child(crate::brand_icons::brand_icon(&m.id, &m.name, 14., if on { t.foreground } else { t.muted_foreground }))
-                .child(div().flex_1().min_w_0().whitespace_nowrap().truncate().text_size(px(13.)).child(m.name.clone()));
+                .child(div().flex_1().whitespace_nowrap().text_size(px(13.)).child(m.name.clone()))
+                .child(div().w(px(14.)).flex_none().child(if on { icon(IconName::Check, 12., t.primary).into_any_element() } else { div().into_any_element() }));
             list.push(row.into_any_element());
         }
     };
@@ -89,7 +89,7 @@ pub fn model_popup(picker: &Picker, running: bool, this: Entity<Composer>, cx: &
         let models = g.models.iter().map(|m| ModelInfo::new(m, m, "")).collect();
         push_group(&mut list, Some(g.id.clone()), g.name.clone(), models, g.blocked.clone());
     }
-    v_flex().absolute().bottom(px(44.)).left(px(8.)).w(px(240.)).p_1().rounded(px(10.)).border_1().border_color(t.border).bg(t.popover).shadow_lg()
+    v_flex().absolute().bottom(px(44.)).left(px(8.)).min_w(px(140.)).p_1().rounded(px(10.)).border_1().border_color(t.border).bg(t.popover).shadow_lg()
         .child(v_flex().id("pick-model-list").max_h(px(380.)).overflow_y_scroll().children(list))
 }
 
@@ -103,10 +103,10 @@ pub fn effort_popup(effort: Effort, left: Pixels, this: Entity<Composer>, cx: &A
         h_flex().id(SharedString::from(format!("pick-effort-{}", e.cli_value()))).gap_2().px_2().h(px(30.)).items_center().rounded(px(6.)).cursor_pointer()
             .hover(|d| d.bg(t.list_hover))
             .on_click(move |_, _, cx| { this.update(cx, |c, cx| c.choose_effort(e, cx)); })
+            .child(div().flex_1().whitespace_nowrap().text_size(px(13.)).when(on, |d| d.font_weight(FontWeight::MEDIUM)).child(e.label()))
             .child(div().w(px(14.)).flex_none().child(if on { icon(IconName::Check, 12., t.primary).into_any_element() } else { div().into_any_element() }))
-            .child(div().flex_1().text_size(px(13.)).when(on, |d| d.font_weight(FontWeight::MEDIUM)).child(e.label()))
     });
-    v_flex().absolute().bottom(px(44.)).left(left).w(px(160.)).p_1().rounded(px(10.)).border_1().border_color(t.border).bg(t.popover).shadow_lg()
+    v_flex().absolute().bottom(px(44.)).left(left).min_w(px(96.)).p_1().rounded(px(10.)).border_1().border_color(t.border).bg(t.popover).shadow_lg()
         .children(rows)
 }
 
