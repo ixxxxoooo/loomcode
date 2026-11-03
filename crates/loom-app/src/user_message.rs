@@ -241,7 +241,7 @@ pub(crate) fn render_editor(session: &Entity<SessionModel>, id: &str, input: &En
             v_flex().id(SharedString::from(format!("umsg-editor-body-{id}"))).w_full().min_w_0().gap_2().overflow_x_hidden()
                 .when_some(max_body_h, |d, h| d.max_h(px(h)).overflow_y_scroll())
                 .when(!images.is_empty(), |d| d.child(h_flex().flex_wrap().gap_1p5().children(images.iter().map(|n| thumb(n, cx)))))
-                .child(Textarea::new(input).appearance(false).bordered(false)),
+                .child(Textarea::new(input).appearance(false).bordered(false).token(|ctx, window, cx| crate::composer_refs::token_view(ctx, window, cx))),
         )
         .when(running, |d| d.child(div().text_size(px(11.)).text_color(t.muted_foreground).child("回合进行中,将排到本轮结束后发送。")))
         .child(
@@ -276,7 +276,7 @@ impl SessionModel {
         }
         self.scroller.update(cx, |s, _| s.pause_following());
         let input = cx.new(|cx| TextareaState::new(window, cx).auto_grow(1, 10).submit_on_enter(true));
-        input.update(cx, |i, cx| { i.set_value(text.to_string(), window, cx); i.focus(window, cx); });
+        input.update(cx, |i, cx| { i.set_value(crate::user_mentions::content_from_text(text), window, cx); i.focus(window, cx); });
         let edit_id = id.to_string();
         let sub = cx.subscribe_in(&input, window, move |this, _, ev: &InputEvent, window, cx| match ev {
             // 文本框随内容增高:重新测量这一行

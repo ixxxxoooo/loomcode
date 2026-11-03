@@ -7,6 +7,7 @@
 //! @author ixxxxoooo
 
 use crate::file_icons::file_icon_img;
+use gpui_kit::component::input::InputContent;
 use gpui_kit::component::{ActiveTheme, h_flex};
 use gpui_kit::*;
 use std::path::Path;
@@ -139,6 +140,28 @@ fn line(text: &str, line_h: f32, cx: &App) -> AnyElement {
     row.into_any_element()
 }
 
+/// 把正文还原成输入框内容:正文里的 `@路径` 变回原子胶囊标记(编辑已发出的消息、撤回排队消息时用)。
+/// 带不能做标记的路径(理论上不会出现)时保持纯文字。
+pub fn content_from_text(text: &str) -> InputContent {
+    let mut content = InputContent::new(text.to_string());
+    let mut pos = 0usize;
+    for seg in segments(text) {
+        match seg {
+            Seg::Text(t) => pos += t.len(),
+            Seg::Mention(p) => {
+                // 引用段不含开头的 `@`,它在 pos 处
+                let range = pos..pos + 1 + p.len();
+                pos = range.end;
+                let Some(token) = crate::composer_refs::file_token(Path::new(p), p) else { continue };
+                if let Ok(c) = content.clone().with_token(range, token) {
+                    content = c;
+                }
+            }
+        }
+    }
+    content
+}
+
 /// 把正文里的文件引用缩成 `@文件名`,用来估算胶囊占的宽度(吸顶卡估高用)。
 pub fn collapse(text: &str) -> String {
     segments(text).iter().map(|s| match s {
@@ -195,6 +218,16 @@ mod tests {
     fn 缩成文件名() {
         assert_eq!(collapse("看 @/Users/x/很长的目录/a.xlsx 吧"), "看 @a.xlsx 吧");
         assert_eq!(collapse("没有引用"), "没有引用");
+    }
+
+    #[::core::prelude::v1::test]
+    fn 还原成输入框内容里的标记() {
+        let t = "看 @/a/b.rs 和 @c/d.md。好";
+        let c = content_from_text(t);
+        assert_eq!(c.text().as_ref(), t);
+        let spans: Vec<_> = c.tokens().iter().map(|s| (s.range(), s.token().text().to_string())).collect();
+        assert_eq!(spans, vec![(4..12, "@/a/b.rs".to_string()), (17..24, "@c/d.md".to_string())]);
+        assert!(content_from_text("没有引用").tokens().is_empty());
     }
 
     #[::core::prelude::v1::test]

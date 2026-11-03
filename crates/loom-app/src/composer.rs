@@ -172,7 +172,7 @@ impl Composer {
 
     /// 直接设置文本(命令面板「演示场景」使用)。
     pub fn set_text(&mut self, text: &str, window: &mut Window, cx: &mut Context<Self>) {
-        self.input.update(cx, |i, cx| i.set_value(text.to_string(), window, cx));
+        self.input.update(cx, |i, cx| i.set_value(crate::user_mentions::content_from_text(text), window, cx));
         // set_value 不会触发 Change 事件,手动刷新补全
         self.refresh_suggestions(cx);
     }
