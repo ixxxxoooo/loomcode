@@ -41,9 +41,9 @@ impl RightPanel {
             v_flex().w_full().px_3().py_2().gap_2().border_b_1().border_color(t.border)
                 .child(h_flex().gap_2().items_center()
                     .child(icon(IconName::ListTodo, 14., if p.approved.is_none() { t.warning } else { t.primary }))
-                    .child(div().flex_1().min_w_0().truncate().text_size(px(13.)).font_weight(FontWeight::MEDIUM).child(plan_card::plan_title(&p.markdown)))
+                    .child(div().flex_1().min_w_0().truncate().text_size(px(13.)).font_weight(FontWeight::MEDIUM).child(plan_card::display_title(p)))
                     .child(pill(text, fg, t.muted)))
-                .when(p.approved.is_none(), |d| d.child(plan_card::actions(&model, p, "tab")))
+                .when(p.approved.is_none() && !p.streaming, |d| d.child(plan_card::actions(&model, p, "tab")))
         });
         let progress = todos.map(|todos| {
             let done = todos.iter().filter(|i| i.status == TodoStatus::Completed).count();

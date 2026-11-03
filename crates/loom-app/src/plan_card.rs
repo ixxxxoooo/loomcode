@@ -26,6 +26,11 @@ pub fn plan_title(markdown: &str) -> String {
     markdown.lines().map(|l| l.trim_start_matches('#').trim()).find(|l| !l.is_empty()).unwrap_or("计划").to_string()
 }
 
+/// 卡片 / 标签头部显示的标题:正文还没生成出来时给一句提示。
+pub fn display_title(plan: &PlanApproval) -> String {
+    if plan.markdown.trim().is_empty() { "正在生成计划…".into() } else { plan_title(&plan.markdown) }
+}
+
 /// 卡片上的摘要:跳过标题、分隔线、代码围栏,取前 `max` 行正文(去列表符号与强调标记)。
 pub fn plan_excerpt(markdown: &str, max: usize) -> Vec<String> {
     let mut in_code = false;
@@ -53,6 +58,7 @@ pub fn plan_excerpt(markdown: &str, max: usize) -> Vec<String> {
 pub fn status(plan: &PlanApproval, cx: &App) -> (&'static str, Hsla) {
     let t = cx.theme();
     match plan.approved {
+        None if plan.streaming => ("生成中…", t.primary),
         None => ("待批准", t.warning),
         Some(true) => ("已批准", t.success),
         Some(false) => ("已拒绝 · 继续规划", t.danger),
@@ -80,7 +86,8 @@ pub fn actions(session: &Entity<SessionModel>, plan: &PlanApproval, scope: &str)
 /// 主会话里的计划卡:标题 + 状态 + 几行摘要,点击在右栏打开;待批准时带 Build 按钮。
 pub fn render_card(session: &Entity<SessionModel>, plan: &PlanApproval, cx: &App) -> AnyElement {
     let t = cx.theme();
-    let pending = plan.approved.is_none();
+    // 生成完才能决定:生成中卡片只展示进展,没有 Build 按钮
+    let pending = plan.approved.is_none() && !plan.streaming;
     let (text, fg) = status(plan, cx);
     let excerpt = plan_excerpt(&plan.markdown, 3);
     let (s, id) = (session.clone(), plan.id.clone());
@@ -91,7 +98,7 @@ pub fn render_card(session: &Entity<SessionModel>, plan: &PlanApproval, cx: &App
                 .on_click(move |_, _, cx| { s.update(cx, |_, cx| cx.emit(UiRequest::OpenPlan(id.clone()))); })
                 .child(icon(IconName::ListTodo, 14., if pending { t.warning } else { t.muted_foreground }))
                 .child(div().flex_none().text_size(px(13.)).font_weight(FontWeight::MEDIUM).child("计划"))
-                .child(div().flex_1().min_w_0().truncate().text_size(px(13.)).child(plan_title(&plan.markdown)))
+                .child(div().flex_1().min_w_0().truncate().text_size(px(13.)).child(display_title(plan)))
                 .child(pill(text, fg, t.muted))
                 .child(icon(IconName::ChevronRight, 12., t.muted_foreground)),
         )

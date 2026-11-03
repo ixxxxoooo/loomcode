@@ -193,6 +193,9 @@ pub struct PlanApproval {
     pub markdown: String,
     /// 批准结果:`None` 等待中,`Some(true)` 已批准,`Some(false)` 已拒绝
     pub approved: Option<bool>,
+    /// 计划正文还在生成(流式):卡片先出现在正文里,文字随生成逐步补全,生成完才出现 Build 按钮
+    #[serde(default)]
+    pub streaming: bool,
 }
 
 /// 时间线上的一个条目。

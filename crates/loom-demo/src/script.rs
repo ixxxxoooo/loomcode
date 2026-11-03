@@ -340,10 +340,26 @@ impl ScriptBuilder {
         id
     }
 
+    /// 计划批准卡,模拟流式生成:先出现空卡片,正文分段补全(每段 24 个字符),生成完再等待批准。
+    pub fn plan_streaming(&mut self, markdown: &str) -> String {
+        let id = self.next_id("plan");
+        self.append(TimelineItem::PlanApproval(PlanApproval { id: id.clone(), markdown: String::new(), approved: None, streaming: true }));
+        let chars: Vec<char> = markdown.chars().collect();
+        let mut end = 0;
+        for chunk in chars.chunks(24) {
+            end += chunk.len();
+            self.sleep(140);
+            self.emit(AgentEvent::PlanUpdated { id: id.clone(), markdown: chars[..end].iter().collect(), streaming: true });
+        }
+        self.emit(AgentEvent::PlanUpdated { id: id.clone(), markdown: markdown.into(), streaming: false });
+        self.steps.push(Step::WaitPlan(id.clone()));
+        id
+    }
+
     /// 计划批准卡:追加并等待。
     pub fn plan(&mut self, markdown: &str) -> String {
         let id = self.next_id("plan");
-        self.append(TimelineItem::PlanApproval(PlanApproval { id: id.clone(), markdown: markdown.into(), approved: None }));
+        self.append(TimelineItem::PlanApproval(PlanApproval { id: id.clone(), markdown: markdown.into(), approved: None, streaming: false }));
         self.steps.push(Step::WaitPlan(id.clone()));
         id
     }

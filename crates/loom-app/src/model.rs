@@ -14,6 +14,9 @@ pub struct SessionModel {
     pub timeline: Option<Entity<crate::timeline_view::TimelineView>>,
     /// 已展开的条目 id(工具卡、思考、子 Agent、计划等)
     pub expanded: HashSet<String>,
+    /// 本次运行里实时出现的计划条目 id:后端手里挂着它的权限请求,Build / 继续规划能直接应答;
+    /// 不在其中的(从历史回放出来、还没批准的)计划后端已经没有对应请求,要换成「改模式 + 发提示」
+    live_plans: HashSet<String>,
     /// 运行中排队的消息(回合结束后依次发送)
     pub queued: crate::prompt_queue::PromptQueue,
     /// 提问向导当前所在题号(按提问 id)
@@ -82,6 +85,7 @@ impl SessionModel {
             scroller,
             timeline: None,
             expanded: HashSet::new(),
+            live_plans: HashSet::new(),
             queued: Default::default(),
             wizard_step: Default::default(),
             wizard_draft: Default::default(),
@@ -120,7 +124,16 @@ impl SessionModel {
                 turn_ended = true;
                 stop_reason = Some(*reason);
             }
+            // 计划卡实时出现:自动在右栏打开计划页(对标 Cursor),每个计划只弹一次
+            let new_plan = match &ev {
+                AgentEvent::Append { item: TimelineItem::PlanApproval(p), .. } if p.approved.is_none() => Some(p.id.clone()),
+                _ => None,
+            };
             self.state.apply(ev);
+            if let Some(id) = new_plan {
+                self.live_plans.insert(id.clone());
+                cx.emit(UiRequest::OpenPlan(id));
+            }
             if let Some(id) = target {
                 if let Some(row) = self.state.row_of(&id) {
                     dirty_rows.push(row);
@@ -320,8 +333,20 @@ impl SessionModel {
 
     /// 处理计划:批准时 `mode` 是之后要用的权限模式(`None` 沿用 claude 的建议)。
     pub fn resolve_plan(&mut self, id: &str, approve: bool, mode: Option<PermissionMode>, cx: &mut Context<Self>) {
-        self.handle.send(AgentCommand::ResolvePlan { id: id.into(), approve, mode });
-        self.remeasure_id(id, cx);
+        if self.live_plans.contains(id) {
+            self.handle.send(AgentCommand::ResolvePlan { id: id.into(), approve, mode });
+            self.remeasure_id(id, cx);
+            return;
+        }
+        // 从历史回放出来、一直没批准的计划(重开会话 / 回合被中断):后端已经没有这个权限请求,
+        // 应答会石沉大海。批准就切到选的模式并让 Claude 开始实施;不批准只标记已拒绝,由用户接着说
+        self.on_events(vec![AgentEvent::PlanResolved { id: id.into(), approved: approve }], cx);
+        if approve {
+            if let Some(mode) = mode {
+                self.set_mode(mode, cx);
+            }
+            self.send_prompt("我批准了上面的计划,请按计划开始实施。".into(), cx);
+        }
     }
 
     /// 展开 / 折叠一个条目,并重新测量它所在的行。

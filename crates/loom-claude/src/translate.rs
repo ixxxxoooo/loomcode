@@ -59,6 +59,76 @@ enum BlockKind {
 }
 
 /// 流式中的一个内容块。条目在第一次收到非空增量时才创建,避免出现空卡片。
+/// 流式生成中的计划块。
+struct PlanBlock {
+    id: String,
+    /// `input_json_delta` 累积的 JSON 片段
+    json: String,
+    /// 上一次发出的正文长度(没变化就不重复发事件)
+    sent: usize,
+}
+
+/// 从不完整的 JSON 片段里取出字符串字段 `key` 已经到达的部分(处理转义,半截转义留到下次)。
+///
+/// 参数:`partial` 累积的 JSON 文本;`key` 字段名。返回:字段值的前缀;字段还没出现返回 `None`。
+pub fn partial_json_string(partial: &str, key: &str) -> Option<String> {
+    let needle = format!("\"{key}\"");
+    let mut from = 0;
+    let value_start = loop {
+        let at = partial[from..].find(&needle)? + from;
+        let rest = partial[at + needle.len()..].trim_start();
+        if let Some(r) = rest.strip_prefix(':') {
+            let r = r.trim_start();
+            if let Some(body) = r.strip_prefix('"') {
+                break partial.len() - body.len();
+            }
+        }
+        from = at + needle.len();
+    };
+    let mut out = String::new();
+    let mut chars = partial[value_start..].chars().peekable();
+    while let Some(c) = chars.next() {
+        match c {
+            '"' => break,
+            '\\' => {
+                let Some(e) = chars.next() else { break };
+                match e {
+                    'n' => out.push('\n'),
+                    't' => out.push('\t'),
+                    'r' => out.push('\r'),
+                    'b' => out.push('\u{8}'),
+                    'f' => out.push('\u{c}'),
+                    'u' => {
+                        let hex: String = chars.by_ref().take(4).collect();
+                        if hex.len() < 4 {
+                            break;
+                        }
+                        let Ok(mut code) = u32::from_str_radix(&hex, 16) else { break };
+                        // 代理对:高位后面必须跟 \uDC00..DFFF 才能拼成一个字符,不全就等下次
+                        if (0xD800..0xDC00).contains(&code) {
+                            if chars.next() == Some('\\') && chars.next() == Some('u') {
+                                let lo: String = chars.by_ref().take(4).collect();
+                                match (lo.len() == 4).then(|| u32::from_str_radix(&lo, 16).ok()).flatten() {
+                                    Some(l) if (0xDC00..0xE000).contains(&l) => code = 0x10000 + ((code - 0xD800) << 10) + (l - 0xDC00),
+                                    _ => break,
+                                }
+                            } else {
+                                break;
+                            }
+                        }
+                        if let Some(ch) = char::from_u32(code) {
+                            out.push(ch);
+                        }
+                    }
+                    other => out.push(other),
+                }
+            }
+            c => out.push(c),
+        }
+    }
+    Some(out)
+}
+
 struct OpenBlock {
     id: String,
     parent: Option<String>,
@@ -84,6 +154,10 @@ pub struct Translator {
     streamed: HashMap<String, Vec<Streamed>>,
     /// 挂起的 can_use_tool 请求,键为条目 id(工具调用 id 或请求 id)
     pending: HashMap<String, Pending>,
+    /// 正在流式生成的 ExitPlanMode 块:(消息 id, 块下标) → 计划条目 id 与已收到的 JSON 片段
+    plan_blocks: HashMap<(String, u64), PlanBlock>,
+    /// 已经以流式卡片出现在时间线上、还没定稿的计划条目 id(权限请求到达时定稿,不再重复追加)
+    plans_streamed: HashSet<String>,
     usage: Usage,
     /// 用户是否请求过中断(用于把回合结束原因标成「已取消」)
     pub interrupted: bool,
@@ -112,6 +186,8 @@ impl Translator {
             open_blocks: HashMap::new(),
             streamed: HashMap::new(),
             pending: HashMap::new(),
+            plan_blocks: HashMap::new(),
+            plans_streamed: HashSet::new(),
             usage: Usage::default(),
             interrupted: false,
             api_error: None,
@@ -337,7 +413,19 @@ impl Translator {
                 Vec::new()
             }
             "content_block_start" => {
-                if !matches!(str_of(&ev["content_block"], "type"), "text" | "thinking") {
+                // ExitPlanMode:计划正文开始生成就让卡片出现在正文里(文字随 input_json_delta 补全),
+                // 不必等整段生成完、权限请求到达才出现。回放历史没有流事件,不走这里
+                let block = &ev["content_block"];
+                if str_of(block, "type") == "tool_use" && str_of(block, "name") == "ExitPlanMode" && !str_of(block, "id").is_empty() {
+                    let id = str_of(block, "id").to_string();
+                    self.plan_blocks.insert((msg_id, index), PlanBlock { id: id.clone(), json: String::new(), sent: 0 });
+                    self.plans_streamed.insert(id.clone());
+                    return vec![AgentEvent::Append {
+                        parent,
+                        item: TimelineItem::PlanApproval(PlanApproval { id, markdown: String::new(), approved: None, streaming: true }),
+                    }];
+                }
+                if !matches!(str_of(block, "type"), "text" | "thinking") {
                     return Vec::new();
                 }
                 let id = format!("{msg_id}:{index}");
@@ -346,6 +434,13 @@ impl Translator {
             }
             "content_block_delta" => {
                 let delta = &ev["delta"];
+                if str_of(delta, "type") == "input_json_delta" {
+                    let Some(block) = self.plan_blocks.get_mut(&(msg_id, index)) else { return Vec::new() };
+                    block.json.push_str(str_of(delta, "partial_json"));
+                    let Some(markdown) = partial_json_string(&block.json, "plan").filter(|m| m.len() > block.sent) else { return Vec::new() };
+                    block.sent = markdown.len();
+                    return vec![AgentEvent::PlanUpdated { id: block.id.clone(), markdown, streaming: true }];
+                }
                 let (text, kind) = match str_of(delta, "type") {
                     "text_delta" => (str_of(delta, "text"), BlockKind::Text),
                     "thinking_delta" => (str_of(delta, "thinking"), BlockKind::Thinking),
@@ -368,6 +463,7 @@ impl Translator {
                     BlockKind::Thinking => AgentEvent::ThinkingDelta { parent, id, delta },
                 }]
             }
+            "content_block_stop" if self.plan_blocks.remove(&(msg_id.clone(), index)).is_some() => Vec::new(),
             "content_block_stop" => match self.open_blocks.remove(&(msg_id, index)) {
                 Some(b) if b.created => vec![AgentEvent::ItemDone { parent: b.parent, id: b.id }],
                 _ => Vec::new(),
@@ -452,11 +548,17 @@ impl Translator {
             "AskUserQuestion" => Vec::new(),
             "ExitPlanMode" => {
                 if self.replay {
+                    // 历史里同一个 tool_use 会先后落几份快照(后面的可能是空输入),空正文的不显示;
+                    // 批准结果由随后的 tool_result 决定(没有结果 = 还没批准)
                     let markdown = str_of(&input, "plan").to_string();
-                    vec![AgentEvent::Append {
-                        parent,
-                        item: TimelineItem::PlanApproval(PlanApproval { id, markdown, approved: Some(true) }),
-                    }]
+                    if markdown.trim().is_empty() {
+                        Vec::new()
+                    } else {
+                        vec![AgentEvent::Append {
+                            parent,
+                            item: TimelineItem::PlanApproval(PlanApproval { id, markdown, approved: None, streaming: false }),
+                        }]
+                    }
                 } else {
                     Vec::new()
                 }
@@ -609,6 +711,10 @@ impl Translator {
         let Some(info) = info else {
             return Vec::new();
         };
+        if self.replay && info.name == "ExitPlanMode" {
+            // 工具结果是用户的决定:报错 = 没批准(「用户没有批准该计划…」),否则批准
+            return vec![AgentEvent::PlanResolved { id, approved: !is_error }];
+        }
         if matches!(info.name.as_str(), "TodoWrite" | "AskUserQuestion" | "ExitPlanMode") {
             return Vec::new();
         }
@@ -743,6 +849,11 @@ impl Translator {
         // 回合结束后,流式状态不应再有残留
         self.open_blocks.clear();
         self.streamed.clear();
+        // 计划卡生成到一半回合就结束了(被中断 / 出错):没有等到权限请求,按未批准收尾,免得留下点不动的 Build 按钮
+        self.plan_blocks.clear();
+        for id in std::mem::take(&mut self.plans_streamed) {
+            out.push(AgentEvent::PlanResolved { id, approved: false });
+        }
         out.push(AgentEvent::TurnEnded(reason));
         out
     }
@@ -871,12 +982,17 @@ impl Translator {
                     answers: None,
                 }),
             },
+            // 计划已经以流式卡片出现过:定稿正文(此时才有 Build 按钮),不重复追加
+            PendingKind::Plan if self.plans_streamed.remove(&item_id) => {
+                AgentEvent::PlanUpdated { id: item_id.clone(), markdown: str_of(&input, "plan").into(), streaming: false }
+            }
             PendingKind::Plan => AgentEvent::Append {
                 parent,
                 item: TimelineItem::PlanApproval(PlanApproval {
                     id: item_id.clone(),
                     markdown: str_of(&input, "plan").into(),
                     approved: None,
+                    streaming: false,
                 }),
             },
             PendingKind::Permission => {
@@ -1550,4 +1666,73 @@ mod tests {
         let v = crate::protocol::stop_task("r", "t1");
         assert_eq!((v["request"]["subtype"].as_str(), v["request"]["task_id"].as_str()), (Some("stop_task"), Some("t1")));
     }
+
+    #[test]
+    fn 增量json里取出计划字段() {
+        assert_eq!(partial_json_string("{\"plan\": \"# 标", "plan").as_deref(), Some("# 标"));
+        assert_eq!(partial_json_string("{\"pla", "plan"), None);
+        assert_eq!(partial_json_string("{\"plan\":\"a\\nb\\\"c\\\\d\",\"x\":1}", "plan").as_deref(), Some("a\nb\"c\\d"));
+        // 半截转义留到下次
+        assert_eq!(partial_json_string("{\"plan\":\"ab\\", "plan").as_deref(), Some("ab"));
+        assert_eq!(partial_json_string("{\"plan\":\"ab\\u4e", "plan").as_deref(), Some("ab"));
+        assert_eq!(partial_json_string("{\"plan\":\"ab\\u4e2d文\"}", "plan").as_deref(), Some("ab中文"));
+        // 代理对(emoji)拼成一个字符;只到高位就等下次
+        assert_eq!(partial_json_string("{\"plan\":\"\\ud83d\\ude00!", "plan").as_deref(), Some("😀!"));
+        assert_eq!(partial_json_string("{\"plan\":\"x\\ud83d", "plan").as_deref(), Some("x"));
+        // 值里恰好出现 "plan" 字样不会被当成键
+        assert_eq!(partial_json_string("{\"note\":\"plan: x\",\"plan\":\"真\"}", "plan").as_deref(), Some("真"));
+    }
+
+    fn plan_stream(t: &mut Translator, ev: Value) -> Vec<AgentEvent> {
+        t.handle(&json!({"type":"stream_event","event":ev,"api_message_id":"m1"}))
+    }
+
+    #[test]
+    fn 计划卡随流式生成出现并在权限请求时定稿() {
+        let mut t = Translator::new("/p");
+        let started = plan_stream(&mut t, json!({"type":"content_block_start","index":1,"content_block":{"type":"tool_use","id":"p1","name":"ExitPlanMode","input":{}}}));
+        assert!(matches!(&started[..], [AgentEvent::Append { item: TimelineItem::PlanApproval(p), .. }] if p.id == "p1" && p.streaming && p.approved.is_none() && p.markdown.is_empty()));
+        let d1 = plan_stream(&mut t, json!({"type":"content_block_delta","index":1,"delta":{"type":"input_json_delta","partial_json":"{\"plan\":\"# 方"}}));
+        assert!(matches!(&d1[..], [AgentEvent::PlanUpdated { id, markdown, streaming: true }] if id == "p1" && markdown == "# 方"));
+        // 没有新增正文的片段不发事件
+        assert!(plan_stream(&mut t, json!({"type":"content_block_delta","index":1,"delta":{"type":"input_json_delta","partial_json":""}})).is_empty());
+        plan_stream(&mut t, json!({"type":"content_block_delta","index":1,"delta":{"type":"input_json_delta","partial_json":"案\"}"}}));
+        assert!(plan_stream(&mut t, json!({"type":"content_block_stop","index":1})).is_empty());
+        // 权限请求到达:定稿同一张卡,不再追加第二张
+        let (ev, _) = t.control_request(&json!({"request_id":"r1","request":{"subtype":"can_use_tool","tool_name":"ExitPlanMode","tool_use_id":"p1","input":{"plan":"# 方案"}}}));
+        assert!(matches!(&ev[..], [AgentEvent::PlanUpdated { id, markdown, streaming: false }] if id == "p1" && markdown == "# 方案"));
+    }
+
+    #[test]
+    fn 计划生成一半回合结束按未批准收尾() {
+        let mut t = Translator::new("/p");
+        plan_stream(&mut t, json!({"type":"content_block_start","index":0,"content_block":{"type":"tool_use","id":"p2","name":"ExitPlanMode","input":{}}}));
+        let ev = t.handle(&json!({"type":"result","subtype":"error_during_execution","is_error":true,"errors":["boom"]}));
+        assert!(ev.iter().any(|e| matches!(e, AgentEvent::PlanResolved { id, approved: false } if id == "p2")));
+    }
+
+    #[test]
+    fn 回放计划按工具结果决定批准与否() {
+        let lines = [
+            json!({"type":"assistant","message":{"id":"m1","content":[{"type":"tool_use","id":"a","name":"ExitPlanMode","input":{"plan":"# 一"}}]}}),
+            json!({"type":"user","message":{"content":[{"type":"tool_result","tool_use_id":"a","is_error":true,"content":"用户没有批准该计划"}]}}),
+            // 同一个 tool_use 之后又落了一份空输入的快照:不显示
+            json!({"type":"assistant","message":{"id":"m2","content":[{"type":"tool_use","id":"a","name":"ExitPlanMode","input":{}}]}}),
+            json!({"type":"assistant","message":{"id":"m3","content":[{"type":"tool_use","id":"b","name":"ExitPlanMode","input":{"plan":"# 二"}}]}}),
+            json!({"type":"assistant","message":{"id":"m4","content":[{"type":"tool_use","id":"c","name":"ExitPlanMode","input":{"plan":"# 三"}}]}}),
+            json!({"type":"user","message":{"content":[{"type":"tool_result","tool_use_id":"b","content":"User has approved your plan"}]}}),
+        ];
+        let text = lines.iter().map(|l| l.to_string()).collect::<Vec<_>>().join("\n");
+        let mut state = SessionState::default();
+        for ev in crate::history::replay_lines(text.lines(), "/p") {
+            state.apply(ev);
+        }
+        let plans: Vec<(&str, Option<bool>)> = state.items.iter().filter_map(|i| match i {
+            TimelineItem::PlanApproval(p) => Some((p.markdown.as_str(), p.approved)),
+            _ => None,
+        }).collect();
+        // 一:被拒绝;二:批准;三:没有结果(还没批准)
+        assert_eq!(plans, vec![("# 一", Some(false)), ("# 二", Some(true)), ("# 三", None)]);
+    }
+
 }

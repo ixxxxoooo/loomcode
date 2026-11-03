@@ -73,7 +73,7 @@ fn plan_approval() -> Script {
     b.mode(PermissionMode::Plan);
     b.think("计划模式下只读,先梳理接口清单再给出迁移步骤。");
     b.tool("Grep", "搜索旧接口 /api/v1", json!({"pattern": "/api/v1"}), vec![ToolContent::Text("src/client.ts:8\nsrc/legacy.ts:21".into())]);
-    b.plan("# 迁移旧 REST 接口到新网关\n\n## 步骤\n1. 新建 `gateway/` 适配层,统一鉴权\n2. 逐个迁移 `/api/v1/*` 至 `/gw/*`\n3. 双写一周,对比响应\n4. 下线旧接口\n\n## 风险\n- 老客户端仍依赖 v1 字段\n- 需要灰度开关\n");
+    b.plan_streaming("# 迁移旧 REST 接口到新网关\n\n## 步骤\n1. 新建 `gateway/` 适配层,统一鉴权\n2. 逐个迁移 `/api/v1/*` 至 `/gw/*`\n3. 双写一周,对比响应\n4. 下线旧接口\n\n## 风险\n- 老客户端仍依赖 v1 字段\n- 需要灰度开关\n");
     b.mode(PermissionMode::AcceptEdits);
     b.todos("todos-plan", &[("新建网关适配层", TodoStatus::InProgress), ("迁移接口", TodoStatus::Pending), ("双写对比", TodoStatus::Pending)]);
     b.say("计划已批准,开始执行。");

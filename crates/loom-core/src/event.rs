@@ -148,6 +148,8 @@ pub enum AgentEvent {
     QuestionAnswered { id: String, answers: Vec<Vec<String>> },
     /// 计划批准结果
     PlanResolved { id: String, approved: bool },
+    /// 计划正文更新(流式生成中 `streaming = true`;最终定稿 `false`)
+    PlanUpdated { id: String, markdown: String, streaming: bool },
     Usage(Usage),
     ModeChanged(PermissionMode),
     ModelChanged(String),
@@ -213,7 +215,8 @@ impl AgentEvent {
             | AgentEvent::Todos { id, .. }
             | AgentEvent::PermissionResolved { id, .. }
             | AgentEvent::QuestionAnswered { id, .. }
-            | AgentEvent::PlanResolved { id, .. } => Some(id),
+            | AgentEvent::PlanResolved { id, .. }
+            | AgentEvent::PlanUpdated { id, .. } => Some(id),
             _ => None,
         }
     }

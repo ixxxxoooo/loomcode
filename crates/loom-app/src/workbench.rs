@@ -1296,6 +1296,10 @@ impl Workbench {
                 self.panel.update(cx, |p, cx| p.open_subagent(id, cx));
             }
             UiRequest::OpenPlan(id) => {
+                // 后台会话里出现的计划不抢当前会话的右栏
+                if source.is_some() && source != self.active_model().map(|m| m.entity_id()) {
+                    return;
+                }
                 self.right_open = true;
                 let id = id.clone();
                 self.panel.update(cx, |p, cx| p.open_plan(Some(id), cx));

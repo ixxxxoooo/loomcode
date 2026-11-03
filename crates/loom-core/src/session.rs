@@ -249,6 +249,13 @@ impl SessionState {
             AgentEvent::PlanResolved { id, approved } => {
                 if let Some(TimelineItem::PlanApproval(p)) = self.find_mut(&id) {
                     p.approved = Some(approved);
+                    p.streaming = false;
+                }
+            }
+            AgentEvent::PlanUpdated { id, markdown, streaming } => {
+                if let Some(TimelineItem::PlanApproval(p)) = self.find_mut(&id) {
+                    p.markdown = markdown;
+                    p.streaming = streaming;
                 }
             }
             AgentEvent::Usage(u) => self.usage = u,
@@ -747,7 +754,7 @@ mod tests {
         let mut s = SessionState::default();
         s.apply(AgentEvent::Append {
             parent: None,
-            item: TimelineItem::PlanApproval(PlanApproval { id: "p".into(), markdown: "# x".into(), approved: None }),
+            item: TimelineItem::PlanApproval(PlanApproval { id: "p".into(), markdown: "# x".into(), approved: None, streaming: false }),
         });
         assert!(s.awaiting_user());
         s.apply(AgentEvent::PlanResolved { id: "p".into(), approved: true });
