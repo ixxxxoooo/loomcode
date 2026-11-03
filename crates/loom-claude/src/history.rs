@@ -139,7 +139,9 @@ fn record_usage(v: &Value, acc: &mut Vec<(String, TurnStats)>) {
     let m = &v["message"];
     let (Some(id), Some(u)) = (m.get("id").and_then(Value::as_str), m.get("usage")) else { return };
     let n = |k: &str| u.get(k).and_then(Value::as_u64).unwrap_or(0);
+    let model = m.get("model").and_then(Value::as_str).filter(|x| !x.starts_with('<')).map(String::from);
     let stats = TurnStats {
+        model,
         input: n("input_tokens"),
         output: n("output_tokens"),
         thinking: u.pointer("/output_tokens_details/thinking_tokens").and_then(Value::as_u64).unwrap_or(0),
@@ -155,7 +157,9 @@ fn record_usage(v: &Value, acc: &mut Vec<(String, TurnStats)>) {
 
 /// 把当前回合累积的各消息用量加总,作为 `TurnStats` 事件追加;没有用量就什么也不加。
 fn flush_stats(uid: &mut Option<String>, acc: &mut Vec<(String, TurnStats)>, out: &mut Vec<AgentEvent>) {
-    let total = acc.drain(..).fold(TurnStats::default(), |mut t, (_, s)| {
+    // 主模型:输出最多的那条消息用的模型
+    let model = acc.iter().max_by_key(|(_, s)| s.output).and_then(|(_, s)| s.model.clone());
+    let total = acc.drain(..).fold(TurnStats { model, ..Default::default() }, |mut t, (_, s)| {
         t.input += s.input;
         t.output += s.output;
         t.thinking += s.thinking;
@@ -244,8 +248,8 @@ mod tests {
         let lines = [
             r#"{"type":"user","timestamp":"2026-01-01T00:00:00Z","message":{"role":"user","content":"问一"}}"#,
             // 同一条消息两行记录:后出现的覆盖先出现的
-            r#"{"type":"assistant","timestamp":"2026-01-01T00:00:02Z","message":{"id":"m1","content":[{"type":"text","text":"a"}],"usage":{"input_tokens":2,"output_tokens":5,"cache_read_input_tokens":100,"cache_creation_input_tokens":10}}}"#,
-            r#"{"type":"assistant","timestamp":"2026-01-01T00:00:03Z","message":{"id":"m1","content":[{"type":"text","text":"b"}],"usage":{"input_tokens":2,"output_tokens":40,"cache_read_input_tokens":100,"cache_creation_input_tokens":10}}}"#,
+            r#"{"type":"assistant","timestamp":"2026-01-01T00:00:02Z","message":{"id":"m1","model":"claude-opus-5-5","content":[{"type":"text","text":"a"}],"usage":{"input_tokens":2,"output_tokens":5,"cache_read_input_tokens":100,"cache_creation_input_tokens":10}}}"#,
+            r#"{"type":"assistant","timestamp":"2026-01-01T00:00:03Z","message":{"id":"m1","model":"claude-opus-5-5","content":[{"type":"text","text":"b"}],"usage":{"input_tokens":2,"output_tokens":40,"cache_read_input_tokens":100,"cache_creation_input_tokens":10}}}"#,
             r#"{"type":"assistant","timestamp":"2026-01-01T00:00:04Z","message":{"id":"m2","content":[{"type":"text","text":"c"}],"usage":{"input_tokens":1,"output_tokens":10,"cache_read_input_tokens":50,"cache_creation_input_tokens":0}}}"#,
             r#"{"type":"user","timestamp":"2026-01-01T00:01:00Z","message":{"role":"user","content":"问二"}}"#,
             r#"{"type":"assistant","timestamp":"2026-01-01T00:01:02Z","message":{"id":"m3","content":[{"type":"text","text":"d"}],"usage":{"input_tokens":7,"output_tokens":9,"cache_read_input_tokens":0,"cache_creation_input_tokens":0}}}"#,
@@ -255,10 +259,11 @@ mod tests {
             s.apply(e);
         }
         let users: Vec<&str> = s.items.iter().filter_map(|i| if let TimelineItem::User { id, .. } = i { Some(id.as_str()) } else { None }).collect();
-        let a = s.turn_stats.get(users[0]).copied().expect("第一回合有统计");
+        let a = s.turn_stats.get(users[0]).cloned().expect("第一回合有统计");
         assert_eq!((a.input, a.output, a.cache_read, a.cache_write, a.calls), (3, 50, 150, 10, Some(2)));
         assert_eq!(a.cost_usd, None, "历史里没有费用");
-        let b = s.turn_stats.get(users[1]).copied().expect("最后一个回合收尾时也要汇总");
+        assert_eq!(a.model.as_deref(), Some("claude-opus-5-5"));
+        let b = s.turn_stats.get(users[1]).cloned().expect("最后一个回合收尾时也要汇总");
         assert_eq!((b.input, b.output), (7, 9));
     }
 

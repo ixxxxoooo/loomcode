@@ -166,8 +166,10 @@ impl CacheTokens {
 /// 一个回合的消耗统计(挂在回合的用户消息上,显示在助手回复下面的操作条里)。
 ///
 /// 实时回合取自 `result` 事件;回放历史时由各条助手消息的 `usage` 汇总,没有的项为 `None`。
-#[derive(Debug, Clone, Copy, Default, PartialEq)]
+#[derive(Debug, Clone, Default, PartialEq)]
 pub struct TurnStats {
+    /// 实际使用的模型 id(如 `claude-opus-5-5`);取不到为 `None`
+    pub model: Option<String>,
     /// 未命中缓存的输入 token
     pub input: u64,
     /// 输出 token(含思考)
@@ -189,6 +191,16 @@ pub struct TurnStats {
 }
 
 impl TurnStats {
+    /// 模型显示名:去掉末尾的日期后缀(`claude-haiku-4-5-20251001` → `claude-haiku-4-5`)。
+    pub fn model_label(&self) -> Option<String> {
+        let m = self.model.as_deref().filter(|m| !m.is_empty() && !m.starts_with('<'))?;
+        let base = match m.rsplit_once('-') {
+            Some((head, tail)) if tail.len() == 8 && tail.bytes().all(|b| b.is_ascii_digit()) => head,
+            _ => m,
+        };
+        Some(base.to_string())
+    }
+
     /// 输入总量:未缓存 + 缓存读取 + 缓存写入。
     pub fn input_total(&self) -> u64 {
         self.input + self.cache_read + self.cache_write
@@ -262,7 +274,9 @@ mod turn_stats_tests {
 
     #[test]
     fn 简短文案与明细() {
-        let s = TurnStats { input: 4, output: 230, thinking: 149, cache_read: 35_613, cache_write: 19_732, cost_usd: Some(0.0044), api_ms: Some(4233), ttft_ms: Some(2916), calls: Some(2) };
+        let s = TurnStats { model: Some("claude-haiku-4-5-20251001".into()), input: 4, output: 230, thinking: 149, cache_read: 35_613, cache_write: 19_732, cost_usd: Some(0.0044), api_ms: Some(4233), ttft_ms: Some(2916), calls: Some(2) };
+        assert_eq!(s.model_label().as_deref(), Some("claude-haiku-4-5"));
+        assert_eq!(TurnStats { model: Some("<synthetic>".into()), ..Default::default() }.model_label(), None);
         assert_eq!(s.short_text(), "↑ 55.3k ↓ 230 · 缓存 64% · $0.004");
         let d = s.detail_text();
         assert!(d.contains("其中思考 149") && d.contains("首字 2.9s") && d.contains("2 次调用"), "{d}");

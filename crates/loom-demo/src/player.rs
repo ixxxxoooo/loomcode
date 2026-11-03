@@ -311,6 +311,7 @@ impl Player {
 fn demo_stats(steps: usize) -> TurnStats {
     let n = steps as u64 + 1;
     TurnStats {
+        model: Some("claude-sonnet-5-5".into()),
         input: 3 + n % 5,
         output: 180 + n * 37,
         thinking: 60 + n * 11,

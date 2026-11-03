@@ -21,7 +21,12 @@ pub fn meta_text(session: &Entity<SessionModel>, ix: usize, cx: &App) -> (String
     let user = m.state.items[..ix].iter().rev().find_map(|i| if let loom_core::TimelineItem::User { id, .. } = i { Some(id.clone()) } else { None });
     let mut parts: Vec<String> = Vec::new();
     let mut tip = None;
-    let name = m.state.models.iter().find(|x| x.id == m.state.model).map_or(m.state.model.clone(), |x| x.name.clone());
+    // 模型:优先显示这个回合实际用的模型 id;没有记录(旧数据 / 没统计)时退回当前模型的名字,
+    // 但「Default (recommended)」这类选项名不是模型,不显示
+    let actual = user.as_ref().and_then(|u| m.state.turn_stats.get(u)).and_then(|s| s.model_label());
+    let name = actual.unwrap_or_else(|| {
+        if m.state.model == "default" { String::new() } else { m.state.models.iter().find(|x| x.id == m.state.model).map_or(m.state.model.clone(), |x| x.name.clone()) }
+    });
     if !name.is_empty() {
         parts.push(name);
     }

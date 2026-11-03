@@ -1185,7 +1185,12 @@ fn turn_stats(v: &Value) -> TurnStats {
     let u = &v["usage"];
     let n = |k: &str| u.get(k).and_then(Value::as_u64).unwrap_or(0);
     let cost: f64 = v.get("model_usage_since_last_result").and_then(Value::as_object).map_or(0., |m| m.values().filter_map(|x| x.get("costUSD").and_then(Value::as_f64)).sum());
+    // 主模型:本回合输出最多的那个(子 Agent 可能用了别的模型)
+    let model = v.get("model_usage_since_last_result").and_then(Value::as_object).and_then(|m| {
+        m.iter().max_by_key(|(_, x)| x.get("outputTokens").and_then(Value::as_u64).unwrap_or(0)).map(|(k, x)| x.get("canonicalModel").and_then(Value::as_str).unwrap_or(k).to_string())
+    });
     TurnStats {
+        model,
         input: n("input_tokens"),
         output: n("output_tokens"),
         thinking: u.pointer("/output_tokens_details/thinking_tokens").and_then(Value::as_u64).unwrap_or(0),
@@ -1329,11 +1334,12 @@ mod tests {
         let mut t = Translator::new("/x");
         let ev = t.handle(&json!({"type":"result","subtype":"success","is_error":false,"result":"ok","duration_api_ms":4233,"ttft_ms":2916,"num_turns":2,"total_cost_usd":9.9,
             "usage":{"input_tokens":4,"output_tokens":230,"output_tokens_details":{"thinking_tokens":149},"cache_read_input_tokens":35613,"cache_creation_input_tokens":19732},
-            "model_usage_since_last_result":{"claude-haiku-5-5":{"costUSD":0.0044}}}));
-        let stats = ev.iter().find_map(|e| if let AgentEvent::TurnStats { stats, .. } = e { Some(*stats) } else { None }).expect("有 TurnStats");
+            "model_usage_since_last_result":{"claude-haiku-5-5":{"costUSD":0.0044,"outputTokens":230}}}));
+        let stats = ev.iter().find_map(|e| if let AgentEvent::TurnStats { stats, .. } = e { Some(stats.clone()) } else { None }).expect("有 TurnStats");
         assert_eq!((stats.input, stats.output, stats.thinking, stats.cache_read, stats.cache_write), (4, 230, 149, 35613, 19732));
         // 费用取单回合的 model_usage_since_last_result,不是会话累计的 total_cost_usd
         assert_eq!(stats.cost_usd, Some(0.0044));
+        assert_eq!(stats.model.as_deref(), Some("claude-haiku-5-5"));
         assert_eq!((stats.api_ms, stats.ttft_ms, stats.calls), (Some(4233), Some(2916), Some(2)));
         // TurnStats 在 TurnEnded 之前
         let (a, b) = (ev.iter().position(|e| matches!(e, AgentEvent::TurnStats { .. })), ev.iter().position(|e| matches!(e, AgentEvent::TurnEnded(_))));
