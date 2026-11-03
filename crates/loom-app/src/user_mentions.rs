@@ -109,12 +109,12 @@ fn pieces(text: &str) -> Vec<Option<String>> {
 }
 
 /// 文件引用胶囊:文件类型图标 + 文件名,和输入框里的标记同款。
-fn chip(path: &str, cx: &App) -> AnyElement {
+fn chip(path: &str, h: f32, cx: &App) -> AnyElement {
     let t = cx.theme();
     let name = Path::new(path).file_name().map(|n| n.to_string_lossy().to_string()).unwrap_or_else(|| path.to_string());
     // 绝对路径才去问文件系统是不是文件夹;相对路径按文件处理
     let is_dir = Path::new(path).is_absolute() && Path::new(path).is_dir();
-    h_flex().h(px(22.)).px_1p5().gap_1().items_center().rounded(px(5.)).border_1().border_color(t.border).bg(t.muted.opacity(0.7)).text_size(px(13.)).mx(px(1.))
+    h_flex().h(px(h)).px_1p5().gap_1().items_center().rounded(px(5.)).border_1().border_color(t.border).bg(t.muted.opacity(0.7)).text_size(px(13.)).mx(px(1.))
         .child(file_icon_img(&name, is_dir, false, 14.))
         .child(div().max_w(px(240.)).truncate().child(name))
         .into_any_element()
@@ -125,7 +125,7 @@ fn line(text: &str, line_h: f32, cx: &App) -> AnyElement {
     let mut row = h_flex().w_full().min_w_0().flex_wrap().items_center().min_h(px(line_h));
     for seg in segments(text) {
         match seg {
-            Seg::Mention(p) => row = row.child(chip(p, cx)),
+            Seg::Mention(p) => row = row.child(chip(p, line_h, cx)),
             Seg::Text(s) => {
                 for p in pieces(s) {
                     row = match p {
@@ -137,6 +137,19 @@ fn line(text: &str, line_h: f32, cx: &App) -> AnyElement {
         }
     }
     row.into_any_element()
+}
+
+/// 把正文里的文件引用缩成 `@文件名`,用来估算胶囊占的宽度(吸顶卡估高用)。
+pub fn collapse(text: &str) -> String {
+    segments(text).iter().map(|s| match s {
+        Seg::Text(x) => x.to_string(),
+        Seg::Mention(p) => format!("@{}", Path::new(p).file_name().map(|n| n.to_string_lossy().to_string()).unwrap_or_else(|| p.to_string())),
+    }).collect()
+}
+
+/// 把一行正文(调用方已去掉换行)渲染成可折行的一排;高度由调用方限制(吸顶卡只留两行)。
+pub fn render_flat(text: &str, line_h: f32, cx: &App) -> AnyElement {
+    line(text, line_h, cx)
 }
 
 /// 把含文件引用的正文渲染成多行(每个换行一行,空行保留行高)。
@@ -176,6 +189,12 @@ mod tests {
         assert!(!has_mentions("发给 a@b.com"));
         assert!(!has_mentions("没有引用"));
         assert!(has_mentions("a @./x"));
+    }
+
+    #[::core::prelude::v1::test]
+    fn 缩成文件名() {
+        assert_eq!(collapse("看 @/Users/x/很长的目录/a.xlsx 吧"), "看 @a.xlsx 吧");
+        assert_eq!(collapse("没有引用"), "没有引用");
     }
 
     #[::core::prelude::v1::test]

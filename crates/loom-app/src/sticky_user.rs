@@ -87,6 +87,7 @@ fn flatten(text: &str) -> String {
 
 /// 估算吸附卡高度:短消息单行,长消息两行(上下内边距各 10)。
 fn card_height(text: &str) -> f32 {
+    let text = crate::user_mentions::collapse(text);
     let lines = if text.contains('\n') || text.chars().count() > 60 { MAX_LINES } else { 1 };
     LINE_H * lines as f32 + 20.
 }
@@ -166,7 +167,15 @@ fn sticky_card(session: &Entity<SessionModel>, sc: &ChatScroll, editing_ids: &[S
                         .min_w_0().overflow_hidden()
                         .bg(crate::user_message::card_bg(cx)).cursor_pointer().text_size(px(14.)).line_height(px(LINE_H)).text_color(t.foreground).line_clamp(MAX_LINES)
                         .on_click(move |_, window, cx| edit_click(window, cx))
-                        .child(flatten(&text))
+                        .child({
+                            let flat = flatten(&text);
+                            // 含文件引用:胶囊排版,限高两行并裁掉多余部分;否则原样文本(line_clamp 加省略号)
+                            if crate::user_mentions::has_mentions(&flat) {
+                                div().w_full().min_w_0().max_h(px(LINE_H * MAX_LINES as f32)).overflow_hidden().child(crate::user_mentions::render_flat(&flat, LINE_H, cx)).into_any_element()
+                            } else {
+                                flat.into_any_element()
+                            }
+                        })
                         .child(
                             h_flex().absolute().right(px(8.)).bottom(px(8.)).gap_0p5().when(!(copied || retried), |d| d.invisible().group_hover("sticky-user", |d| d.visible()))
                                 .child(action_btn("sticky-retry".into(), IconName::RotateCcw, "重试(原样重新发送)", retried, cx)
