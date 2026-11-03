@@ -206,8 +206,10 @@ pub fn render(wb: &Workbench, cx: &mut Context<Workbench>) -> impl IntoElement {
             h_flex().h(px(40.)).px_2().gap_1().items_center()
                 .child(Button::new("nav-settings").small().ghost().icon(IconName::Settings).tooltip("设置")
                     .on_click(cx.listener(|this, _, _, cx| this.set_page(Page::Settings, cx))))
-                .when_some(update_capsule(wb, cx), |d, b| d.child(b))
                 .when_some(crate::ui::env_badges(wb.demo, cx), |d, b| d.child(b))
+                // 更新胶囊固定在最右侧:下载中显示百分比,下载完成显示「更新」
+                .child(div().flex_1().min_w_0())
+                .when_some(update_capsule(wb, cx), |d, b| d.child(div().flex_none().pr_1().child(b)))
         )
 }
 
@@ -217,13 +219,13 @@ fn update_capsule(wb: &Workbench, cx: &mut Context<Workbench>) -> Option<Statefu
     use crate::updater::UpdateState as U;
     let t = cx.theme().clone();
     let (text, tip): (String, String) = match &wb.update {
-        U::Available(i) => (format!("更新 v{}", i.version), "点击下载新版本".into()),
+        U::Available(i) => ("下载中".into(), format!("v{} · 正在准备下载", i.version)),
         U::Downloading(i, p) => (
             // 下载阶段带上百分比(或已下载量),校验 / 解包阶段直接写阶段名
             match p { loom_config::update::Progress::Downloading { .. } => format!("下载中 {}", p.short()), _ => p.short() },
             format!("v{} · {}", i.version, p.detail()),
         ),
-        U::Ready(_) => ("重启更新".into(), "新版本已下载并校验,点击重启完成更新".into()),
+        U::Ready(_) => ("更新".into(), "新版本已下载并校验,点击重启完成更新".into()),
         _ => return None,
     };
     let clickable = !matches!(wb.update, U::Downloading(..));
