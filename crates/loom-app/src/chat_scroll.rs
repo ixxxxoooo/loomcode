@@ -19,7 +19,7 @@ use std::rc::Rc;
 /// 视口外额外渲染的高度,滚动更顺滑。
 const OVERDRAW: Pixels = px(400.);
 /// 距离底部不超过这个像素数就算「在底部」。
-const BOTTOM_SLOP: f32 = 24.;
+pub const BOTTOM_SLOP: f32 = 24.;
 
 /// 滚动状态:包一层 `ListState`,提供与原 `MessageScrollerState` 同名的操作。
 pub struct ChatScroll {
@@ -38,12 +38,17 @@ impl ChatScroll {
 
     /// 是否离开了底部(用滚动位置判断,不依赖行高是否全部测量)。
     pub fn is_away_from_bottom(&self) -> bool {
+        self.distance_from_bottom() > BOTTOM_SLOP
+    }
+
+    /// 视口底边离内容底部的距离(像素,内容不足一屏时为 0)。
+    pub fn distance_from_bottom(&self) -> f32 {
         let max = f32::from(self.list.max_offset_for_scrollbar().y);
         if max <= 0. {
-            return false;
+            return 0.;
         }
         let top = -f32::from(self.list.scroll_px_offset_for_scrollbar().y);
-        max - top > BOTTOM_SLOP
+        (max - top).max(0.)
     }
 
     /// 这一帧画出来的最大行下标(没画过返回 None)。
@@ -187,4 +192,37 @@ pub fn chat_scroller(
 /// 构造 gpui 列表元素(撑满父容器)。
 fn list_el(list: ListState, render: impl FnMut(usize, &mut Window, &mut App) -> AnyElement + 'static) -> impl IntoElement {
     gpui_kit::list(list, render).size_full().min_h_0()
+}
+
+/// 一次滚轮手势结束后,是否要把会话流吸回底部。
+///
+/// 只处理「本来贴着底部、被触控板误触轻轻拉开」的情况:手势开始时就不在底部附近(用户在读历史),
+/// 或者位移已经不算轻微,都尊重用户,不动。
+///
+/// 参数:`started_near_bottom` 手势开始时是否贴底;`net` 手势净位移的绝对值(像素);
+/// `away` 结束时是否已离开底部。
+pub fn should_snap_to_end(started_near_bottom: bool, net: f32, away: bool) -> bool {
+    started_near_bottom && away && net < SNAP_BACK_MAX_NET
+}
+
+/// 手势净位移小于这个值才算「误触」。
+const SNAP_BACK_MAX_NET: f32 = 40.;
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[::core::prelude::v1::test]
+    fn 贴底处轻微晃动才吸回() {
+        assert!(should_snap_to_end(true, 12., true));
+        // 已经在底部,不用吸
+        assert!(!should_snap_to_end(true, 12., false));
+        // 位移较大是有意滚动
+        assert!(!should_snap_to_end(true, 80., true));
+    }
+
+    #[::core::prelude::v1::test]
+    fn 读历史时的小幅滚动不被拽回底部() {
+        assert!(!should_snap_to_end(false, 12., true));
+    }
 }

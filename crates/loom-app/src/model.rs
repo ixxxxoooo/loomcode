@@ -44,6 +44,8 @@ pub struct SessionModel {
     pub wheel_acc: f32,
     pub wheel_pending: bool,
     wheel_last: f32,
+    /// 当前这次滚轮手势开始时,会话流是否贴着底部
+    wheel_from_bottom: bool,
     /// 输入框上方的后台任务列表是否展开
     /// 任务坞当前展开的是哪一类胶囊的列表(`None` 为全部收起)
     pub tasks_open: Option<TaskGroup>,
@@ -97,6 +99,7 @@ impl SessionModel {
             wheel_acc: 0.,
             wheel_pending: false,
             wheel_last: 0.,
+            wheel_from_bottom: false,
             // 调试用:LOOM_TASKS=1 启动即展开任务坞,方便截图
             tasks_open: std::env::var("LOOM_TASKS").ok().map(|v| task_group_from_key(&v)),
             tasks_outside_closed: None,
@@ -489,8 +492,8 @@ impl SessionModel {
         }
     }
 
-    /// 滚轮事件:累计位移,手势停下 150ms 后,若只是在贴底处轻微晃动(净位移 < 40px)
-    /// 就吸附回底部并恢复跟随,避免触控板误触让会话流脱离底部。
+    /// 滚轮事件:累计位移,手势停下 150ms 后,若手势开始时本来贴底、结果只是被轻微拉开(净位移 < 40px)
+    /// 就吸附回底部并恢复跟随,避免触控板误触让会话流脱离底部;在历史中间读内容时的小幅滚动不受影响。
     ///
     /// 参数:`dy` 本次滚轮的垂直位移(像素)。
     pub fn on_wheel(&mut self, dy: f32, cx: &mut Context<Self>) {
@@ -499,6 +502,8 @@ impl SessionModel {
             return;
         }
         self.wheel_pending = true;
+        // 手势第一个事件:记下起点是否贴底。列表可能已经先吃掉了这一次位移,所以放宽 |dy|
+        self.wheel_from_bottom = self.scroller.read(cx).distance_from_bottom() <= crate::chat_scroll::BOTTOM_SLOP + dy.abs();
         cx.spawn(async move |this, cx| loop {
             cx.background_executor().timer(std::time::Duration::from_millis(150)).await;
             let done = this.update(cx, |m, cx| {
@@ -512,9 +517,9 @@ impl SessionModel {
                 m.wheel_acc = 0.;
                 m.wheel_last = 0.;
                 m.wheel_pending = false;
-                let near = net < 40.;
+                let from_bottom = m.wheel_from_bottom;
                 m.scroller.update(cx, |s, cx| {
-                    if near && s.is_away_from_bottom() {
+                    if crate::chat_scroll::should_snap_to_end(from_bottom, net, s.is_away_from_bottom()) {
                         s.scroll_to_end(cx);
                     }
                 });
