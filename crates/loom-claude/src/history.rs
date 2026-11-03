@@ -142,6 +142,7 @@ fn record_usage(v: &Value, acc: &mut Vec<(String, TurnStats)>) {
     let stats = TurnStats {
         input: n("input_tokens"),
         output: n("output_tokens"),
+        thinking: u.pointer("/output_tokens_details/thinking_tokens").and_then(Value::as_u64).unwrap_or(0),
         cache_read: n("cache_read_input_tokens"),
         cache_write: n("cache_creation_input_tokens"),
         ..Default::default()
@@ -157,6 +158,7 @@ fn flush_stats(uid: &mut Option<String>, acc: &mut Vec<(String, TurnStats)>, out
     let total = acc.drain(..).fold(TurnStats::default(), |mut t, (_, s)| {
         t.input += s.input;
         t.output += s.output;
+        t.thinking += s.thinking;
         t.cache_read += s.cache_read;
         t.cache_write += s.cache_write;
         t.calls = Some(t.calls.unwrap_or(0) + 1);
@@ -354,3 +356,4 @@ mod tests {
         let _ = std::fs::remove_dir_all(&root);
     }
 }
+
