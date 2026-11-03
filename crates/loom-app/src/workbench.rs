@@ -610,6 +610,10 @@ impl Workbench {
         let palette = cx.new(|cx| Palette::new(items, window, cx));
         self._palette_sub = Some(cx.subscribe_in(&palette, window, |this, _, ev: &PaletteEvent, window, cx| match ev {
             PaletteEvent::Close => this.toggle_palette(window, cx),
+            PaletteEvent::PreviewTheme(c) => {
+                theme::apply_preview(*c, cx);
+                window.refresh();
+            }
             PaletteEvent::Run(action) => {
                 let action = action.clone();
                 this.toggle_palette(window, cx);
@@ -623,35 +627,24 @@ impl Workbench {
     /// 汇总面板条目:命令、会话、当前项目文件、演示场景。
     fn palette_items(&self, cx: &App) -> Vec<PaletteItem> {
         let mut items = Vec::new();
+        // 欢迎列表(无查询)只展示 `cmds`:常用的放前面;设置 / 自定义页的跳转进 `pages`,输入查询或切到「命令」分段才出现
+        let mut cmds: Vec<PaletteItem> = Vec::new();
+        let mut pages: Vec<PaletteItem> = Vec::new();
         let mut cmd = |title: &str, sub: &str, ic: IconName, action: PaletteAction| {
-            items.push(PaletteItem { title: title.into(), subtitle: sub.into(), group: Group::Command, icon: ic, action });
+            cmds.push(PaletteItem { title: title.into(), subtitle: sub.into(), group: Group::Command, icon: ic, action });
         };
         cmd("新会话", "⌘N", IconName::Plus, PaletteAction::NewSession);
+        cmd("主题:切换…", &format!("当前:{}", theme::preview(self.settings.theme).0), IconName::Palette, PaletteAction::PickTheme);
         cmd("打开设置", "⌘,", IconName::Settings, PaletteAction::OpenSettings(None));
-        for tab in SettingsTab::all().filter(|t| *t != SettingsTab::General) {
-            cmd(&format!("设置:{}", tab.label()), "", tab.icon(), PaletteAction::OpenSettings(Some(tab.key())));
-        }
-        cmd("自定义:插件", "", IconName::Plug, PaletteAction::OpenCustomize("plugins"));
-        cmd("自定义:MCP 服务器", "", IconName::Plug, PaletteAction::OpenCustomize("mcp"));
-        cmd("自定义:技能", "", IconName::Sparkles, PaletteAction::OpenCustomize("skills"));
-        cmd("自定义:斜杠命令", "", IconName::SquareTerminal, PaletteAction::OpenCustomize("commands"));
-        cmd("自定义:子 Agent", "", IconName::Bot, PaletteAction::OpenCustomize("agents"));
-        cmd("自定义:规则与记忆 CLAUDE.md", "", IconName::Brain, PaletteAction::OpenCustomize("rules"));
-        cmd("自定义:钩子", "", IconName::Webhook, PaletteAction::OpenCustomize("hooks"));
         cmd("切换权限模式", "⇧Tab", IconName::Shield, PaletteAction::CycleMode);
-        cmd(&format!("{}(重启)", self.switch_mode_label()), "演示 ↔ 真实", IconName::Repeat, PaletteAction::SwitchMode);
         cmd("切换 IDE 模式", "⇧⌘E", IconName::Code, PaletteAction::ToggleIde);
         cmd("显示 / 隐藏左侧栏", "⌘B", IconName::PanelLeft, PaletteAction::ToggleLeft);
         cmd("显示 / 隐藏右侧面板", "⌥⌘B", IconName::PanelRight, PaletteAction::ToggleRight);
-        for c in ThemeChoice::ALL.into_iter().filter(|c| *c != ThemeChoice::System) {
-            let dark = theme::is_dark_theme(c).unwrap_or(false);
-            cmd(&format!("主题:{}", theme::preview(c).0), "", if dark { IconName::Moon } else { IconName::Sun }, PaletteAction::SetTheme(c));
-        }
-        cmd("主题:跟随系统", "", IconName::Monitor, PaletteAction::SetTheme(ThemeChoice::System));
         cmd("打开 Canvas 画布", "", IconName::LayoutDashboard, PaletteAction::OpenPage("canvas"));
         cmd("打开自动化", "", IconName::Timer, PaletteAction::OpenPage("automation"));
         cmd("打开自定义(插件 / MCP / 技能 / 命令…)", "", IconName::SlidersHorizontal, PaletteAction::OpenPage("customize"));
         cmd("打开内置浏览器", "", IconName::Globe, PaletteAction::OpenPage("browser"));
+        cmd(&format!("{}(重启)", self.switch_mode_label()), "演示 ↔ 真实", IconName::Repeat, PaletteAction::SwitchMode);
         if self.demo {
             cmd("演示:重新播放当前场景", "从头按演示速度播放", IconName::Play, PaletteAction::ReplayScenario);
             cmd("演示速度:正常 ×1", "", IconName::Gauge, PaletteAction::DemoSlow(1));
@@ -659,6 +652,21 @@ impl Workbench {
             cmd("演示速度:很慢 ×6", "逐步观察", IconName::Gauge, PaletteAction::DemoSlow(6));
             cmd("演示速度:极慢 ×12", "", IconName::Gauge, PaletteAction::DemoSlow(12));
         }
+        let mut page = |title: &str, ic: IconName, action: PaletteAction| {
+            pages.push(PaletteItem { title: title.into(), subtitle: String::new(), group: Group::Setting, icon: ic, action });
+        };
+        for tab in SettingsTab::all().filter(|t| *t != SettingsTab::General) {
+            page(&format!("设置:{}", tab.label()), tab.icon(), PaletteAction::OpenSettings(Some(tab.key())));
+        }
+        page("自定义:插件", IconName::Plug, PaletteAction::OpenCustomize("plugins"));
+        page("自定义:MCP 服务器", IconName::Plug, PaletteAction::OpenCustomize("mcp"));
+        page("自定义:技能", IconName::Sparkles, PaletteAction::OpenCustomize("skills"));
+        page("自定义:斜杠命令", IconName::SquareTerminal, PaletteAction::OpenCustomize("commands"));
+        page("自定义:子 Agent", IconName::Bot, PaletteAction::OpenCustomize("agents"));
+        page("自定义:规则与记忆 CLAUDE.md", IconName::Brain, PaletteAction::OpenCustomize("rules"));
+        page("自定义:钩子", IconName::Webhook, PaletteAction::OpenCustomize("hooks"));
+        items.extend(cmds);
+        items.extend(pages);
         for (pi, p) in self.projects.iter().enumerate() {
             items.push(PaletteItem { title: p.name.clone(), subtitle: p.path.clone(), group: Group::Project, icon: IconName::Folder, action: PaletteAction::OpenProject(pi) });
         }
@@ -720,7 +728,8 @@ impl Workbench {
                 crate::notice::info(window, cx, format!("演示播放速度已设为{}(下次播放 / 重新播放生效)", if n <= 1 { "正常".to_string() } else { format!("慢 ×{n}") }));
             }
             PaletteAction::SwitchMode => self.request_switch_mode(window, cx),
-            PaletteAction::Ide(_) => {}
+            // 主题列表由面板自己展开,不会走到这里
+            PaletteAction::PickTheme | PaletteAction::Ide(_) => {}
         }
     }
 

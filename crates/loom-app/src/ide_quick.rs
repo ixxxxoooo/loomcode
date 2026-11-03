@@ -58,12 +58,17 @@ impl IdeWindow {
         cmd("源代码管理", "⌃⇧G", IconName::GitBranch, PaletteAction::Ide("scm"));
         cmd("显示 / 隐藏终端", "⌘J", IconName::SquareTerminal, PaletteAction::Ide("terminal"));
         cmd("新建对话会话", "", IconName::Plus, PaletteAction::Ide("new-chat"));
+        cmd("主题:切换…", &format!("当前:{}", crate::theme::preview(crate::prefs(cx).theme).0), IconName::Palette, PaletteAction::PickTheme);
         cmd("切换到 Agent", "⇧⌘E", IconName::MessageSquare, PaletteAction::ToggleIde);
         cmd("显示 / 隐藏侧栏", "⌘B", IconName::PanelLeft, PaletteAction::ToggleLeft);
         cmd("显示 / 隐藏对话栏", "⌥⌘B", IconName::PanelRight, PaletteAction::ToggleRight);
         let palette = cx.new(|cx| Palette::new(items, window, cx));
         self._quick_sub = Some(cx.subscribe_in(&palette, window, |this, _, ev: &PaletteEvent, window, cx| match ev {
             PaletteEvent::Close => this.toggle_quick(window, cx),
+            PaletteEvent::PreviewTheme(c) => {
+                crate::theme::apply_preview(*c, cx);
+                window.refresh();
+            }
             PaletteEvent::Run(action) => {
                 let action = action.clone();
                 this.toggle_quick(window, cx);
@@ -74,6 +79,7 @@ impl IdeWindow {
                     PaletteAction::ToggleIde => this.back_to_agent(cx),
                     PaletteAction::OpenSession(_, id) => this.activate_chat_tab(&id, window, cx),
                     PaletteAction::Ide(name) => this.run_ide_command(name, window, cx),
+                    PaletteAction::SetTheme(c) => this.wb.update(cx, |wb, cx| wb.update_settings(cx, |s| s.theme = c)),
                     _ => {}
                 }
                 cx.notify();

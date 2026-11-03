@@ -109,6 +109,15 @@ pub fn apply(kind: ThemeKind, window: Option<&mut Window>, cx: &mut App) {
     crate::app_icon::set_dock_icon(cx.theme().is_dark());
 }
 
+/// 临时套用某个主题(命令面板的主题预览):不写设置,强调色取该主题自己记住的那个。
+/// 还原时再传回设置里的当前主题即可(当前主题用当前强调色)。
+pub fn apply_preview(choice: ThemeChoice, cx: &mut App) {
+    let s = crate::prefs(cx);
+    let accent = if choice == s.theme { s.accent } else { s.theme_accents.get(choice.key()).cloned() };
+    cx.set_global(Accent(accent.as_deref().and_then(parse_hex)));
+    apply(ThemeKind::from(choice), None, cx);
+}
+
 /// 从最终主色派生悬停 / 选中 / 焦点 / 选区等,让整套界面随主题与强调色一起变。
 fn derive_from_primary(dark: bool, bg: Hsla, cx: &mut App) {
     let k = if dark { 1.3 } else { 1.0 };

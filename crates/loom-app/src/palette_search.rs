@@ -36,7 +36,7 @@ impl Segment {
             Self::Session => group == Group::Session,
             Self::Project => group == Group::Project,
             Self::File => group == Group::File,
-            Self::Command => group == Group::Command,
+            Self::Command => matches!(group, Group::Command | Group::Setting),
         }
     }
 }
@@ -97,7 +97,7 @@ pub fn fuzzy_score(query: &str, text: &str) -> Option<i32> {
 pub fn filter_items(items: &[PaletteItem], query: &str, limit: usize, segment: Segment) -> Vec<PaletteItem> {
     if query.trim().is_empty() {
         let keep = |i: &&PaletteItem| match segment {
-            Segment::All => matches!(i.group, Group::Command | Group::Session | Group::Recent),
+            Segment::All => matches!(i.group, Group::Command | Group::Session | Group::Recent | Group::Theme),
             Segment::File => matches!(i.group, Group::File | Group::Recent),
             other => other.accepts(i.group),
         };
@@ -193,6 +193,24 @@ mod tests {
         assert_eq!(filter_items(&items, "", 10, Segment::Project).len(), 1);
         assert_eq!(filter_items(&items, "loo", 10, Segment::All).len(), 1);
         assert!(filter_items(&items, "loo", 10, Segment::Session).is_empty());
+    }
+
+    #[::core::prelude::v1::test]
+    fn 设置页跳转不进欢迎列表但能搜到() {
+        let items = vec![item("新会话", Group::Command), item("设置:终端", Group::Setting)];
+        // 欢迎列表(无查询)只有常用命令
+        assert_eq!(filter_items(&items, "", 10, Segment::All).len(), 1);
+        // 输入查询后能搜到
+        assert_eq!(filter_items(&items, "终端", 10, Segment::All).len(), 1);
+        // 「命令」分段完整列出,含设置页
+        assert_eq!(filter_items(&items, "", 10, Segment::Command).len(), 2);
+    }
+
+    #[::core::prelude::v1::test]
+    fn 主题列表无查询时全部列出() {
+        let items = vec![item("Nord", Group::Theme), item("Dracula", Group::Theme)];
+        assert_eq!(filter_items(&items, "", 10, Segment::All).len(), 2);
+        assert_eq!(filter_items(&items, "drac", 10, Segment::All).len(), 1);
     }
 
     #[::core::prelude::v1::test]
