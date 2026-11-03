@@ -13,6 +13,8 @@ use std::collections::HashMap;
 pub struct RowProbe {
     tops: RefCell<HashMap<usize, f32>>,
     max_ix: Cell<Option<usize>>,
+    /// 调试:各行上次画出的高度(跨帧保留,不随 `begin_frame` 清掉)。
+    heights: RefCell<HashMap<usize, f32>>,
 }
 
 impl RowProbe {
@@ -26,6 +28,12 @@ impl RowProbe {
     pub fn record(&self, ix: usize, top: f32) {
         self.tops.borrow_mut().insert(ix, top);
         self.max_ix.set(Some(self.max_ix.get().map_or(ix, |m| m.max(ix))));
+    }
+
+    /// 调试:记录一行画出的高度,与上次不同(差 > 0.5px)时返回旧值。参数:`ix` 行下标;`h` 高度。
+    pub fn note_height(&self, ix: usize, h: f32) -> Option<f32> {
+        let old = self.heights.borrow_mut().insert(ix, h);
+        old.filter(|o| (o - h).abs() > 0.5)
     }
 
     /// 这一帧画出来的行的顶边;没画出来返回 None。

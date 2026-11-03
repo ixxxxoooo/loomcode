@@ -27,3 +27,4 @@ opt-level = 3
 # 用于在语法高亮外包一层「括号按嵌套深度着字色」(见 vendor/README.md)。
 [patch.crates-io]
 gpui-component = { path = "vendor/gpui-component" }
+gpui-pre = { path = "vendor/gpui-pre" }

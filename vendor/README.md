@@ -12,4 +12,13 @@
 
 升级 gpui-kit 时:换成新版本源码,重做上面的改动;若上游已公开该工厂,直接删掉本目录与 `[patch]`。
 
+## gpui-pre 0.3.9(补丁版)
+
+来源:crates.io 的 `gpui-pre 0.3.9`,经根 `Cargo.toml` 的 `[patch.crates-io]` 替换。
+
+**改动一处**:`src/elements/list.rs` 的 `List::prepaint`:首次布局或列表宽度变化时,原实现把所有行的高度提示清成 `None`(未测量的行按 0 高度计);改为保留旧高度(`item.size_hint()`)。
+用途:会话流虚拟列表。按 0 高度计时,往上滚进还没渲染过的历史,「滚动位置 → 行」的换算会塌缩,一次跨过十几行,表现为滚着滚着突然跳走;配合 `chat_scroll.rs` 给每行设的估高(`EST_ROW_H`)才有效。
+
+升级 gpui 时:重做这一处;若上游已保留提示,直接删掉本目录与 `[patch]`。
+
 @author ixxxxoooo

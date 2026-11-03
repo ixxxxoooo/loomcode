@@ -24,6 +24,12 @@ const OVERDRAW: Pixels = px(400.);
 /// 上面全是 0 高度,用户往上滚进这片区域时「滚动位置 → 行」的换算会塌缩(一次滚得比已测量部分多,
 /// 就直接落到很靠前的行),表现为滚着滚着突然跳走。给每行一个估值,换算才连续;实际渲染后会被真实高度替换。
 const EST_ROW_H: Pixels = px(120.);
+/// 调试:环境变量 `LOOM_SCROLL_TRACE` 开启后,每次滚动事件把列表位置写进日志。
+fn scroll_trace() -> bool {
+    static ON: std::sync::OnceLock<bool> = std::sync::OnceLock::new();
+    *ON.get_or_init(|| std::env::var("LOOM_SCROLL_TRACE").is_ok())
+}
+
 /// 距离底部不超过这个像素数就算「在底部」。
 pub const BOTTOM_SLOP: f32 = 24.;
 
@@ -86,6 +92,7 @@ impl ChatScroll {
 
     /// 重置为 `item_count` 行并恢复跟随。
     pub fn reset(&mut self, item_count: usize, cx: &mut Context<Self>) {
+        if scroll_trace() { loom_diag::info!("列表 reset n={}", item_count); }
         self.list.reset_with_uniform_height(item_count, EST_ROW_H);
         self.list.set_follow_mode(FollowMode::Tail);
         cx.notify();
@@ -95,11 +102,18 @@ impl ChatScroll {
     /// 末行带额外底部留白,「是不是末行」变了的相邻行要重新测量。
     pub fn splice(&mut self, range: Range<usize>, count: usize, cx: &mut Context<Self>) {
         let n = self.list.item_count();
+        if scroll_trace() { loom_diag::info!("列表 splice {:?} -> {} (现有 {})", range, count, n); }
         if range.start > range.end || range.end > n {
             return;
         }
         let start = range.start;
         self.list.splice(range, count);
+        // 批量新增的行(历史会话分批载入)补上估高:`splice` 出来的行没有高度提示、按 0 高度计,
+        // 往上滚进未渲染区时位置换算塌缩,一下跨过十几行(实测第 43 行上方累计高度只有 254px)。
+        // 已有高度的行保留原值作提示,只给没有提示的补估值。
+        if count >= 2 {
+            let _ = self.list.clone().with_uniform_item_height(EST_ROW_H);
+        }
         let total = self.list.item_count();
         if start > 0 && start <= total {
             self.list.remeasure_items(start - 1..start);
@@ -161,7 +175,7 @@ pub fn chat_scroller(
         let probe = probe.clone();
         // 零尺寸占位画布:记录这一行实际画出的顶边
         div().relative().w_full().min_w_0().px_3()
-            .child(canvas(move |b, _, _| probe.record(ix, f32::from(b.top())), |_, _, _, _| {}).absolute().size_full())
+            .child(canvas(move |b, _, _| { probe.record(ix, f32::from(b.top())); if scroll_trace() { if let Some(old) = probe.note_height(ix, f32::from(b.size.height)) { loom_diag::info!("行高变化 ix={} {:.1} -> {:.1}", ix, old, f32::from(b.size.height)); } } }, |_, _, _, _| {}).absolute().size_full())
             .child(render_row(ix, w, c)).into_any_element()
     });
     let weak = state.downgrade();
@@ -173,7 +187,13 @@ pub fn chat_scroller(
         .child(
             div().size_full().min_h_0().min_w_0()
                 .child(gpui_kit::base::ScrollBounce::new(SharedString::from("timeline-bounce"), &list, list_el).enabled(false).on_scroll(move |_, cx| {
-                    let _ = weak.update(cx, |_, cx| cx.notify());
+                    let _ = weak.update(cx, |s, cx| {
+                        if scroll_trace() {
+                            let t = s.list.logical_scroll_top();
+                            loom_diag::info!("滚动追踪 item={} off={:.1} bar_y={:.1} max={:.1} following={}", t.item_ix, f32::from(t.offset_in_item), f32::from(s.list.scroll_px_offset_for_scrollbar().y), f32::from(s.list.max_offset_for_scrollbar().y), s.list.is_following_tail());
+                        }
+                        cx.notify()
+                    });
                 }))
                 .vertical_scrollbar(&list),
         )
