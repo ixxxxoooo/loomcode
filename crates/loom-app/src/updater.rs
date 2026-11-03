@@ -85,13 +85,34 @@ impl Workbench {
     }
 
     /// 把更新进展发到通知中心(IDE 右下角弹出并留在铃铛历史里,带动作按钮);Agent 窗口不显示。
-    fn announce_update(&self, message: String, label: &'static str, run: fn(&mut Workbench, &mut Context<Workbench>), cx: &mut Context<Self>) {
+    fn announce_update(&mut self, message: String, label: &'static str, run: fn(&mut Workbench, &mut Context<Workbench>), cx: &mut Context<Self>) {
+        if crate::notice::has_ide_window(cx) {
+            self.update_reminded = true;
+        }
         let wb = cx.entity().downgrade();
         let action = crate::notice::NoticeAction {
             label: label.into(),
             run: std::rc::Rc::new(move |_, cx| { let _ = wb.update(cx, |w, cx| run(w, cx)); }),
         };
         crate::notice::post(cx, crate::notice::Kind::Info, message, Some(action));
+    }
+
+    /// 进入 IDE(融合或独立窗口)时:如果有新版本(或已下载待重启)而 IDE 里还没提醒过,补发一条通知。
+    /// IDE 窗口此时多半还没登记 / 没渲染,稍等片刻再发,这样右下角能弹出来。
+    pub fn remind_update_in_ide(&mut self, cx: &mut Context<Self>) {
+        if self.update_reminded || !matches!(self.update, UpdateState::Available(_) | UpdateState::Ready(_)) {
+            return;
+        }
+        self.update_reminded = true;
+        cx.spawn(async move |this, cx| {
+            cx.background_executor().timer(std::time::Duration::from_millis(800)).await;
+            let _ = this.update(cx, |this, cx| match this.update.clone() {
+                UpdateState::Available(i) => this.announce_update(format!("发现新版本 v{}", i.version), "下载更新", Self::download_update, cx),
+                UpdateState::Ready(s) => this.announce_update(format!("v{} 已下载并校验,重启即可更新", s.version), "重启更新", Self::install_update, cx),
+                _ => {}
+            });
+        })
+        .detach();
     }
 
     /// 后台下载并校验新版本,完成后进入「可重启更新」。

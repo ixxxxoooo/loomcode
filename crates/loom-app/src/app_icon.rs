@@ -84,6 +84,19 @@ mod mac {
 #[cfg(target_os = "macos")]
 pub(crate) use mac::image as ns_image;
 
+/// App 图标 PNG 字节(浅色 / 深色版),给「关于」窗口显示。
+pub fn icon_png(dark: bool) -> &'static [u8] {
+    #[cfg(target_os = "macos")]
+    {
+        if dark { ICON_DARK } else { ICON_LIGHT }
+    }
+    #[cfg(not(target_os = "macos"))]
+    {
+        let _ = dark;
+        &[]
+    }
+}
+
 /// 按主题切换 Dock 图标。参数:`dark` 当前主题是否深色。
 pub fn set_dock_icon(dark: bool) {
     #[cfg(target_os = "macos")]

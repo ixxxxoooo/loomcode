@@ -206,8 +206,32 @@ pub fn render(wb: &Workbench, cx: &mut Context<Workbench>) -> impl IntoElement {
             h_flex().h(px(40.)).px_2().gap_1().items_center()
                 .child(Button::new("nav-settings").small().ghost().icon(IconName::Settings).tooltip("设置")
                     .on_click(cx.listener(|this, _, _, cx| this.set_page(Page::Settings, cx))))
+                .when_some(update_capsule(wb, cx), |d, b| d.child(b))
                 .when_some(crate::ui::env_badges(wb.demo, cx), |d, b| d.child(b))
         )
+}
+
+/// 有新版本时,设置按钮右侧的更新胶囊:发现新版本 → 下载更新;下载完成 → 重启更新;下载中显示进度文字。
+/// 没有更新(或不是可更新的状态)时返回 `None`。
+fn update_capsule(wb: &Workbench, cx: &mut Context<Workbench>) -> Option<Stateful<Div>> {
+    use crate::updater::UpdateState as U;
+    let t = cx.theme().clone();
+    let (text, tip): (String, &'static str) = match &wb.update {
+        U::Available(i) => (format!("更新 v{}", i.version), "点击下载新版本"),
+        U::Downloading(_) => ("下载中…".into(), "正在下载并校验新版本"),
+        U::Ready(_) => ("重启更新".into(), "新版本已下载并校验,点击重启完成更新"),
+        _ => return None,
+    };
+    let clickable = !matches!(wb.update, U::Downloading(_));
+    Some(
+        div().id("update-capsule").when(clickable, |d| d.cursor_pointer()).child(crate::ui::pill(text, t.primary_foreground, t.primary))
+            .tooltip(move |window, cx| gpui_kit::component::tooltip::Tooltip::new(tip).build(window, cx))
+            .on_click(cx.listener(|this, _, _, cx| match this.update {
+                U::Available(_) => this.download_update(cx),
+                U::Ready(_) => this.install_update(cx),
+                _ => {}
+            })),
+    )
 }
 
 #[cfg(test)]

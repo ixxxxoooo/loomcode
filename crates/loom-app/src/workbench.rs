@@ -151,6 +151,8 @@ pub struct Workbench {
     pub ui_state: UiState,
     /// 应用更新流程状态
     pub update: crate::updater::UpdateState,
+    /// 新版本的提醒是否已经在 IDE 通知里出现过(进入 IDE 时只补发一次)
+    pub update_reminded: bool,
     pub ui_state_path: PathBuf,
     /// 侧栏是否显示已归档会话
     pub show_archived: bool,
@@ -312,6 +314,7 @@ impl Workbench {
             settings_path,
             ui_state,
             update: Default::default(),
+            update_reminded: false,
             ui_state_path,
             show_archived: false,
             unread: HashSet::new(),
@@ -1409,6 +1412,7 @@ impl Workbench {
         self.ide = !self.ide;
         if self.ide {
             self.ide_enter += 1;
+            self.remind_update_in_ide(cx);
             self.page = Page::Chat;
             if self.ide_shell.is_none() {
                 let wb = cx.entity();
@@ -1428,6 +1432,7 @@ impl Workbench {
     /// 打开独立 IDE 窗口;已存在则直接聚焦。
     fn open_ide_window(&mut self, window: &mut Window, cx: &mut Context<Self>) {
         self.ide_enter += 1;
+        self.remind_update_in_ide(cx);
         self.agent_window = Some(window.window_handle());
         if let Some(handle) = self.ide_window
             && handle.update(cx, |_, w, _| w.activate_window()).is_ok()

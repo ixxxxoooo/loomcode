@@ -8,7 +8,7 @@ use crate::{ide, term_actions, workbench};
 use gpui_kit::component::input::{Copy, Cut, GoToDefinition, Paste, Redo, Replace, Search, SelectAll, Undo};
 use gpui_kit::*;
 
-actions!(loomcode_app, [QuitApp, HideApp, HideOthers, ShowAll, MinimizeWindow, ZoomWindow, ToggleFullscreen, CloseWindow, NavBack, NavForward, AddProject, OpenLogs, OpenHomepage, ReportIssue, CheckForUpdates, NewWindow, NoRecent]);
+actions!(loomcode_app, [QuitApp, HideApp, HideOthers, ShowAll, MinimizeWindow, ZoomWindow, ToggleFullscreen, CloseWindow, NavBack, NavForward, AddProject, OpenLogs, ShowAbout, OpenHomepage, ReportIssue, CheckForUpdates, NewWindow, NoRecent]);
 
 /// 菜单「打开最近的项目」里的一项。
 #[derive(Clone, PartialEq, Action)]
@@ -82,6 +82,11 @@ fn close_window(cx: &mut App) {
         return;
     }
     let Some(active) = cx.active_window() else { return };
+    // 「关于」小窗:真正关闭它
+    if crate::about_window::is_about(cx, active.window_id()) {
+        on_active_window(cx, |window, _| window.remove_window());
+        return;
+    }
     let ide = cx.try_global::<crate::WorkbenchRef>().and_then(|r| r.0.upgrade()).and_then(|wb| wb.read(cx).ide_window);
     if ide.is_some_and(|h| h.window_id() == active.window_id()) {
         on_active_window(cx, |window, _| window.remove_window());
@@ -111,6 +116,8 @@ pub fn install(cx: &mut App) {
             cx.reveal_path(dir);
         }
     });
+    // 关于窗口是单独的窗口,动作在窗口分发中触发,推迟到事件之后再开
+    cx.on_action(|_: &ShowAbout, cx| cx.defer(crate::about_window::open));
     cx.on_action(|_: &CheckForUpdates, cx| {
         // 与托盘「检查更新」同一入口;工作台实体在应用更新期间不能回读,所以推迟到事件之后
         cx.defer(|cx| {
@@ -166,6 +173,7 @@ pub fn set_menus(cx: &mut App, recent: &[String]) {
     let menu = |name: &str, items: Vec<MenuItem>| Menu { name: name.to_string().into(), items, disabled: false };
     cx.set_menus(vec![
         menu("LoomCode", vec![
+            MenuItem::action("关于 LoomCode", ShowAbout),
             MenuItem::action("检查更新…", CheckForUpdates),
             MenuItem::action("设置…", workbench::OpenSettings),
             MenuItem::separator(),

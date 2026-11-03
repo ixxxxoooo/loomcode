@@ -109,6 +109,11 @@ pub fn mark_ide(window: &Window, on: bool, cx: &mut App) {
     });
 }
 
+/// 现在有没有窗口正显示 IDE(有的话 `post` 能在其右下角弹出)。
+pub fn has_ide_window(cx: &App) -> bool {
+    store(cx).is_some_and(|s| !s.read(cx).ide_windows.is_empty())
+}
+
 /// 这个窗口当前是不是 IDE 布局。
 pub fn is_ide(window: &Window, cx: &App) -> bool {
     store(cx).is_some_and(|s| s.read(cx).ide_windows.contains(&window.window_handle().window_id()))
