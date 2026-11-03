@@ -130,9 +130,14 @@ fn sticky_card(session: &Entity<SessionModel>, sc: &ChatScroll, editing_ids: &[S
     let t = cx.theme();
     let max_w = px(crate::timeline::content_max_w(cx));
     let bg = t.background;
+    // 卡片范围内是不透明的背景色(把滚过去的原卡完全盖住,吸顶后不能再看到它),卡片下缘另有一段向下渐隐
     let backdrop = |h: f32| {
-        div().absolute().top_0().left_0().right_0().h(px(h))
-            .bg(linear_gradient(0., linear_color_stop(bg.opacity(0.), 0.), linear_color_stop(bg, 1.)))
+        div().absolute().top_0().left_0().right_0().h(px(h + FADE_H))
+            .child(div().absolute().top_0().left_0().right_0().h(px(h)).bg(bg))
+            .child(
+                div().absolute().top(px(h)).left_0().right_0().h(px(FADE_H))
+                    .bg(linear_gradient(180., linear_color_stop(bg, 0.), linear_color_stop(bg.opacity(0.), 1.))),
+            )
     };
     let top = sc.max_painted().unwrap_or(0);
     let target = {
@@ -151,7 +156,7 @@ fn sticky_card(session: &Entity<SessionModel>, sc: &ChatScroll, editing_ids: &[S
     Some(
         div().absolute().top(px(STICKY_TOP + push)).left_0().right_0()
             // 卡片范围内与背景同色,下缘再渐隐,内容从卡片下面平滑淡入
-            .child(backdrop(h + FADE_H))
+            .child(backdrop(h))
             .child(
                 div().w_full().px_3().flex().justify_center().child(
                     div().relative().w_full().px_1().max_w(max_w).child(card)
