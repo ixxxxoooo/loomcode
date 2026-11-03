@@ -12,6 +12,8 @@ use serde::{Deserialize, Serialize};
 pub struct LastState {
     /// 上次正在看的会话 id
     pub session: Option<String>,
+    /// 上次所在项目的目录;会话没发过消息(没写进历史)时靠它回到那个项目
+    pub project: Option<String>,
     /// IDE 对话栏里打开的会话标签(顺序即标签顺序)
     pub chat_tabs: Vec<String>,
     /// Agent 右栏打开的标签键;`None` 表示从未记录过,用默认标签

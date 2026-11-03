@@ -45,10 +45,10 @@ pub fn context_ring(usage: &Usage, on_click: impl Fn(&mut App) + 'static, cx: &A
         .child(ProgressCircle::new("ctx-ring").value(ratio * 100.).color(color).size(px(14.)))
 }
 
-/// 模型弹层:按服务商分组(Claude 官方在前),底部是思考强度。
+/// 模型弹层:按服务商分组(Claude 官方在前)。思考强度是另一个选择框(`effort_popup`)。
 ///
-/// 参数:`picker` 分组数据;`running` 回合是否进行中(进行中不能切换服务商);`effort` 当前强度;`this` 输入框实体(回调用)。
-pub fn model_popup(picker: &Picker, running: bool, effort: Effort, this: Entity<Composer>, cx: &App) -> Div {
+/// 参数:`picker` 分组数据;`running` 回合是否进行中(进行中不能切换服务商);`this` 输入框实体(回调用)。
+pub fn model_popup(picker: &Picker, running: bool, this: Entity<Composer>, cx: &App) -> Div {
     let t = cx.theme().clone();
     let mut list: Vec<AnyElement> = Vec::new();
     // 每组:组头(服务商名 + 状态)+ 模型行;不是当前服务商时点模型 = 切换服务商
@@ -80,8 +80,7 @@ pub fn model_popup(picker: &Picker, running: bool, effort: Effort, this: Entity<
                 // 名字完整显示(不压缩),说明占剩余宽度、过长截断
                 .child(div().w(px(14.)).flex_none().child(if on { icon(IconName::Check, 12., t.primary).into_any_element() } else { div().into_any_element() }))
                 .child(crate::brand_icons::brand_icon(&m.id, &m.name, 14., if on { t.foreground } else { t.muted_foreground }))
-                .child(div().flex_none().whitespace_nowrap().text_size(px(13.)).child(m.name.clone()))
-                .child(div().flex_1().min_w_0().text_right().truncate().text_size(px(11.)).text_color(t.muted_foreground).child(m.description.clone()));
+                .child(div().flex_1().min_w_0().whitespace_nowrap().truncate().text_size(px(13.)).child(m.name.clone()));
             list.push(row.into_any_element());
         }
     };
@@ -90,19 +89,25 @@ pub fn model_popup(picker: &Picker, running: bool, effort: Effort, this: Entity<
         let models = g.models.iter().map(|m| ModelInfo::new(m, m, "")).collect();
         push_group(&mut list, Some(g.id.clone()), g.name.clone(), models, g.blocked.clone());
     }
-    let segments = h_flex().gap_0p5().p_0p5().rounded(px(8.)).bg(t.muted).children(Effort::ALL.into_iter().map(|e| {
-        let (this, on) = (this.clone(), e == effort);
-        div().id(SharedString::from(format!("pick-effort-{}", e.cli_value()))).flex_1().h(px(26.)).flex().items_center().justify_center().rounded(px(6.)).cursor_pointer().text_size(px(12.))
-            .when(on, |d| d.bg(t.background).text_color(t.foreground).shadow_sm())
-            .when(!on, |d| d.text_color(t.muted_foreground).hover(|d| d.bg(t.list_hover)))
-            .on_click(move |_, _, cx| { this.update(cx, |c, cx| c.choose_effort(e, cx)); })
-            .child(e.label())
-    }));
-    v_flex().absolute().bottom(px(44.)).left(px(8.)).w(px(340.)).p_1().rounded(px(10.)).border_1().border_color(t.border).bg(t.popover).shadow_lg()
+    v_flex().absolute().bottom(px(44.)).left(px(8.)).w(px(240.)).p_1().rounded(px(10.)).border_1().border_color(t.border).bg(t.popover).shadow_lg()
         .child(v_flex().id("pick-model-list").max_h(px(380.)).overflow_y_scroll().children(list))
-        .child(div().h(px(1.)).my_1().bg(t.border))
-        .child(div().px_2().pt_1().pb_0p5().text_size(px(11.)).text_color(t.muted_foreground).child("思考强度"))
-        .child(div().px_1().child(segments))
+}
+
+/// 思考强度弹层:每档一行(名称 + 一句话说明),当前档打勾。
+///
+/// 参数:`effort` 当前强度;`left` 弹层左边距(对齐到强度 chip);`this` 输入框实体(回调用)。
+pub fn effort_popup(effort: Effort, left: Pixels, this: Entity<Composer>, cx: &App) -> Div {
+    let t = cx.theme().clone();
+    let rows = Effort::ALL.into_iter().map(|e| {
+        let (this, on) = (this.clone(), e == effort);
+        h_flex().id(SharedString::from(format!("pick-effort-{}", e.cli_value()))).gap_2().px_2().h(px(30.)).items_center().rounded(px(6.)).cursor_pointer()
+            .hover(|d| d.bg(t.list_hover))
+            .on_click(move |_, _, cx| { this.update(cx, |c, cx| c.choose_effort(e, cx)); })
+            .child(div().w(px(14.)).flex_none().child(if on { icon(IconName::Check, 12., t.primary).into_any_element() } else { div().into_any_element() }))
+            .child(div().flex_1().text_size(px(13.)).when(on, |d| d.font_weight(FontWeight::MEDIUM)).child(e.label()))
+    });
+    v_flex().absolute().bottom(px(44.)).left(left).w(px(160.)).p_1().rounded(px(10.)).border_1().border_color(t.border).bg(t.popover).shadow_lg()
+        .children(rows)
 }
 
 #[cfg(test)]

@@ -302,6 +302,7 @@ fn main() {
         // 正常退出(⌘Q、托盘退出、更新重启等)时删除运行标记,下次启动才不会误判为异常退出
         cx.on_app_quit(|_| async {
             loom_lsp::hub::kill_all();
+            window_memory::flush();
             loom_diag::crash::clean_exit("用户退出")
         })
         .detach();

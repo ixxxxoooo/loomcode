@@ -63,6 +63,20 @@ pub fn switch(provider: Option<String>, model: String, cx: &mut App) {
     }
 }
 
+/// 记住输入框里选的模型,之后新会话与重启都沿用(交给工作台写偏好或服务商映射)。
+pub fn remember_model(model: String, cx: &mut App) {
+    if let Some(wb) = cx.try_global::<crate::WorkbenchRef>().and_then(|r| r.0.upgrade()) {
+        wb.update(cx, |wb, cx| wb.remember_model(&model, cx));
+    }
+}
+
+/// 记住输入框里选的思考强度,之后新会话与重启都沿用。
+pub fn remember_effort(effort: loom_core::Effort, cx: &mut App) {
+    if let Some(wb) = cx.try_global::<crate::WorkbenchRef>().and_then(|r| r.0.upgrade()) {
+        wb.update(cx, |wb, cx| wb.update_settings(cx, |s| s.default_effort = effort));
+    }
+}
+
 /// 打开设置 → 模型服务商(选择器里服务商不可用时的入口)。
 pub fn open_settings(cx: &mut App) {
     if let Some(wb) = cx.try_global::<crate::WorkbenchRef>().and_then(|r| r.0.upgrade()) {

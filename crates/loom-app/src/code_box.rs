@@ -8,9 +8,10 @@
 //!
 //! @author ixxxxoooo
 
-use crate::ui::{MONO, icon};
+use crate::ui::icon;
 use gpui_kit::assets::IconName;
 use gpui_kit::component::button::{Button, ButtonVariants};
+use gpui_kit::component::text::{TextView, TextViewStyle};
 use gpui_kit::component::{ActiveTheme, Sizable, h_flex, v_flex};
 use gpui_kit::*;
 use std::cell::RefCell;
@@ -97,6 +98,21 @@ pub fn fold_body(id: SharedString, body: impl IntoElement, total_lines: usize, f
         .into_any_element()
 }
 
+/// 可选中复制的代码正文:交给 `TextView`(与会话流里的 Markdown 同一套选择 / ⌘C / 右键复制),
+/// 样式去掉它自带的底色与边框,由外层的卡片统一承担。
+///
+/// 参数:`id` 稳定 id;`lang` 语言;`code` 代码;`streaming` 流式中(超长时不逐帧高亮,按纯文本围栏)。
+fn selectable_code(id: &SharedString, lang: &str, code: &str, streaming: bool, cx: &App) -> AnyElement {
+    let t = cx.theme();
+    // 围栏比代码里最长的反引号串多一个,代码里再出现 ``` 也不会提前闭合
+    let run = code.split(|c| c != '`').map(str::len).max().unwrap_or(0);
+    let fence = "`".repeat((run + 1).max(3));
+    let lang = if streaming && code.len() > STREAM_HL_MAX { "" } else { lang };
+    let md = format!("{fence}{lang}\n{code}\n{fence}");
+    let style = TextViewStyle::default().code_block(StyleRefinement::default().bg(transparent_black()).border_0().rounded(px(0.)).px_3().pt_0().pb_2().text_size(px(12.)).text_color(t.foreground));
+    TextView::markdown(SharedString::from(format!("{id}-sel")), md).style(style).selectable(true).code_block_actions(|_, _, _| div()).into_any_element()
+}
+
 /// 助手正文里的围栏代码块:顶部语言名与复制按钮,正文语法高亮,过长限高。
 ///
 /// 参数:`id` 稳定 id;`lang` 围栏语言(空串不着色);`code` 代码;`streaming` 围栏尚未闭合(流式输出中);
@@ -105,8 +121,7 @@ pub fn render_code(id: SharedString, lang: &str, code: &str, streaming: bool, fo
     let t = cx.theme();
     let code = code.trim_end_matches('\n');
     let total = code.lines().count().max(1);
-    let hl = if streaming && code.len() > STREAM_HL_MAX { Vec::new() } else { crate::code_hl::styles(code, lang, cx) };
-    let body = div().w_full().px_3().py_2().font_family(MONO).text_size(px(12.)).text_color(t.foreground).child(StyledText::new(code.to_string()).with_highlights(hl));
+    let body = selectable_code(&id, lang, code, streaming, cx);
     let copy_text = code.to_string();
     let (copied, on_copy) = fold.and_then(|f| f.copy.clone()).map_or((false, None), |(c, f)| (c, Some(f)));
     v_flex().w_full().rounded(px(8.)).border_1().border_color(t.border).bg(t.muted).overflow_hidden()

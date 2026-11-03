@@ -142,7 +142,7 @@ fn file_chip(name: &str, cx: &App) -> AnyElement {
 }
 
 /// 消息卡:附件行 + 正文(长文折叠)+ 悬停操作。
-fn render_card(session: &Entity<SessionModel>, id: &str, text: &str, images: &[String], files: &[String], cx: &App) -> AnyElement {
+pub(crate) fn render_card(session: &Entity<SessionModel>, id: &str, text: &str, images: &[String], files: &[String], cx: &App) -> AnyElement {
     let t = cx.theme();
     let text = display_text(text);
     let long = estimated_lines(&text) > FOLD_LINES;

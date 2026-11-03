@@ -162,19 +162,6 @@ pub fn content_from_text(text: &str) -> InputContent {
     content
 }
 
-/// 把正文里的文件引用缩成 `@文件名`,用来估算胶囊占的宽度(吸顶卡估高用)。
-pub fn collapse(text: &str) -> String {
-    segments(text).iter().map(|s| match s {
-        Seg::Text(x) => x.to_string(),
-        Seg::Mention(p) => format!("@{}", Path::new(p).file_name().map(|n| n.to_string_lossy().to_string()).unwrap_or_else(|| p.to_string())),
-    }).collect()
-}
-
-/// 把一行正文(调用方已去掉换行)渲染成可折行的一排;高度由调用方限制(吸顶卡只留两行)。
-pub fn render_flat(text: &str, line_h: f32, cx: &App) -> AnyElement {
-    line(text, line_h, cx)
-}
-
 /// 把含文件引用的正文渲染成多行(每个换行一行,空行保留行高)。
 ///
 /// 参数:`text` 正文;`line_h` 行高;返回:纵向排列的各行。
@@ -212,12 +199,6 @@ mod tests {
         assert!(!has_mentions("发给 a@b.com"));
         assert!(!has_mentions("没有引用"));
         assert!(has_mentions("a @./x"));
-    }
-
-    #[::core::prelude::v1::test]
-    fn 缩成文件名() {
-        assert_eq!(collapse("看 @/Users/x/很长的目录/a.xlsx 吧"), "看 @a.xlsx 吧");
-        assert_eq!(collapse("没有引用"), "没有引用");
     }
 
     #[::core::prelude::v1::test]

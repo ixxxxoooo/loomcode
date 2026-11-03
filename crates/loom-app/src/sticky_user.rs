@@ -7,15 +7,15 @@
 use crate::chat_scroll::ChatScroll;
 use crate::model::SessionModel;
 use crate::row_groups::Row;
-use crate::user_message::{action_btn, display_text};
-use gpui_kit::assets::IconName;
-use gpui_kit::component::{ActiveTheme, h_flex};
-use gpui_kit::prelude::FluentBuilder as _;
+use crate::user_message::display_text;
+use gpui_kit::component::ActiveTheme;
 use gpui_kit::*;
 use loom_core::TimelineItem;
 
-/// 吸附卡与顶边、与下一条消息之间的间距。
+/// 吸附卡与下一条消息之间的间距(悬浮编辑卡与顶边的间距也用它)。
 const INSET: f32 = 8.;
+/// 吸附卡贴着会话流顶边(像 CSS `position: sticky; top: 0`:滚到顶就停住,位置与大小都不变)。
+const STICKY_TOP: f32 = 0.;
 /// 渐隐高度。
 const FADE_H: f32 = 28.;
 /// 悬浮编辑卡里正文区之外的固定高度(内边距、按钮行、提示行、边框)。
@@ -36,6 +36,8 @@ pub struct Target {
     pub row: usize,
     pub id: String,
     pub text: String,
+    pub images: Vec<String>,
+    pub files: Vec<String>,
     pub next: Option<usize>,
 }
 
@@ -54,7 +56,7 @@ fn user_at<'a>(rows: &[Row], items: &'a [TimelineItem], ix: usize) -> Option<&'a
 pub fn resolve(rows: &[Row], items: &[TimelineItem], top: usize, past: impl Fn(usize) -> bool) -> Option<Target> {
     let start = top.min(rows.len().checked_sub(1)?);
     for ix in (0..=start).rev() {
-        let Some(TimelineItem::User { id, text, .. }) = user_at(rows, items, ix) else { continue };
+        let Some(TimelineItem::User { id, text, images, files }) = user_at(rows, items, ix) else { continue };
         // 顶行本身是还没到顶的用户消息:继续往前找(前一条正在被它顶出)
         if !past(ix) {
             continue;
@@ -64,7 +66,7 @@ pub fn resolve(rows: &[Row], items: &[TimelineItem], top: usize, past: impl Fn(u
             return None;
         }
         let next = (ix + 1..rows.len()).find(|&n| user_at(rows, items, n).is_some());
-        return Some(Target { row: ix, id: id.clone(), text, next });
+        return Some(Target { row: ix, id: id.clone(), text, images: images.clone(), files: files.clone(), next });
     }
     None
 }
@@ -73,23 +75,21 @@ pub fn resolve(rows: &[Row], items: &[TimelineItem], top: usize, past: impl Fn(u
 ///
 /// 参数:`next_top` 下一条消息顶边相对视口的 Y,未渲染为 None;`card_h` 吸附卡高度。
 pub fn push_offset(next_top: Option<f32>, card_h: f32) -> f32 {
-    next_top.map_or(0., |y| (y - INSET - card_h - INSET).min(0.))
+    next_top.map_or(0., |y| (y - INSET - card_h - STICKY_TOP).min(0.))
 }
 
-/// 吸附卡正文行高与最多行数:吸附卡始终很矮(最多两行),长消息只显示开头。
-const LINE_H: f32 = 20.;
-const MAX_LINES: usize = 2;
-
-/// 吸附卡里显示的正文:换行折成空格,让两行都用来显示内容。
-fn flatten(text: &str) -> String {
-    text.split_whitespace().collect::<Vec<_>>().join(" ")
+// 吸附卡上一帧的实际高度(消息 id, 高度):卡片与会话流里的消息卡是同一个组件(同样的折叠 / 展开高度),
+// 高度由内容决定,画出来才知道,所以在绘制阶段量一次,下一帧用来算「被下一条消息顶出」的位移。
+thread_local! {
+    static MEASURED: std::cell::RefCell<(String, f32)> = const { std::cell::RefCell::new((String::new(), 0.)) };
 }
 
-/// 估算吸附卡高度:短消息单行,长消息两行(上下内边距各 10)。
-fn card_height(text: &str) -> f32 {
-    let text = crate::user_mentions::collapse(text);
-    let lines = if text.contains('\n') || text.chars().count() > 60 { MAX_LINES } else { 1 };
-    LINE_H * lines as f32 + 20.
+/// 取吸附卡的高度:量过就用实际值,第一帧(还没量)先按一行的高度估。
+fn card_height(id: &str) -> f32 {
+    MEASURED.with(|m| {
+        let m = m.borrow();
+        if m.0 == id && m.1 > 0. { m.1 } else { 60. }
+    })
 }
 
 /// 某条正在编辑的用户消息所在的行下标。
@@ -142,56 +142,21 @@ fn sticky_card(session: &Entity<SessionModel>, sc: &ChatScroll, editing_ids: &[S
     if editing_ids.contains(&target.id) {
         return None;
     }
-    let push = push_offset(target.next.and_then(|n| sc.row_top(n)), card_height(&target.text));
-    let Target { id, text, .. } = target;
-    let edit = {
-        let (s, id, text) = (session.clone(), id.clone(), text.clone());
-        move |window: &mut Window, cx: &mut App| { s.update(cx, |m, cx| m.begin_edit(&id, &text, true, window, cx)); }
-    };
-    let edit_click = edit;
-    let (s_retry, id_retry, copy_text) = (session.clone(), id.clone(), text.clone());
-    let (copied, retried) = {
-        let c = session.read(cx).copied.as_deref();
-        (c == Some(format!("c-{id}").as_str()), c == Some(format!("r-{id}").as_str()))
-    };
-    let (s_cm, id_cm, s_rm, id_rm) = (session.clone(), id.clone(), session.clone(), id.clone());
+    let push = push_offset(target.next.and_then(|n| sc.row_top(n)), card_height(&target.id));
+    let Target { id, text, images, files, .. } = target;
+    let h = card_height(&id);
+    // 与会话流里的消息卡完全相同的卡片(同样的折叠 / 展开、悬停的回退 / 重试 / 复制、点击编辑),只是固定在顶部
+    let card = crate::user_message::render_card(session, &id, &text, &images, &files, cx);
+    let measure_id = id.clone();
     Some(
-        div().absolute().top(px(push)).left_0().right_0()
+        div().absolute().top(px(STICKY_TOP + push)).left_0().right_0()
             // 卡片范围内与背景同色,下缘再渐隐,内容从卡片下面平滑淡入
-            .child(backdrop(card_height(&text) + INSET + FADE_H))
+            .child(backdrop(h + FADE_H))
             .child(
-                div().w_full().px_3().pt(px(INSET)).flex().justify_center().child(
-                    div().id("sticky-user").group("sticky-user").relative().w_full().max_w(max_w)
-                        .px(px(14.)).py(px(10.)).min_h(px(40.)).pr(px(60.)).rounded(px(12.)).border_1().border_color(crate::user_message::card_border(cx))
-                        // 文本被限制在框内:超长内容截断,不外溢
-                        .min_w_0().overflow_hidden()
-                        .bg(crate::user_message::card_bg(cx)).cursor_pointer().text_size(px(14.)).line_height(px(LINE_H)).text_color(t.foreground).line_clamp(MAX_LINES)
-                        .on_click(move |_, window, cx| edit_click(window, cx))
-                        .child({
-                            let flat = flatten(&text);
-                            // 含文件引用:胶囊排版,限高两行并裁掉多余部分;否则原样文本(line_clamp 加省略号)
-                            if crate::user_mentions::has_mentions(&flat) {
-                                div().w_full().min_w_0().max_h(px(LINE_H * MAX_LINES as f32)).overflow_hidden().child(crate::user_mentions::render_flat(&flat, LINE_H, cx)).into_any_element()
-                            } else {
-                                flat.into_any_element()
-                            }
-                        })
-                        .child(
-                            h_flex().absolute().right(px(8.)).bottom(px(8.)).gap_0p5().when(!(copied || retried), |d| d.invisible().group_hover("sticky-user", |d| d.visible()))
-                                .child(action_btn("sticky-retry".into(), IconName::RotateCcw, "重试(原样重新发送)", retried, cx)
-                                    .on_click(move |_, _, cx| {
-                                        cx.stop_propagation();
-                                        s_rm.update(cx, |m, cx| m.mark_copied(&format!("r-{id_rm}"), cx));
-                                        s_retry.update(cx, |m, cx| m.retry_user(&id_retry, cx));
-                                    }))
-                                .child(action_btn("sticky-copy".into(), IconName::Copy, "复制消息", copied, cx)
-                                    .on_click(move |_, _, cx| {
-                                        cx.stop_propagation();
-                                        cx.write_to_clipboard(ClipboardItem::new_string(copy_text.clone()));
-                                        s_cm.update(cx, |m, cx| m.mark_copied(&format!("c-{id_cm}"), cx));
-                                    }))
-
-                        ),
+                div().w_full().px_3().flex().justify_center().child(
+                    div().relative().w_full().px_1().max_w(max_w).child(card)
+                        // 量出卡片实际高度,供下一帧计算顶出位移
+                        .child(canvas(move |b, _, _| MEASURED.with(|m| *m.borrow_mut() = (measure_id.clone(), f32::from(b.size.height))), |_, _, _, _| {}).absolute().size_full()),
                 ),
             )
             .into_any_element(),
@@ -238,17 +203,9 @@ mod tests {
     }
 
     #[::core::prelude::v1::test]
-    fn 吸附卡高度与正文压平() {
-        assert_eq!(card_height("短"), 40.);
-        assert_eq!(card_height("a\nb"), 60.);
-        assert_eq!(card_height(&"长".repeat(61)), 60.);
-        assert_eq!(flatten("a  b\n\n c"), "a b c");
-    }
-
-    #[::core::prelude::v1::test]
     fn 顶出位移() {
         assert_eq!(push_offset(None, 40.), 0.);
         assert_eq!(push_offset(Some(200.), 40.), 0.);
-        assert_eq!(push_offset(Some(30.), 40.), -26.);
+        assert_eq!(push_offset(Some(30.), 40.), -18.);
     }
 }

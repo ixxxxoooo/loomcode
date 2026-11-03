@@ -31,6 +31,8 @@ struct Suggestion {
 #[derive(Clone, Copy, PartialEq, Eq)]
 enum Pick {
     Model,
+    /// 思考强度(与模型是两个独立的选择框)
+    Effort,
     Mode,
     /// 上下文用量面板
     Context,
@@ -81,6 +83,9 @@ pub struct Composer {
     custom_commands: Vec<(String, String)>,
     /// 自定义子 Agent 名称(`@` 补全用)
     custom_agents: Vec<String>,
+    /// 输入框外层与「思考强度」chip 上一帧的位置:强度弹层要对齐到它的 chip 下面
+    wrap_bounds: std::rc::Rc<std::cell::Cell<Bounds<Pixels>>>,
+    effort_bounds: std::rc::Rc<std::cell::Cell<Bounds<Pixels>>>,
     _sub: Subscription,
 }
 
@@ -130,7 +135,7 @@ impl Composer {
             Ok("mode") => Some(Pick::Mode),
             _ => None,
         };
-        let mut this = Self { session, input, open, outside_closed: None, suggestions: Vec::new(), sel: 0, attachments: Vec::new(), attach_counter: 0, demo, rewrite: None, optimizing: false, optimize_error: None, custom_commands: Vec::new(), custom_agents: Vec::new(), _sub: sub };
+        let mut this = Self { session, input, open, outside_closed: None, suggestions: Vec::new(), sel: 0, attachments: Vec::new(), attach_counter: 0, demo, rewrite: None, optimizing: false, optimize_error: None, custom_commands: Vec::new(), custom_agents: Vec::new(), wrap_bounds: Default::default(), effort_bounds: Default::default(), _sub: sub };
         // 调试用:LOOM_QUEUE=N 启动即排 N 条消息(只用于截图验证排队卡)
         if let Some(n) = std::env::var("LOOM_QUEUE").ok().and_then(|v| v.parse::<usize>().ok()) {
             this.session.update(cx, |m, cx| {
@@ -340,7 +345,7 @@ impl Composer {
         let st = &self.session.read(cx).state;
         match kind {
             // 模型与上下文有各自的弹层(composer_pop),这里只剩权限模式的简单列表
-            Pick::Model | Pick::Context => Vec::new(),
+            Pick::Model | Pick::Effort | Pick::Context => Vec::new(),
             Pick::Mode => PermissionMode::ALL.iter().map(|m| (m.label().to_string(), m.cli_value().to_string(), *m == st.mode, m.cli_value().to_string())).collect(),
         }
     }
@@ -359,6 +364,9 @@ impl Composer {
     pub(crate) fn choose_model(&mut self, id: &str, cx: &mut Context<Self>) {
         self.open = None;
         self.session.update(cx, |m, cx| m.set_model(id.to_string(), cx));
+        // 记住这次选择:之后新开会话、重启应用都用它
+        let id = id.to_string();
+        cx.defer(move |cx| crate::composer_models::remember_model(id, cx));
         cx.notify();
     }
 
@@ -391,6 +399,8 @@ impl Composer {
     pub(crate) fn choose_effort(&mut self, effort: Effort, cx: &mut Context<Self>) {
         self.open = None;
         self.session.update(cx, |m, cx| m.set_effort(effort, cx));
+        // 记住这次选择:之后新开会话、重启应用都用它
+        cx.defer(move |cx| crate::composer_models::remember_effort(effort, cx));
         cx.notify();
     }
 
@@ -442,7 +452,13 @@ impl Render for Composer {
             Pick::Model => {
                 // 按服务商分组(Claude 官方在前),选别家的模型即切换服务商
                 let picker = crate::composer_models::picker(&self.session.read(cx).state, cx);
-                crate::composer_pop::model_popup(&picker, running, effort, this.clone(), cx)
+                crate::composer_pop::model_popup(&picker, running, this.clone(), cx)
+            }
+            Pick::Effort => {
+                // 对齐到「思考强度」chip(用上一帧量到的位置;窗口太窄时贴左边)
+                let (wrap, chip) = (self.wrap_bounds.get(), self.effort_bounds.get());
+                let left = (chip.left() - wrap.left()).max(px(8.));
+                crate::composer_pop::effort_popup(effort, left, this.clone(), cx)
             }
             Pick::Context => crate::context_panel::context_popup(&usage, this.clone(), cx),
             Pick::Mode => {
@@ -543,6 +559,7 @@ impl Render for Composer {
             }))
             .child(
             v_flex().relative().w_full().max_w(px(crate::timeline::content_max_w(cx)))
+                .child({ let cell = self.wrap_bounds.clone(); canvas(move |b, _, _| cell.set(b), |_, _, _, _| {}).absolute().size_full() })
                 .when_some(suggestions, |d, s| d.child(s))
                 .child(
                     v_flex().w_full().rounded(px(14.)).border_1().border_color(t.border).bg(t.popover).shadow_sm()
@@ -565,7 +582,13 @@ impl Render for Composer {
                         .child(
                             h_flex().h(px(36.)).px_2().gap_1().items_center().overflow_hidden()
                                 .child(chip("chip-mode", mode.label().to_string(), mode_color, Pick::Mode, Some(icon(crate::mode_style::mode_icon(mode), 13., mode_color).into_any_element()), crate::layout_rules::MODE_CHIP_MIN, this.clone()))
-                                .child(chip("chip-model", format!("{model_name} · {}", effort.label()), t.foreground, Pick::Model, Some(crate::brand_icons::brand_icon(&model_id, &model_name, 13., t.foreground)), crate::layout_rules::MODEL_CHIP_MIN, this.clone()))
+                                .child(chip("chip-model", model_name.clone(), t.foreground, Pick::Model, Some(crate::brand_icons::brand_icon(&model_id, &model_name, 13., t.foreground)), crate::layout_rules::MODEL_CHIP_MIN, this.clone()))
+                                .child({
+                                    // 思考强度:独立的选择框;顺带量出自己的位置,供弹层对齐
+                                    let cell = self.effort_bounds.clone();
+                                    chip("chip-effort", format!("思考 {}", effort.label()), t.muted_foreground, Pick::Effort, None, crate::layout_rules::EFFORT_CHIP_MIN, this.clone())
+                                        .relative().child(canvas(move |b, _, _| cell.set(b), |_, _, _, _| {}).absolute().size_full())
+                                })
                                 .child(div().flex_1())
                                 .child({
                                     // 始终显示:没发过消息时也能点开查账户限额

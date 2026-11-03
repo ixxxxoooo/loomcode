@@ -6,11 +6,16 @@
 use gpui_kit::*;
 use serde_json::{Value, json};
 use std::path::PathBuf;
+use std::collections::HashMap;
+use std::sync::Mutex;
 use std::sync::atomic::{AtomicU64, Ordering};
 use std::time::Duration;
 
 /// 防抖代数:每次窗口变化 +1,只有最后一次的延时任务才会写盘。
 static GENERATION: AtomicU64 = AtomicU64::new(0);
+
+/// 各窗口最近一次的边界(还没写盘的也在内),退出时 `flush` 一并落盘,免得变动后马上退出丢掉。
+static LATEST: Mutex<Option<HashMap<&'static str, WindowBounds>>> = Mutex::new(None);
 
 /// 记忆文件路径。
 fn file_path() -> Option<PathBuf> {
@@ -54,6 +59,9 @@ pub fn restore(key: &str, default: (f32, f32), cx: &App) -> WindowBounds {
 pub fn track<T: 'static>(key: &'static str, window: &mut Window, cx: &mut Context<T>) {
     cx.observe_window_bounds(window, move |_, window, cx| {
         let wb = window.window_bounds();
+        if let Ok(mut m) = LATEST.lock() {
+            m.get_or_insert_with(HashMap::new).insert(key, wb);
+        }
         let generation = GENERATION.fetch_add(1, Ordering::SeqCst) + 1;
         cx.spawn(async move |_, cx| {
             cx.background_executor().timer(Duration::from_millis(600)).await;
@@ -64,6 +72,14 @@ pub fn track<T: 'static>(key: &'static str, window: &mut Window, cx: &mut Contex
         .detach();
     })
     .detach();
+}
+
+/// 把还没写盘的窗口边界立刻写掉;应用退出时调用(防抖里的写入可能还没来得及执行)。
+pub fn flush() {
+    let pending: Vec<(&'static str, WindowBounds)> = LATEST.lock().ok().and_then(|mut m| m.take()).map(|m| m.into_iter().collect()).unwrap_or_default();
+    for (key, wb) in pending {
+        save(key, wb);
+    }
 }
 
 /// 写入某个窗口的边界(先写临时文件再改名)。

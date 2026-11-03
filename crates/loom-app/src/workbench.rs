@@ -209,6 +209,8 @@ pub struct Workbench {
     pub forks: HashMap<String, String>,
     /// 历史加载完成后要打开的会话(调试用 `LOOM_SESSION`)
     pending_open: Option<String>,
+    /// 启动时要回到的项目目录(上次会话找不到时用)
+    pending_project: Option<String>,
     /// 新窗口进程指定的启动项目是否已打开
     startup_project_done: bool,
     /// 全工作台唯一的编辑器:Agent 的「文件」标签、融合 IDE、独立 IDE 窗口都嵌入它,标签与文档只有一份
@@ -348,6 +350,7 @@ impl Workbench {
             demo_slow: std::env::var("LOOM_DEMO_SLOW").ok().and_then(|v| v.parse::<f32>().ok()).filter(|v| *v >= 0.).unwrap_or(3.),
             forks: HashMap::new(),
             pending_open: None,
+            pending_project: None,
             startup_project_done: false,
             editor: editor.clone(),
             scm: scm.clone(),
@@ -409,6 +412,7 @@ impl Workbench {
                 let last = wb.ui_state.last.clone();
                 wb.panel.update(cx, |p, _| p.restore_last(&last));
                 wb.pending_open = session.or(last.session);
+                wb.pending_project = last.project;
             }
             wb.reload_projects(window, cx);
         }
@@ -1210,10 +1214,17 @@ impl Workbench {
         self.merge_live_sessions(cx);
         let list: Vec<(String, String)> = self.projects.iter().map(|p| (p.name.clone(), p.path.clone())).collect();
         self.automation.update(cx, |a, cx| a.set_projects(list, cx));
+        let project = self.pending_project.take();
+        let mut restored = false;
         if let Some(id) = self.pending_open.take() {
             if let Some(pi) = self.projects.iter().position(|p| p.sessions.iter().any(|s| s.id == id)) {
                 self.open_session(pi, &id, window, cx);
+                restored = true;
             }
+        }
+        // 上次的会话找不到(没发过消息、已删除)时,回到上次所在的项目
+        if !restored && let Some(path) = project {
+            self.open_recent_project(path, window, cx);
         }
         // 新窗口进程指定了项目:加载完历史后打开它(只一次)
         if let Some(path) = crate::secondary::project().filter(|_| !self.startup_project_done) {
@@ -1424,6 +1435,12 @@ impl Workbench {
             let sent = self.views.get(id).is_some_and(|v| !v.model.read(cx).state.items.is_empty());
             if !self.new_sessions.contains(id) || sent {
                 last.session = Some(id.clone());
+            } else {
+                // 停在一个还没发过消息的新会话上:下次没法恢复它,只记项目
+                last.session = None;
+            }
+            if !self.demo && let Some(p) = self.views.get(id).and_then(|v| self.projects.get(v.project_ix)) {
+                last.project = Some(p.path.clone());
             }
         }
         self.panel.read(cx).write_last(&mut last);
