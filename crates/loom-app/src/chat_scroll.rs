@@ -18,6 +18,12 @@ use std::rc::Rc;
 
 /// 视口外额外渲染的高度,滚动更顺滑。
 const OVERDRAW: Pixels = px(400.);
+/// 未渲染过的行的估算高度。
+///
+/// gpui 列表把「从没测量过、也没有高度提示」的行按 0 高度计:长会话回放后只有底部一屏被测量,
+/// 上面全是 0 高度,用户往上滚进这片区域时「滚动位置 → 行」的换算会塌缩(一次滚得比已测量部分多,
+/// 就直接落到很靠前的行),表现为滚着滚着突然跳走。给每行一个估值,换算才连续;实际渲染后会被真实高度替换。
+const EST_ROW_H: Pixels = px(120.);
 /// 距离底部不超过这个像素数就算「在底部」。
 pub const BOTTOM_SLOP: f32 = 24.;
 
@@ -31,7 +37,7 @@ pub struct ChatScroll {
 impl ChatScroll {
     /// 创建状态,开启尾部跟随。参数:`item_count` 初始行数。
     pub fn new(item_count: usize, _cx: &mut Context<Self>) -> Self {
-        let list = ListState::new(item_count, ListAlignment::Top, OVERDRAW);
+        let list = ListState::new(item_count, ListAlignment::Top, OVERDRAW).with_uniform_item_height(EST_ROW_H);
         list.set_follow_mode(FollowMode::Tail);
         Self { list, probe: Rc::new(RowProbe::default()) }
     }
@@ -80,7 +86,7 @@ impl ChatScroll {
 
     /// 重置为 `item_count` 行并恢复跟随。
     pub fn reset(&mut self, item_count: usize, cx: &mut Context<Self>) {
-        self.list.reset(item_count);
+        self.list.reset_with_uniform_height(item_count, EST_ROW_H);
         self.list.set_follow_mode(FollowMode::Tail);
         cx.notify();
     }
