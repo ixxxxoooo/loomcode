@@ -68,6 +68,9 @@ impl ClaudeOptions {
             "stream-json",
             "--include-partial-messages",
             "--permission-prompt-tool=stdio",
+            // 允许会话中途切到「绕过权限」(只是放行这个选项,不会默认开启);
+            // 不带它,运行中的 set_permission_mode(bypassPermissions) 会被 claude 拒绝
+            "--allow-dangerously-skip-permissions",
             // 新模型默认不回传思考内容(thinking_delta 为空),要显式要求返回摘要版
             "--thinking-display",
             "summarized",
@@ -249,6 +252,8 @@ mod tests {
         assert!(o.env().contains(&("CLAUDE_CODE_EFFORT_LEVEL".into(), String::new())));
         let custom = ClaudeOptions { extra_env: vec![("CLAUDE_CODE_EFFORT_LEVEL".into(), "low".into())], ..Default::default() };
         assert_eq!(custom.env().iter().rev().find(|(k, _)| k == "CLAUDE_CODE_EFFORT_LEVEL").map(|(_, v)| v.as_str()), Some("low"));
+        // 必须放行「绕过权限」选项,否则运行中切到该模式会被 claude 拒绝(bypass_not_launched)
+        assert!(a.contains(&"--allow-dangerously-skip-permissions".to_string()));
         // default 别名不传 --model
         let d = ClaudeOptions { model: Some("default".into()), ..Default::default() };
         assert!(!d.args().contains(&"--model".to_string()));
