@@ -39,6 +39,8 @@ pub enum PaletteAction {
     SwitchMode,
     /// IDE 窗口的内置命令(键为命令名,由 `ide_quick` 执行)
     Ide(&'static str),
+    /// 跳到当前文件的某个位置(0 起始的行 / 列),「转到符号」使用
+    Goto(u32, u32),
 }
 
 /// 条目分组。
@@ -55,6 +57,8 @@ pub enum Group {
     /// 最近打开的文件:只在无查询时显示,有查询时由「文件」分组承担
     Recent,
     Scenario,
+    /// 当前文件里的符号(⇧⌘O)
+    Symbol,
 }
 
 impl Group {
@@ -68,6 +72,7 @@ impl Group {
             Self::Theme => "主题",
             Self::Recent => "最近文件",
             Self::Scenario => "演示场景",
+            Self::Symbol => "符号",
         }
     }
 }
@@ -104,6 +109,8 @@ pub struct Palette {
     scroll: ScrollHandle,
     /// 处于主题二级列表时,记着进入前生效的主题(关闭时还原预览)
     theme_mode: Option<ThemeChoice>,
+    /// 「转到符号」模式:没有分段栏与分组标题,无查询时按文件顺序列出全部符号
+    symbols: bool,
     _sub: Subscription,
 }
 
@@ -123,7 +130,21 @@ impl Palette {
         });
         input.update(cx, |i, cx| i.focus(window, cx));
         let shown = filter_items(&items, "", 50, Segment::All);
-        Self { input, items, shown, segment: Segment::All, sel: 0, query: String::new(), scroll: ScrollHandle::new(), theme_mode: None, _sub: sub }
+        Self { input, items, shown, segment: Segment::All, sel: 0, query: String::new(), scroll: ScrollHandle::new(), theme_mode: None, symbols: false, _sub: sub }
+    }
+
+    /// 「转到符号」面板(⇧⌘O):`items` 是当前文件的符号(`Group::Symbol`),按文件顺序列出,输入后模糊筛选。
+    pub fn new_symbols(items: Vec<PaletteItem>, window: &mut Window, cx: &mut Context<Self>) -> Self {
+        let mut p = Self::new(items, window, cx);
+        p.symbols = true;
+        p.input.update(cx, |i, cx| i.set_placeholder("转到符号…(输入名称筛选)", window, cx));
+        p.shown = filter_items(&p.items, "", p.limit(), Segment::All);
+        p
+    }
+
+    /// 列表条数上限:符号模式要列全(大文件可能有几百个符号)。
+    fn limit(&self) -> usize {
+        if self.symbols { 1000 } else { 50 }
     }
 
     /// 预填查询(调试与外部调用);`@theme` 直接进入主题列表。
@@ -139,7 +160,7 @@ impl Palette {
 
     /// 按当前查询与分段重新筛选,选中第一项并滚回顶部;主题列表里同时预览第一项。
     fn refilter(&mut self, cx: &mut Context<Self>) {
-        self.shown = filter_items(&self.items, &self.query, 50, self.segment);
+        self.shown = filter_items(&self.items, &self.query, self.limit(), self.segment);
         self.sel = 0;
         self.scroll.set_offset(point(px(0.), px(0.)));
         self.preview_selected(cx);
@@ -234,7 +255,7 @@ impl Render for Palette {
         let this = cx.entity();
         let theme_mode = self.theme_mode.is_some();
         // 无查询时按分组显示小标题(命令 / 会话 / 最近文件…),有查询时按得分排序,右侧标签说明来源
-        let headers = !theme_mode && self.query.trim().is_empty();
+        let headers = !theme_mode && !self.symbols && self.query.trim().is_empty();
         // 遮罩 + 居中偏上的面板
         div().absolute().inset_0().flex().justify_center().items_start().pt(px(88.))
             .bg(t.background.opacity(0.35))
@@ -243,13 +264,13 @@ impl Render for Palette {
                 v_flex().relative().occlude().w(px(620.)).max_h(px(520.)).rounded(px(14.)).border_1().border_color(t.border).bg(t.popover).shadow_lg().overflow_hidden()
                     .capture_action(cx.listener(|this, _: &MoveUp, _, cx| this.move_sel(-1, cx)))
                     .capture_action(cx.listener(|this, _: &MoveDown, _, cx| this.move_sel(1, cx)))
-                    .capture_action(cx.listener(|this, _: &crate::workbench::Escape, _, cx| this.close(cx)))
+                    .capture_action(cx.listener(|this, _: &gpui_kit::component::input::Escape, _, cx| this.close(cx)))
                     .child(
                         h_flex().h(px(48.)).px_3().gap_2().items_center().border_b_1().border_color(t.border)
                             .child(icon(IconName::Search, 16., t.muted_foreground))
                             .child(div().flex_1().child(Input::new(&self.input).appearance(false).bordered(false))),
                     )
-                    .when(!theme_mode, |d| {
+                    .when(!theme_mode && !self.symbols, |d| {
                         d.child(
                             h_flex().px_3().py_1p5().gap_1().border_b_1().border_color(t.border).children(Segment::ALL.into_iter().map(|seg| {
                                 let on = seg == self.segment;
@@ -286,7 +307,7 @@ impl Render for Palette {
                                             .child(icon(item.icon, 15., t.muted_foreground))
                                             .child(div().text_size(px(13.5)).flex_none().max_w(px(300.)).truncate().child(item.title.clone()))
                                             .child(div().flex_1().min_w_0().truncate().text_size(px(12.)).font_family(if item.group == Group::File { MONO } else { ".SystemUIFont" }).text_color(t.muted_foreground).child(item.subtitle.clone()))
-                                            .when(!headers && !theme_mode, |d| d.child(div().text_size(px(11.)).text_color(t.muted_foreground).child(item.group.label()))),
+                                            .when(!headers && !theme_mode && !self.symbols, |d| d.child(div().text_size(px(11.)).text_color(t.muted_foreground).child(item.group.label()))),
                                     )
                             })),
                     )

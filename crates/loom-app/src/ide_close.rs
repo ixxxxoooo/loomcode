@@ -12,6 +12,14 @@ use std::path::{Path, PathBuf};
 impl IdeView {
     /// 立即关闭一个标签并丢弃其文档。
     pub(crate) fn drop_tab(&mut self, path: &Path) {
+        // 记下关闭的真实文件,⇧⌘T 可重新打开
+        if !crate::ide_untitled::is_untitled(path) && !crate::ide_diff::is_diff(path) {
+            self.closed.retain(|p| p != path);
+            self.closed.push(path.to_path_buf());
+            if self.closed.len() > 30 {
+                self.closed.remove(0);
+            }
+        }
         self.docs.remove(path);
         self.images.remove(path);
         self.drop_sheet(path);
@@ -101,6 +109,21 @@ impl IdeView {
     pub fn close_saved(&mut self, window: &mut Window, cx: &mut Context<Self>) {
         let saved: Vec<PathBuf> = self.tabs.tabs().iter().filter(|p| self.docs.get(*p).is_none_or(|d| d.saved)).cloned().collect();
         self.close_now(&saved, window, cx);
+    }
+
+    /// ⇧⌘T:重新打开最近关闭的文件(已被删除的跳过)。
+    pub fn reopen_closed(&mut self, window: &mut Window, cx: &mut Context<Self>) {
+        if let Some(c) = self.focused_child() {
+            c.update(cx, |c, cx| c.reopen_closed(window, cx));
+            return;
+        }
+        while let Some(p) = self.closed.pop() {
+            if p.is_file() && !self.tabs.tabs().contains(&p) {
+                self.open(p, false, window, cx);
+                return;
+            }
+        }
+        crate::notice::info(window, cx, "没有可重新打开的已关闭文件");
     }
 
     /// 关闭当前标签。

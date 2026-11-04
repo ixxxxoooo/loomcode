@@ -97,7 +97,7 @@ pub fn fuzzy_score(query: &str, text: &str) -> Option<i32> {
 pub fn filter_items(items: &[PaletteItem], query: &str, limit: usize, segment: Segment) -> Vec<PaletteItem> {
     if query.trim().is_empty() {
         let keep = |i: &&PaletteItem| match segment {
-            Segment::All => matches!(i.group, Group::Command | Group::Session | Group::Recent | Group::Theme),
+            Segment::All => matches!(i.group, Group::Command | Group::Session | Group::Recent | Group::Theme | Group::Symbol),
             Segment::File => matches!(i.group, Group::File | Group::Recent),
             other => other.accepts(i.group),
         };

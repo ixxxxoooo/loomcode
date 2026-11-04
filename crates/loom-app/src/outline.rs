@@ -127,7 +127,7 @@ pub fn active_index(items: &[OutlineItem], cursor_line: u32) -> Option<usize> {
 }
 
 /// 符号种类 → 图标(LSP `SymbolKind`)。
-fn kind_icon(kind: u32) -> IconName {
+pub(crate) fn kind_icon(kind: u32) -> IconName {
     match kind {
         // 模块 / 命名空间 / 包
         2..=4 => IconName::Boxes,
@@ -142,6 +142,14 @@ fn kind_icon(kind: u32) -> IconName {
 }
 
 impl IdeView {
+    /// 当前标签(跟随最近点击的编辑器组)的大纲;没有文件或没有可用的符号时为空。
+    pub(crate) fn active_outline(&self, cx: &App) -> Rc<Vec<OutlineItem>> {
+        if let Some(c) = self.focused_child() {
+            return c.read(cx).active_outline(cx);
+        }
+        self.tabs.active().and_then(|p| self.docs.get(p)).map(|d| d.outline.clone()).unwrap_or_default()
+    }
+
     /// 立即重新计算某文档的大纲。
     pub(crate) fn refresh_outline(&mut self, path: &std::path::Path, cx: &mut Context<Self>) {
         if crate::ide_untitled::is_untitled(path) {

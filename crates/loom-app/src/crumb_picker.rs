@@ -143,7 +143,7 @@ impl Render for CrumbPicker {
                     .on_mouse_down_out(cx.listener(|_, _, _, cx| cx.emit(CrumbEvent::Close)))
                     .capture_action(cx.listener(|this, _: &MoveUp, _, cx| this.move_sel(-1, cx)))
                     .capture_action(cx.listener(|this, _: &MoveDown, _, cx| this.move_sel(1, cx)))
-                    .capture_action(cx.listener(|_, _: &crate::workbench::Escape, _, cx| cx.emit(CrumbEvent::Close)))
+                    .capture_action(cx.listener(|_, _: &gpui_kit::component::input::Escape, _, cx| cx.emit(CrumbEvent::Close)))
                     .child(
                         h_flex().h(px(34.)).px_3().gap_2().items_center().border_b_1().border_color(t.border)
                             .child(icon(IconName::Search, 13., t.muted_foreground))

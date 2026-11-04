@@ -39,6 +39,16 @@ impl IdeWindow {
         cx.notify();
     }
 
+    /// Esc:关闭搜索面板(回到文件树),焦点还给编辑器。
+    pub(crate) fn close_search(&mut self, window: &mut Window, cx: &mut Context<Self>) {
+        if !self.search_open {
+            return;
+        }
+        self.search_open = false;
+        self.ide.update(cx, |ide, cx| ide.focus_active(window, cx));
+        cx.notify();
+    }
+
     /// 最左侧的窄活动栏:文件 / 搜索 / 改动,选中项左侧有竖条(与 VSCode 一致),底部是设置。
     pub(crate) fn activity_bar(&self, cx: &mut Context<Self>) -> impl IntoElement {
         let t = cx.theme().clone();

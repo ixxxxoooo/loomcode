@@ -15,7 +15,7 @@ use gpui_kit::*;
 use std::collections::HashMap;
 use std::path::{Path, PathBuf};
 
-actions!(ide, [GoToImplementation, FindReferences, RenameSymbol, ChangeAllOccurrences, ShowRefactor, ShowSourceActions, ToggleBlameAnnotations, CompareWithSaved, CompareWithClipboard, ToggleWordWrap, ShowFileHistory, OpenCommandPalette, GoToTypeDefinition, FormatDocument, CloseTab, NextTab, PrevTab, QuickOpen, GoToLine, FindInProject, NavBack, NavForward, ShowScm, TogglePanel]);
+actions!(ide, [GoToImplementation, FindReferences, RenameSymbol, ChangeAllOccurrences, ShowRefactor, ShowSourceActions, ToggleBlameAnnotations, CompareWithSaved, CompareWithClipboard, ToggleWordWrap, ShowFileHistory, OpenCommandPalette, GoToTypeDefinition, FormatDocument, CloseTab, NextTab, PrevTab, QuickOpen, GoToLine, FindInProject, NavBack, NavForward, ShowScm, TogglePanel, GoToSymbol, ReopenClosedTab, SplitEditorRight, SaveAllFiles]);
 
 /// 超过这个大小的文件不在编辑器里打开。
 
@@ -116,6 +116,8 @@ pub struct IdeView {
     pub(crate) fresh_open: bool,
     /// 最近打开的文件,最近的在前
     pub(crate) recent: Vec<String>,
+    /// 最近关闭的真实文件(⇧⌘T 重新打开,最新的在末尾)
+    pub(crate) closed: Vec<PathBuf>,
     /// 切换项目后待恢复的标签记忆(渲染时有窗口再恢复)
     pub(crate) pending_restore: Option<loom_config::IdeMemory>,
     /// Markdown 文件的预览 / 源码模式与就地编辑状态
@@ -142,7 +144,7 @@ pub struct IdeView {
 impl IdeView {
     /// 创建空的编辑器视图。
     pub fn new() -> Self {
-        Self { root: String::new(), docs: HashMap::new(), tabs: TabModel::default(), hover_win: None, crumb: None, cmd_click: None, note: None, images: Default::default(), sheets: HashMap::new(), sheet_subs: HashMap::new(), diffs: HashMap::new(), as_text: Default::default(), minimap_ui: Default::default(), applied: None, edit_gen: 0, nav: Default::default(), nav_quiet: false, fresh_open: false, recent: Vec::new(), pending_restore: None, md: HashMap::new(), blame_gutter: false, blame_ui: Default::default(), lsp_listening: false, hover_ui: Default::default(), overlay: None, cursor_msg: None, overlay_sub: None, tabs_scroll: ScrollHandle::new(), tabs_revealed: None, untitled_seq: 0, wrap_tabs: true, split: None, parent: None, active_second: false, saved_as: Vec::new() }
+        Self { root: String::new(), docs: HashMap::new(), tabs: TabModel::default(), hover_win: None, crumb: None, cmd_click: None, note: None, images: Default::default(), sheets: HashMap::new(), sheet_subs: HashMap::new(), diffs: HashMap::new(), as_text: Default::default(), minimap_ui: Default::default(), applied: None, edit_gen: 0, nav: Default::default(), nav_quiet: false, fresh_open: false, recent: Vec::new(), closed: Vec::new(), pending_restore: None, md: HashMap::new(), blame_gutter: false, blame_ui: Default::default(), lsp_listening: false, hover_ui: Default::default(), overlay: None, cursor_msg: None, overlay_sub: None, tabs_scroll: ScrollHandle::new(), tabs_revealed: None, untitled_seq: 0, wrap_tabs: true, split: None, parent: None, active_second: false, saved_as: Vec::new() }
     }
 
     /// 设置项目根目录(会话切换时由宿主调用)。
@@ -595,7 +597,20 @@ impl IdeView {
             .on_action(cx.listener(|this, _: &ToggleWordWrap, _, cx| this.toggle_word_wrap(cx)))
             .on_action(cx.listener(|this, _: &FormatDocument, window, cx| this.format_document(window, cx)))
             .on_action(cx.listener(|this, _: &NextTab, window, cx| this.cycle(1, window, cx)))
-            .on_action(cx.listener(|this, _: &PrevTab, window, cx| this.cycle(-1, window, cx)));
+            .on_action(cx.listener(|this, _: &PrevTab, window, cx| this.cycle(-1, window, cx)))
+            .on_action(cx.listener(|this, _: &crate::ide_edit::ToggleLineComment, window, cx| this.toggle_line_comment(window, cx)))
+            .on_action(cx.listener(|this, _: &crate::ide_edit::MoveLinesUp, window, cx| this.move_lines_action(true, window, cx)))
+            .on_action(cx.listener(|this, _: &crate::ide_edit::MoveLinesDown, window, cx| this.move_lines_action(false, window, cx)))
+            .on_action(cx.listener(|this, _: &crate::ide_edit::CopyLinesUp, window, cx| this.copy_lines_action(true, window, cx)))
+            .on_action(cx.listener(|this, _: &crate::ide_edit::CopyLinesDown, window, cx| this.copy_lines_action(false, window, cx)))
+            .on_action(cx.listener(|this, _: &crate::ide_edit::DeleteLines, window, cx| this.delete_lines_action(window, cx)))
+            .on_action(cx.listener(|this, _: &crate::ide_edit::InsertLineBelow, window, cx| this.insert_line_action(true, window, cx)))
+            .on_action(cx.listener(|this, _: &crate::ide_edit::InsertLineAbove, window, cx| this.insert_line_action(false, window, cx)))
+            .on_action(cx.listener(|this, _: &crate::ide_edit::AddNextOccurrence, window, cx| this.add_next_occurrence(window, cx)))
+            .on_action(cx.listener(|this, _: &crate::ide_edit::SelectAllOccurrences, window, cx| this.select_all_occurrences(window, cx)))
+            .on_action(cx.listener(|this, _: &ReopenClosedTab, window, cx| this.reopen_closed(window, cx)))
+            .on_action(cx.listener(|this, _: &SplitEditorRight, window, cx| this.split_active(false, window, cx)))
+            .on_action(cx.listener(|this, _: &SaveAllFiles, _, cx| this.save_all(cx)));
         let active = self.tabs.active().map(Path::to_path_buf);
         if let Some(a) = &active {
             self.reveal_active_tab(a);

@@ -759,7 +759,7 @@ impl Workbench {
             }
             PaletteAction::SwitchMode => self.request_switch_mode(window, cx),
             // 主题列表由面板自己展开,不会走到这里
-            PaletteAction::PickTheme | PaletteAction::Ide(_) => {}
+            PaletteAction::PickTheme | PaletteAction::Ide(_) | PaletteAction::Goto(..) => {}
         }
     }
 

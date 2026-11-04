@@ -5,7 +5,7 @@
 //! @author ixxxxoooo
 
 use crate::ide_status;
-use crate::ide::{ChangeAllOccurrences, CloseTab, FindReferences, FormatDocument, GoToImplementation, OpenCommandPalette, RenameSymbol, ShowFileHistory, ShowRefactor, ToggleWordWrap, FindInProject, GoToLine, IdeView, NavBack, NavForward, NextTab, PrevTab, QuickOpen, ShowScm, TogglePanel};
+use crate::ide::{ChangeAllOccurrences, CloseTab, FindReferences, FormatDocument, GoToImplementation, OpenCommandPalette, RenameSymbol, ShowFileHistory, ShowRefactor, ToggleWordWrap, FindInProject, GoToLine, IdeView, NavBack, NavForward, NextTab, PrevTab, QuickOpen, ShowScm, TogglePanel, GoToSymbol, ReopenClosedTab, SplitEditorRight, SaveAllFiles};
 use crate::right_panel::{PanelEvent, RightPanel};
 use crate::ui::{icon, no_drag};
 use gpui_kit::component::Disableable as _;
@@ -425,6 +425,7 @@ impl Render for IdeWindow {
             }))
             .on_action(cx.listener(|this, _: &QuickOpen, window, cx| this.toggle_quick(window, cx)))
             .on_action(cx.listener(|this, _: &GoToLine, window, cx| this.goto_line_dialog(window, cx)))
+            .on_action(cx.listener(|this, _: &GoToSymbol, window, cx| this.toggle_symbols(window, cx)))
             .on_action(cx.listener(|this, _: &NavBack, window, cx| this.ide_navigate(false, window, cx)))
             .on_action(cx.listener(|this, _: &NavForward, window, cx| this.ide_navigate(true, window, cx)))
             .on_action(cx.listener(|this, _: &FindInProject, window, cx| this.show_search(window, cx)))
@@ -459,7 +460,15 @@ impl Render for IdeWindow {
                         } else {
                             h_resizable("ide-split")
                                 .child(resizable_panel().size(px(260.)).size_range(px(160.)..px(520.)).flex_none().fixed().visible(self.left_open)
-                                    .child(div().size_full().child(if self.search_open { self.search.clone().into_any_element() } else { self.panel.clone().into_any_element() })))
+                                    .child(div().size_full()
+                                        // Esc:搜索面板里按 Esc 关闭搜索(回到文件树)并把焦点还给编辑器
+                                        .when(self.search_open, |d| d.on_key_down(cx.listener(|this, ev: &KeyDownEvent, window, cx| {
+                                            if ev.keystroke.key == "escape" && !ev.keystroke.modifiers.modified() {
+                                                this.close_search(window, cx);
+                                                cx.stop_propagation();
+                                            }
+                                        })))
+                                        .child(if self.search_open { self.search.clone().into_any_element() } else { self.panel.clone().into_any_element() })))
                                 .child(resizable_panel().size_range(px(320.)..Pixels::MAX).child(
                                     v_resizable("ide-vsplit")
                                         .child(resizable_panel().size_range(px(120.)..Pixels::MAX).child(div().size_full().child(self.ide.clone())))
@@ -575,6 +584,26 @@ pub(crate) fn bind_ide_keys(cx: &mut App) {
             KeyBinding::new("cmd-l", crate::ide_reference::QuoteSelection, Some("IdeWindow")),
             KeyBinding::new("cmd-alt-right", NextTab, Some("IdeView")),
             KeyBinding::new("cmd-alt-left", PrevTab, Some("IdeView")),
+            // 对标 VS Code 的常用快捷键
+            KeyBinding::new("cmd-shift-o", GoToSymbol, Some("IdeWindow")),
+            KeyBinding::new("cmd-shift-]", NextTab, Some("IdeView")),
+            KeyBinding::new("cmd-shift-[", PrevTab, Some("IdeView")),
+            KeyBinding::new("ctrl-tab", NextTab, Some("IdeView")),
+            KeyBinding::new("ctrl-shift-tab", PrevTab, Some("IdeView")),
+            KeyBinding::new("cmd-shift-t", ReopenClosedTab, Some("IdeView")),
+            KeyBinding::new("cmd-\\", SplitEditorRight, Some("IdeView")),
+            KeyBinding::new("cmd-alt-s", SaveAllFiles, Some("IdeView")),
+            // 编辑器行操作:放在 `IdeView > Input` 里,比输入库自带的同键绑定(如 ⇧⌥↑↓ 的添加光标)更深,所以优先
+            KeyBinding::new("cmd-/", crate::ide_edit::ToggleLineComment, Some("IdeView > Input")),
+            KeyBinding::new("alt-up", crate::ide_edit::MoveLinesUp, Some("IdeView > Input")),
+            KeyBinding::new("alt-down", crate::ide_edit::MoveLinesDown, Some("IdeView > Input")),
+            KeyBinding::new("shift-alt-up", crate::ide_edit::CopyLinesUp, Some("IdeView > Input")),
+            KeyBinding::new("shift-alt-down", crate::ide_edit::CopyLinesDown, Some("IdeView > Input")),
+            KeyBinding::new("cmd-shift-k", crate::ide_edit::DeleteLines, Some("IdeView > Input")),
+            KeyBinding::new("cmd-enter", crate::ide_edit::InsertLineBelow, Some("IdeView > Input")),
+            KeyBinding::new("cmd-shift-enter", crate::ide_edit::InsertLineAbove, Some("IdeView > Input")),
+            KeyBinding::new("cmd-d", crate::ide_edit::AddNextOccurrence, Some("IdeView > Input")),
+            KeyBinding::new("cmd-shift-l", crate::ide_edit::SelectAllOccurrences, Some("IdeView > Input")),
         ]);
     });
 }

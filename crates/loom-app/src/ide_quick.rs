@@ -63,7 +63,14 @@ impl IdeWindow {
         cmd("显示 / 隐藏侧栏", "⌘B", IconName::PanelLeft, PaletteAction::ToggleLeft);
         cmd("显示 / 隐藏对话栏", "⌥⌘B", IconName::PanelRight, PaletteAction::ToggleRight);
         let palette = cx.new(|cx| Palette::new(items, window, cx));
-        self._quick_sub = Some(cx.subscribe_in(&palette, window, |this, _, ev: &PaletteEvent, window, cx| match ev {
+        self.attach_quick(&palette, window, cx);
+        self.quick = Some(palette);
+        cx.notify();
+    }
+
+    /// 订阅快速面板(⌘P / ⇧⌘O 共用):关闭与执行动作。
+    fn attach_quick(&mut self, palette: &Entity<Palette>, window: &mut Window, cx: &mut Context<Self>) {
+        self._quick_sub = Some(cx.subscribe_in(palette, window, |this, _, ev: &PaletteEvent, window, cx| match ev {
             PaletteEvent::Close => this.toggle_quick(window, cx),
             PaletteEvent::PreviewTheme(c) => {
                 crate::theme::apply_preview(*c, cx);
@@ -79,12 +86,37 @@ impl IdeWindow {
                     PaletteAction::ToggleIde => this.back_to_agent(cx),
                     PaletteAction::OpenSession(_, id) => this.activate_chat_tab(&id, window, cx),
                     PaletteAction::Ide(name) => this.run_ide_command(name, window, cx),
+                    PaletteAction::Goto(line, col) => this.ide.update(cx, |v, cx| {
+                        v.goto(line + 1, col + 1, window, cx);
+                        v.focus_active(window, cx);
+                    }),
                     PaletteAction::SetTheme(c) => this.wb.update(cx, |wb, cx| wb.update_settings(cx, |s| s.theme = c)),
                     _ => {}
                 }
                 cx.notify();
             }
         }));
+    }
+
+    /// ⇧⌘O:转到当前文件里的符号(语言服务器的 documentSymbol,Markdown 为标题);再按一次关闭。
+    pub fn toggle_symbols(&mut self, window: &mut Window, cx: &mut Context<Self>) {
+        if self.quick.take().is_some() {
+            self._quick_sub = None;
+            window.focus(&self.focus, cx);
+            cx.notify();
+            return;
+        }
+        let outline = self.ide.read(cx).active_outline(cx);
+        if outline.is_empty() {
+            crate::notice::info(window, cx, "当前文件没有可用的符号(语言服务器未就绪或不支持该语言)");
+            return;
+        }
+        let items: Vec<PaletteItem> = outline
+            .iter()
+            .map(|o| PaletteItem { title: o.name.clone(), subtitle: o.detail.clone(), group: Group::Symbol, icon: crate::outline::kind_icon(o.kind), action: PaletteAction::Goto(o.line, o.col) })
+            .collect();
+        let palette = cx.new(|cx| Palette::new_symbols(items, window, cx));
+        self.attach_quick(&palette, window, cx);
         self.quick = Some(palette);
         cx.notify();
     }
