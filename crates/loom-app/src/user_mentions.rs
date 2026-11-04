@@ -2,7 +2,8 @@
 //! 这里把正文里的 `@路径` 重新认出来,渲染成同款胶囊,和文字一起折行排版。
 //!
 //! 切分规则(纯函数 [`segments`],有测试):`@` 必须在行首或空白之后;路径到空白或全角标点为止;
-//! 路径里要有 `/` 或 `.`(`@张三` 这类普通提及不当文件);末尾的半角标点不算路径。
+//! 路径里要有 `/` 或 `.`(`@张三` 这类普通提及不当文件);末尾的半角标点不算路径;
+//! `@"带 空格 的路径"` 用引号包住,整段当一个引用(claude 也认这种写法)。
 //!
 //! @author ixxxxoooo
 
@@ -19,6 +20,8 @@ pub enum Seg<'a> {
     Text(&'a str),
     /// 文件引用,值是 `@` 后面的路径。
     Mention(&'a str),
+    /// 带引号的文件引用 `@"路径"`(路径含空格时用),值是引号里的路径。
+    Quoted(&'a str),
 }
 
 /// 路径的终止符:全角标点(路径里几乎不会出现,紧跟在路径后面时当作句子的标点)。
@@ -28,7 +31,7 @@ fn ends_mention(c: char) -> bool {
 
 /// 正文里有没有可渲染成胶囊的文件引用。
 pub fn has_mentions(text: &str) -> bool {
-    segments(text).iter().any(|s| matches!(s, Seg::Mention(_)))
+    segments(text).iter().any(|s| matches!(s, Seg::Mention(_) | Seg::Quoted(_)))
 }
 
 /// 把一行(或整段)正文切成文字与文件引用。
@@ -40,6 +43,27 @@ pub fn segments(text: &str) -> Vec<Seg<'_>> {
     let mut chars = text.char_indices().peekable();
     while let Some((i, c)) = chars.next() {
         if c == '@' && prev_ws {
+            // `@"带空格的路径"`:引号内(同一行)整段当路径
+            if text[i + 1..].starts_with('"') {
+                let inner_from = i + 2;
+                if let Some(len) = text[inner_from..].find(['"', '\n']).filter(|&n| text[inner_from + n..].starts_with('"')) {
+                    let inner = &text[inner_from..inner_from + len];
+                    if inner.len() >= 2 && inner.contains(['/', '.']) {
+                        if plain_from < i {
+                            out.push(Seg::Text(&text[plain_from..i]));
+                        }
+                        out.push(Seg::Quoted(inner));
+                        let end = inner_from + len + 1;
+                        plain_from = end;
+                        // 跳过已消费的字符
+                        while chars.peek().is_some_and(|&(j, _)| j < end) {
+                            chars.next();
+                        }
+                        prev_ws = false;
+                        continue;
+                    }
+                }
+            }
             let start = i + 1;
             let mut end = start;
             while let Some(&(j, d)) = chars.peek() {
@@ -126,7 +150,7 @@ fn line(text: &str, line_h: f32, cx: &App) -> AnyElement {
     let mut row = h_flex().w_full().min_w_0().flex_wrap().items_center().min_h(px(line_h));
     for seg in segments(text) {
         match seg {
-            Seg::Mention(p) => row = row.child(chip(p, line_h, cx)),
+            Seg::Mention(p) | Seg::Quoted(p) => row = row.child(chip(p, line_h, cx)),
             Seg::Text(s) => {
                 for p in pieces(s) {
                     row = match p {
@@ -148,9 +172,10 @@ pub fn content_from_text(text: &str) -> InputContent {
     for seg in segments(text) {
         match seg {
             Seg::Text(t) => pos += t.len(),
-            Seg::Mention(p) => {
-                // 引用段不含开头的 `@`,它在 pos 处
-                let range = pos..pos + 1 + p.len();
+            Seg::Mention(p) | Seg::Quoted(p) => {
+                // 引用段不含开头的 `@`(带引号的还有一对引号),它在 pos 处
+                let quoted = matches!(seg, Seg::Quoted(_));
+                let range = pos..pos + 1 + p.len() + if quoted { 2 } else { 0 };
                 pos = range.end;
                 let Some(token) = crate::composer_refs::file_token(Path::new(p), p) else { continue };
                 if let Ok(c) = content.clone().with_token(range, token) {
@@ -214,8 +239,30 @@ mod tests {
     #[::core::prelude::v1::test]
     fn 拼回原文() {
         let t = "前 @/a/b.rs 中 @c.md。后";
-        let s: String = segments(t).iter().map(|s| match s { Seg::Text(x) => x.to_string(), Seg::Mention(p) => format!("@{p}") }).collect();
+        let s: String = segments(t).iter().map(|s| match s { Seg::Text(x) => x.to_string(), Seg::Mention(p) => format!("@{p}"), Seg::Quoted(p) => format!("@\"{p}\"") }).collect();
         assert_eq!(s, t);
+    }
+
+    #[::core::prelude::v1::test]
+    fn 带引号的路径整段当一个引用() {
+        let t = "看 @\"/Users/x/GPUI Git 客户端开发方案.docx\" 这个";
+        assert_eq!(segments(t), vec![Seg::Text("看 "), Seg::Quoted("/Users/x/GPUI Git 客户端开发方案.docx"), Seg::Text(" 这个")]);
+        // 没闭合 / 里面不像路径:不当引用
+        assert!(!has_mentions("@\"没有闭合 a.rs"));
+        assert!(!has_mentions("@\"张三\" 你好"));
+        // 与不带引号的混排
+        assert_eq!(segments("@a.rs @\"b c.rs\""), vec![Seg::Mention("a.rs"), Seg::Text(" "), Seg::Quoted("b c.rs")]);
+        let s: String = segments(t).iter().map(|s| match s { Seg::Text(x) => x.to_string(), Seg::Mention(p) => format!("@{p}"), Seg::Quoted(p) => format!("@\"{p}\"") }).collect();
+        assert_eq!(s, t);
+    }
+
+    #[::core::prelude::v1::test]
+    fn 带引号的引用还原成输入框标记() {
+        let t = "看 @\"/a/b c.rs\"。好";
+        let c = content_from_text(t);
+        assert_eq!(c.text().as_ref(), t);
+        let spans: Vec<_> = c.tokens().iter().map(|s| (s.range(), s.token().text().to_string(), s.token().label().to_string())).collect();
+        assert_eq!(spans, vec![(4..16, "@\"/a/b c.rs\"".to_string(), "b c.rs".to_string())]);
     }
 
     #[::core::prelude::v1::test]

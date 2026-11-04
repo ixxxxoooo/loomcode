@@ -1,6 +1,6 @@
 //! 输入框正文里的文件引用:从文件树、编辑器标签或访达拖进来的文件 / 文件夹,作为「原子行内标记」插在光标处,
 //! 渲染成带文件图标的小胶囊,和文字一起编辑(光标可以移过它、退格整颗删除)。标记在文本里的内容是 `@路径`,
-//! 所以发送、历史、`@` 提及解析都和手敲 `@路径` 完全一样。
+//! 所以发送、历史、`@` 提及解析都和手敲 `@路径` 完全一样;路径含空格时写成 `@"路径"`(claude 认带引号的提及)。
 //!
 //! @author ixxxxoooo
 
@@ -18,15 +18,22 @@ pub fn mention_for(path: &Path, root: Option<&str>) -> String {
     root.and_then(|r| path.strip_prefix(r).ok()).map(|p| p.to_string_lossy().to_string()).filter(|s| !s.is_empty()).unwrap_or_else(|| path.to_string_lossy().to_string())
 }
 
-/// 一个文件引用标记:文本是 `@路径`(含空白的路径会被拒绝,因为提及按空白切分),显示用文件名。
+/// 写进消息的引用文本:路径含空白时写成 `@"路径"`(claude 认带引号的提及,不带引号会在空格处截断),否则是 `@路径`。
 ///
-/// 参数:`path` 绝对路径(标记 id);`mention` 写进消息的路径。返回:`None` 表示路径不能作为提及。
+/// 参数:`mention` 路径。
+pub fn mention_text(mention: &str) -> String {
+    if mention.chars().any(char::is_whitespace) { format!("@\"{mention}\"") } else { format!("@{mention}") }
+}
+
+/// 一个文件引用标记:文本是 [`mention_text`](含空白的路径带引号),显示用文件名。
+///
+/// 参数:`path` 绝对路径(标记 id);`mention` 写进消息的路径。返回:`None` 表示路径不能作为提及(空、含控制字符或引号)。
 pub fn file_token(path: &Path, mention: &str) -> Option<InlineToken> {
-    if mention.is_empty() || mention.chars().any(|c| c.is_whitespace() || c.is_control()) {
+    if mention.is_empty() || mention.chars().any(|c| c.is_control() || c == '"') {
         return None;
     }
     let name = path.file_name().map(|n| n.to_string_lossy().to_string()).unwrap_or_else(|| mention.to_string());
-    Some(InlineToken::new(path.to_string_lossy().to_string(), format!("@{mention}")).with_label(name))
+    Some(InlineToken::new(path.to_string_lossy().to_string(), mention_text(mention)).with_label(name))
 }
 
 /// 标记的渲染:文件类型图标 + 文件名的圆角小胶囊(选中时整颗填主题色淡底,不再描边,避免和输入框自己的选区底色叠成括号状)。
@@ -49,7 +56,7 @@ impl Composer {
             mention_for(&path, root.as_deref())
         });
         let Some(token) = file_token(&path, &mention) else {
-            // 带空格的路径做不成标记:退回成纯文字 `@路径`
+            // 含引号 / 控制字符的路径做不成标记:退回成纯文字 `@路径`
             let cur = self.input.read(cx).value().to_string();
             let sep = if cur.is_empty() || cur.ends_with(' ') || cur.ends_with('\n') { "" } else { " " };
             self.set_text(&format!("{cur}{sep}@{mention} "), window, cx);
@@ -86,8 +93,17 @@ mod tests {
     }
 
     #[::core::prelude::v1::test]
-    fn 带空白的路径不能做标记() {
-        assert!(file_token(Path::new("/p/a b.rs"), "a b.rs").is_none());
+    fn 带空白的路径写成带引号的提及() {
+        let t = file_token(Path::new("/p/GPUI Git 客户端开发方案.docx"), "/p/GPUI Git 客户端开发方案.docx").unwrap();
+        assert_eq!(t.text().as_ref(), "@\"/p/GPUI Git 客户端开发方案.docx\"");
+        assert_eq!(t.label().as_ref(), "GPUI Git 客户端开发方案.docx", "胶囊显示完整文件名");
+        assert_eq!(mention_text("a.rs"), "@a.rs");
+    }
+
+    #[::core::prelude::v1::test]
+    fn 空路径_引号与控制字符不能做标记() {
         assert!(file_token(Path::new("/p/a.rs"), "").is_none());
+        assert!(file_token(Path::new("/p/a\"b.rs"), "a\"b.rs").is_none());
+        assert!(file_token(Path::new("/p/a\nb.rs"), "a\nb.rs").is_none());
     }
 }
