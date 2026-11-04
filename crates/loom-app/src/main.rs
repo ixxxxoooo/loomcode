@@ -151,6 +151,7 @@ mod session_fork;
 mod split_layout;
 mod session_menu;
 mod settings;
+mod layout_memory;
 mod right_memory;
 mod right_panel;
 mod right_rail;

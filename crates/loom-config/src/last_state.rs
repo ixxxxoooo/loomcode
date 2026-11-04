@@ -30,6 +30,46 @@ pub struct LastState {
     pub explorer_collapsed: Option<Vec<String>>,
     /// 资源管理器区块设置的版本:2 起「打开的编辑器」默认隐藏(旧记录升级时补隐藏一次)
     pub explorer_v: u32,
+    /// 窗口布局:左右栏开关、所在页面、IDE 是否开着、侧栏项目展开等
+    pub layout: LayoutMemory,
+}
+
+/// 窗口布局记忆。`Option` 字段为 `None` 表示从没记录过,沿用默认值。
+#[derive(Debug, Clone, PartialEq, Default, Serialize, Deserialize)]
+#[serde(default)]
+pub struct LayoutMemory {
+    /// Agent 窗口左侧栏是否展开(窗口变窄被自动收起时记收起前的状态)
+    pub left_open: Option<bool>,
+    /// Agent 窗口右侧面板是否展开
+    pub right_open: Option<bool>,
+    /// 主区域页面键:chat / settings / canvas / automation / browser / customize
+    pub page: Option<String>,
+    /// 关闭时 IDE 是否开着(融合模式的 IDE 视图,或独立 IDE 窗口)
+    pub ide: bool,
+    /// 侧栏里展开的项目路径;`None` 表示从没记录过
+    pub expanded_projects: Option<Vec<String>>,
+    /// 侧栏是否显示已归档会话
+    pub show_archived: bool,
+    /// IDE 内部布局
+    pub ide_layout: IdeLayout,
+}
+
+/// IDE 窗口内部的布局记忆。
+#[derive(Debug, Clone, PartialEq, Default, Serialize, Deserialize)]
+#[serde(default)]
+pub struct IdeLayout {
+    /// 左栏(文件 / 搜索 / 改动)是否展开;`None` = 默认展开
+    pub left_open: Option<bool>,
+    /// 对话栏是否展开;`None` = 默认展开
+    pub chat_open: Option<bool>,
+    /// 左栏是否显示搜索
+    pub search_open: bool,
+    /// 底部终端面板是否展开
+    pub term_open: bool,
+    /// 对话栏是否展开为占满窗口
+    pub chat_wide: bool,
+    /// 左栏选中的分段键(files / changes)
+    pub left_tab: Option<String>,
 }
 
 #[cfg(test)]
@@ -41,6 +81,27 @@ mod tests {
         let s: LastState = serde_json::from_str(r#"{"session":"abc"}"#).unwrap();
         assert_eq!(s.session.as_deref(), Some("abc"));
         assert!(s.chat_tabs.is_empty() && s.right_tabs.is_none() && !s.tree_collapsed);
+    }
+
+    #[test]
+    fn 布局记忆往返且旧文件缺字段时为默认() {
+        let old: LastState = serde_json::from_str(r#"{"session":"abc"}"#).unwrap();
+        assert_eq!(old.layout, LayoutMemory::default());
+        assert_eq!(old.layout.left_open, None);
+        let s = LastState {
+            layout: LayoutMemory {
+                left_open: Some(false),
+                right_open: Some(true),
+                page: Some("canvas".into()),
+                ide: true,
+                expanded_projects: Some(vec!["/a".into()]),
+                show_archived: true,
+                ide_layout: IdeLayout { left_open: Some(false), term_open: true, left_tab: Some("changes".into()), ..Default::default() },
+            },
+            ..Default::default()
+        };
+        let back: LastState = serde_json::from_str(&serde_json::to_string(&s).unwrap()).unwrap();
+        assert_eq!(s, back);
     }
 
     #[test]

@@ -213,6 +213,12 @@ pub struct Workbench {
     pending_project: Option<String>,
     /// 新窗口进程指定的启动项目是否已打开
     startup_project_done: bool,
+    /// 启动恢复:待展开的项目路径(历史加载完后应用一次)
+    pub(crate) pending_expanded: Option<Vec<String>>,
+    /// 启动恢复:上次关闭时 IDE 开着,历史加载完、会话恢复后再打开
+    pub(crate) pending_ide: bool,
+    /// 项目列表已从历史加载过一次(之前不记项目展开状态,免得抹掉)
+    pub(crate) layout_ready: bool,
     /// 全工作台唯一的编辑器:Agent 的「文件」标签、融合 IDE、独立 IDE 窗口都嵌入它,标签与文档只有一份
     pub editor: Entity<crate::ide::IdeView>,
     /// 源代码管理视图(全工作台唯一,Agent 的「Git 更改」与 IDE 的「源代码管理」共用)
@@ -352,6 +358,9 @@ impl Workbench {
             pending_open: None,
             pending_project: None,
             startup_project_done: false,
+            pending_expanded: None,
+            pending_ide: false,
+            layout_ready: demo,
             editor: editor.clone(),
             scm: scm.clone(),
             editor_mem_gen: 0,
@@ -411,6 +420,7 @@ impl Workbench {
             if !crate::secondary::is() {
                 let last = wb.ui_state.last.clone();
                 wb.panel.update(cx, |p, _| p.restore_last(&last));
+                wb.restore_layout();
                 wb.pending_open = session.or(last.session);
                 wb.pending_project = last.project;
             }
@@ -1201,6 +1211,12 @@ impl Workbench {
                 p.expanded = true;
             }
         }
+        // 启动恢复:侧栏项目的展开状态以上次关闭时为准(只应用一次)
+        if let Some(list) = self.pending_expanded.take() {
+            for p in projects.iter_mut() {
+                p.expanded = list.contains(&p.path);
+            }
+        }
         // 工作区先并进项目列表,再让置顶项目排前;之后下面的循环按路径恢复已打开会话的项目下标
         self.ui_state.apply_workspaces(&mut projects);
         self.ui_state.apply_projects(&mut projects);
@@ -1225,6 +1241,16 @@ impl Workbench {
         // 上次的会话找不到(没发过消息、已删除)时,回到上次所在的项目
         if !restored && let Some(path) = project {
             self.open_recent_project(path, window, cx);
+        }
+        // 项目列表读完了:此后才记项目展开状态
+        self.layout_ready = true;
+        // 上次关闭时 IDE 开着:会话恢复后再进 IDE(IDE 固定在进入时的当前项目);推迟到本次更新结束
+        if std::mem::take(&mut self.pending_ide) && !self.ide && self.ide_window.is_none() {
+            cx.defer_in(window, |this, window, cx| {
+                if !this.ide && this.ide_window.is_none() {
+                    this.toggle_ide(window, cx);
+                }
+            });
         }
         // 新窗口进程指定了项目:加载完历史后打开它(只一次)
         if let Some(path) = crate::secondary::project().filter(|_| !self.startup_project_done) {
@@ -1472,7 +1498,10 @@ impl Workbench {
                 let tabs = self.ui_state.last.chat_tabs.clone();
                 let editor = self.editor.clone();
                 let scm = self.scm.clone();
-                self.ide_shell = Some(cx.new(|cx| IdeWindow::new(wb, editor, scm, demo, root, tabs, window, cx)));
+                let layout = self.ui_state.last.layout.ide_layout.clone();
+                let shell = cx.new(|cx| IdeWindow::new(wb, editor, scm, demo, root, tabs, window, cx));
+                shell.update(cx, |w, cx| w.restore_layout(&layout, cx));
+                self.ide_shell = Some(shell);
             }
         } else {
             window.focus(&self.focus, cx);
@@ -1494,6 +1523,7 @@ impl Workbench {
         let demo = self.demo;
         let root = self.active_project_path().unwrap_or_default();
         let tabs = self.ui_state.last.chat_tabs.clone();
+        let layout = self.ui_state.last.layout.ide_layout.clone();
         let editor = self.editor.clone();
         let scm = self.scm.clone();
         // 新窗口首帧会回读本工作台,必须等当前更新结束后再创建
@@ -1511,6 +1541,7 @@ impl Workbench {
             match open_window(options, cx, move |window, cx| {
                 let base = root.clone();
                 let ide = cx.new(|cx| IdeWindow::new(wb, editor, scm, demo, root, tabs, window, cx));
+                ide.update(cx, |w, cx| w.restore_layout(&layout, cx));
                 // 调试用:LOOM_FILE 在独立 IDE 窗口里直接打开该文件(相对路径按项目根补全)
                 if let Ok(f) = std::env::var("LOOM_FILE") {
                     let p = PathBuf::from(&f);
@@ -1742,6 +1773,8 @@ impl Workbench {
         // 窗口太窄时自动收起侧栏(变宽后恢复)
         self.apply_responsive(window.viewport_size().width);
         self.apply_responsive_right(window.viewport_size().width);
+        // 布局变了就记下,下次启动恢复
+        self.sync_layout(cx);
         // 设置是整窗页面:隐藏侧栏、右侧面板与状态栏
         let full_settings = self.page == Page::Settings;
         // 融合模式的 IDE:整窗替换 Agent 布局(标题栏、侧栏、状态栏都是 IDE 的)

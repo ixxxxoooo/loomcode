@@ -16,5 +16,5 @@ pub mod ui_state;
 
 pub use claude::{ClaudeConfig, HookEntry, LayerSettings, McpServer, McpSpec, PermissionRules, Rule, Scope};
 pub use settings::{AppSettings, AppearancePrefs, ScrollbarStyle, SpinnerStyle, ShimmerKind, ToolDensity, AutoSave, BrowserPrefs, CursorShape, EditorPrefs, IntelPrefs, ProxyMode, ScmPrefs, TerminalPrefs, ThemeChoice};
-pub use last_state::LastState;
+pub use last_state::{IdeLayout, LastState, LayoutMemory};
 pub use ui_state::{IdeMemory, IdeTabMemory, UiState};

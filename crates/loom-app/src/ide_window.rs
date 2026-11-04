@@ -386,6 +386,7 @@ impl Render for IdeWindow {
         self.sync_state(cx);
         self.sync_chat_tabs(cx);
         self.apply_responsive(f32::from(window.viewport_size().width));
+        self.sync_layout(cx);
         let t = cx.theme().clone();
         let foreign = self.active_is_foreign(self.wb.read(cx));
         let (parts, project, project_name, mode, fused, branch, demo) = {
