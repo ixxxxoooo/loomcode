@@ -300,3 +300,46 @@ fn 真实_claude_后台任务与停止() {
     assert!(after.status.is_finished(), "停止后任务应进入终态,实际 {:?}", after.status);
     h.send(AgentCommand::Shutdown);
 }
+
+/// 真实 claude:前台长命令运行期间,工具卡能收到实时输出(`cargo test -p loom-claude --test integration -- --ignored --nocapture 前台命令`)。
+///
+/// 命令每 2 秒输出一行、共 6 行;断言:回合结束前就收到过只含部分行的实时输出,且最终结果取代它。
+#[test]
+#[ignore]
+fn 真实_claude_前台命令实时输出() {
+    std::fs::create_dir_all("/tmp/loom-probe").unwrap();
+    let h = ClaudeBackend::new(None)
+        .start(BackendConfig { cwd: "/tmp/loom-probe".into(), model: Some("haiku".into()), mode: Some(PermissionMode::BypassPermissions), ..Default::default() })
+        .expect("需要本机已安装 claude");
+    collect(&h, |e| matches!(e, AgentEvent::Ready { .. }));
+    h.send(prompt("用 Bash 工具前台运行(不要后台、不要 run_in_background): for i in 1 2 3 4 5 6; do echo 进度 $i; sleep 2; done 。只运行这一条,然后回复完成。"));
+    let mut state = SessionState::default();
+    let mut partial_seen: Option<String> = None;
+    let deadline = Instant::now() + Duration::from_secs(120);
+    let mut ended = false;
+    while Instant::now() < deadline && !ended {
+        match h.events.try_recv() {
+            Ok(e) => {
+                if matches!(e, AgentEvent::TurnEnded(_)) {
+                    ended = true;
+                }
+                if let AgentEvent::ToolUpdate { patch, .. } = &e {
+                    if let Some(out) = &patch.live_output {
+                        println!("实时输出:{out:?}");
+                        if !out.contains("进度 6") {
+                            partial_seen = Some(out.clone());
+                        }
+                    }
+                }
+                state.apply(e);
+            }
+            Err(_) => std::thread::sleep(Duration::from_millis(20)),
+        }
+    }
+    assert!(ended, "回合应在 120 秒内结束");
+    assert!(partial_seen.is_some(), "命令运行期间应收到过不完整的实时输出");
+    let tool = state.items.iter().find_map(|i| if let TimelineItem::Tool(t) = i { Some(t) } else { None }).expect("应有工具调用");
+    assert_eq!(tool.content.len(), 1, "最终结果取代实时输出");
+    assert!(matches!(&tool.content[0], ToolContent::Terminal { exit_code: Some(0), output, .. } if output.contains("进度 6")));
+    h.send(AgentCommand::Shutdown);
+}

@@ -7,6 +7,7 @@
 //! - `backend`:单 Actor 线程驱动子进程,实现 `AgentBackend`;
 //! - `lazy`:惰性包装,收到第一条命令才真正启动子进程(浏览历史会话不占进程);进程退出后下一条提示自动重启并接续会话;
 //! - `liveness`:忙闲信号(`session_state_changed` / `command_lifecycle`)跟踪;
+//! - `live_output`:前台 Bash 运行期间的实时输出文件定位(claude 不经协议给,但会写文件);
 //! - `history`:读取 `~/.claude/projects` 下的历史会话并回放。
 
 pub mod backend;
@@ -15,6 +16,7 @@ pub mod history;
 pub mod history_time;
 pub mod image_cache;
 pub mod lazy;
+pub mod live_output;
 pub mod liveness;
 pub mod options;
 pub mod session_index;

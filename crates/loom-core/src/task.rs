@@ -182,6 +182,48 @@ impl BackgroundTask {
 /// 任务输出缓冲上限(字节)。
 pub const OUTPUT_CAP: usize = 16 * 1024;
 
+/// 读日志文件时最多取末尾多少字节(比内存里的 `OUTPUT_CAP` 大得多,长日志才看得到近况)。
+pub const LOG_CAP: usize = 96 * 1024;
+
+/// 读到的日志尾部。
+pub struct LogTail {
+    /// 整理后的文本(已去掉回车覆盖的进度行,截断时从整行开始)
+    pub text: String,
+    /// 文件比读取上限大,前面的部分没显示
+    pub truncated: bool,
+    /// 文件总字节数
+    pub total: u64,
+}
+
+/// 读取输出文件的尾部(最多 `cap` 字节);文件不存在或读失败返回 `None`。
+///
+/// 截断时丢掉不完整的第一行;每行只保留最后一个 `\r` 之后的内容(进度条反复覆盖同一行),`\r\n` 当普通换行。
+pub fn read_log(path: &str, cap: usize) -> Option<LogTail> {
+    use std::io::{Read, Seek, SeekFrom};
+    let mut f = std::fs::File::open(path).ok()?;
+    let total = f.metadata().ok()?.len();
+    let truncated = total > cap as u64;
+    f.seek(SeekFrom::Start(total.saturating_sub(cap as u64))).ok()?;
+    let mut buf = Vec::new();
+    f.take(cap as u64).read_to_end(&mut buf).ok()?;
+    let mut text = String::from_utf8_lossy(&buf).into_owned();
+    if truncated {
+        if let Some(i) = text.find('\n') {
+            text.drain(..=i);
+        }
+    }
+    Some(LogTail { text: tidy_log(&text), truncated, total })
+}
+
+/// 整理终端输出:`\r\n` 归一,行内的回车覆盖只留最后一段。
+pub fn tidy_log(text: &str) -> String {
+    let text = text.replace("\r\n", "\n");
+    if !text.contains('\r') {
+        return text;
+    }
+    text.split('\n').map(|l| l.rsplit('\r').find(|x| !x.is_empty()).unwrap_or("")).collect::<Vec<_>>().join("\n")
+}
+
 /// 疑似停滞的阈值:运行中且超过这么久没有任何进展(毫秒)。
 pub const STALL_MS: u64 = 60_000;
 

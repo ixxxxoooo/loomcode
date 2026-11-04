@@ -154,6 +154,8 @@ pub struct ToolPatch {
     pub append_content: Vec<ToolContent>,
     pub duration_ms: Option<u64>,
     pub task_id: Option<String>,
+    /// 运行中命令的实时输出(整体替换,不是追加):界面把它当作还没结束的终端块显示;命令结束后由最终结果取代
+    pub live_output: Option<String>,
 }
 
 impl ToolCall {
@@ -164,6 +166,23 @@ impl ToolCall {
         }
         if let Some(s) = patch.status {
             self.status = s;
+        }
+        // 最终结果到了:实时输出(没有退出码的终端块)让位给它
+        if patch.append_content.iter().any(|c| matches!(c, ToolContent::Terminal { .. })) {
+            self.content.retain(|c| !matches!(c, ToolContent::Terminal { exit_code: None, .. }));
+        }
+        if let Some(output) = patch.live_output {
+            let live = self.content.iter_mut().find_map(|c| match c {
+                ToolContent::Terminal { output, exit_code: None, .. } => Some(output),
+                _ => None,
+            });
+            match live {
+                Some(o) => *o = output,
+                None => {
+                    let command = self.input.get("command").and_then(Value::as_str).unwrap_or_default().to_string();
+                    self.content.push(ToolContent::Terminal { command, output, exit_code: None });
+                }
+            }
         }
         self.content.extend(patch.append_content);
         if patch.duration_ms.is_some() {
@@ -199,5 +218,21 @@ mod tests {
         assert!(t.status.is_finished());
         assert_eq!(t.content.len(), 1);
         assert_eq!(t.duration_ms, Some(12));
+    }
+
+    #[test]
+    fn 实时输出整体替换并在最终结果到达时让位() {
+        let mut t = ToolCall::new("1", "Bash", "跑迁移").with_input(serde_json::json!({"command":"sleep 9"}));
+        t.apply(ToolPatch { live_output: Some("step 1\n".into()), ..Default::default() });
+        t.apply(ToolPatch { live_output: Some("step 1\nstep 2\n".into()), ..Default::default() });
+        assert_eq!(t.content.len(), 1);
+        assert!(matches!(&t.content[0], ToolContent::Terminal { command, output, exit_code: None } if command == "sleep 9" && output == "step 1\nstep 2\n"));
+        t.apply(ToolPatch {
+            status: Some(ToolStatus::Completed),
+            append_content: vec![ToolContent::Terminal { command: "sleep 9".into(), output: "全部输出".into(), exit_code: Some(0) }],
+            ..Default::default()
+        });
+        assert_eq!(t.content.len(), 1);
+        assert!(matches!(&t.content[0], ToolContent::Terminal { exit_code: Some(0), .. }));
     }
 }

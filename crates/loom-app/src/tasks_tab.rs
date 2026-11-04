@@ -13,51 +13,10 @@ use gpui_kit::component::{ActiveTheme, Sizable, h_flex, v_flex};
 use gpui_kit::prelude::FluentBuilder as _;
 use gpui_kit::*;
 use loom_core::*;
-use std::io::{Read, Seek, SeekFrom};
 use std::time::Duration;
 
-/// 「任务」标签里日志最多读多少字节(取文件末尾;比内存里的 `OUTPUT_CAP` 大得多,长日志才看得到近况)。
-pub const LOG_CAP: usize = 96 * 1024;
 /// 日志文件的轮询间隔:运行中的任务文件变长就刷新输出。
 const POLL: Duration = Duration::from_millis(800);
-
-/// 读到的日志尾部。
-pub struct LogTail {
-    /// 整理后的文本(已去掉回车覆盖的进度行,截断时从整行开始)
-    pub text: String,
-    /// 文件比读取上限大,前面的部分没显示
-    pub truncated: bool,
-    /// 文件总字节数
-    pub total: u64,
-}
-
-/// 读取输出文件的尾部(最多 `cap` 字节);文件不存在或读失败返回 `None`。
-///
-/// 截断时丢掉不完整的第一行;每行只保留最后一个 `\r` 之后的内容(进度条反复覆盖同一行),`\r\n` 当普通换行。
-pub fn read_log(path: &str, cap: usize) -> Option<LogTail> {
-    let mut f = std::fs::File::open(path).ok()?;
-    let total = f.metadata().ok()?.len();
-    let truncated = total > cap as u64;
-    f.seek(SeekFrom::Start(total.saturating_sub(cap as u64))).ok()?;
-    let mut buf = Vec::new();
-    f.take(cap as u64).read_to_end(&mut buf).ok()?;
-    let mut text = String::from_utf8_lossy(&buf).into_owned();
-    if truncated {
-        if let Some(i) = text.find('\n') {
-            text.drain(..=i);
-        }
-    }
-    Some(LogTail { text: tidy_log(&text), truncated, total })
-}
-
-/// 整理终端输出:`\r\n` 归一,行内的回车覆盖只留最后一段。
-fn tidy_log(text: &str) -> String {
-    let text = text.replace("\r\n", "\n");
-    if !text.contains('\r') {
-        return text;
-    }
-    text.split('\n').map(|l| l.rsplit('\r').find(|x| !x.is_empty()).unwrap_or("")).collect::<Vec<_>>().join("\n")
-}
 
 /// 文件大小的简短写法。
 fn human_bytes(n: u64) -> String {

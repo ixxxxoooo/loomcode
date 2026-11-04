@@ -108,6 +108,14 @@ impl AgentBackend for ClaudeBackend {
             let _ = t.send(Msg::InitTimeout);
         })?;
 
+        // 心跳:前台命令的输出只写进文件、协议里没有,所以定时让 Actor 去读(没有前台命令时是空操作)
+        let t = tx.clone();
+        spawn_named("loom-claude-tick", move || {
+            while t.send(Msg::Tick).is_ok() {
+                std::thread::sleep(LIVE_POLL);
+            }
+        })?;
+
         // 命令转发:界面侧通道关闭(会话被丢弃)等同于关闭后端
         let t = tx;
         spawn_named("loom-claude-cmd", move || {
@@ -124,6 +132,9 @@ impl AgentBackend for ClaudeBackend {
         Ok(handle)
     }
 }
+
+/// 前台命令实时输出的轮询间隔。
+const LIVE_POLL: std::time::Duration = std::time::Duration::from_millis(700);
 
 fn spawn_named(name: &str, f: impl FnOnce() + Send + 'static) -> Result<(), BackendError> {
     std::thread::Builder::new()
@@ -143,6 +154,8 @@ enum Msg {
     Eof,
     /// 握手计时到点(握手已完成时忽略)
     InitTimeout,
+    /// 定时心跳:轮询前台命令的实时输出
+    Tick,
 }
 
 /// 已发出、等待响应的控制请求。
@@ -231,6 +244,10 @@ impl Actor {
                     false
                 }
                 Msg::InitTimeout => self.on_init_timeout(),
+                Msg::Tick => {
+                    let events = self.translator.poll_live();
+                    events.is_empty() || self.emit_all(events)
+                }
             };
             if !keep_going {
                 break;

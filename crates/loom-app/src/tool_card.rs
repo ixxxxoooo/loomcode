@@ -90,7 +90,9 @@ pub fn render_tool(session: &Entity<SessionModel>, tool: &ToolCall, cx: &App) ->
     let detailed = crate::row_groups::expands_by_default(tool, density);
     let has_body = !tool.content.is_empty();
     // 失败的命令默认展开,直接看到报错输出(详细档本来就展开);手动点击反转默认状态
-    let by_default = detailed || (tool.status == ToolStatus::Failed && tool.kind == ToolKind::Execute && has_body);
+    // 运行中的命令一旦有了实时输出也默认展开:长命令要能边等边看进度
+    let live_exec = tool.status == ToolStatus::Running && tool.kind == ToolKind::Execute && has_body;
+    let by_default = detailed || live_exec || (tool.status == ToolStatus::Failed && tool.kind == ToolKind::Execute && has_body);
     let expanded = session.read(cx).is_expanded(&tool.id) != by_default;
     let id = tool.id.clone();
     let s = session.clone();

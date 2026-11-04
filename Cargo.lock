@@ -3723,6 +3723,7 @@ dependencies = [
  "async-channel",
  "base64 0.22.1",
  "chrono",
+ "libc",
  "loom-core",
  "loom-diag",
  "serde",

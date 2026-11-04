@@ -141,6 +141,16 @@ struct Streamed {
     claimed: bool,
 }
 
+/// 一个正在运行的前台 Bash:claude 在协议里不给它的输出,但会把输出实时写进任务输出文件,翻译器按路径规则找到并盯着它。
+struct LiveBash {
+    tool_id: String,
+    parent: Option<String>,
+    /// 输出文件(找到之前为 `None`,每次轮询重试)
+    path: Option<String>,
+    /// 上次读到的文件大小(没变就不再往界面发)
+    last_len: Option<u64>,
+}
+
 /// 翻译器。
 pub struct Translator {
     replay: bool,
@@ -169,6 +179,8 @@ pub struct Translator {
     /// 本进程见过、还没收到终态通知的后台任务 id(`task_started` / 存活快照里出现的)。
     /// 恢复会话时历史里遗留的任务不在其中:它们属于已退出的上一个进程,无法再停止。
     live_tasks: HashSet<String>,
+    /// 正在运行的前台 Bash(任务 id → 实时输出跟踪)
+    live_bash: HashMap<String, LiveBash>,
 }
 
 /// 是不是 claude 为 API 错误合成的 assistant 消息:带 `isApiErrorMessage` 标记,或模型是 `<synthetic>` 且文字以 `API Error` 开头。
@@ -197,7 +209,35 @@ impl Translator {
             seq: 0,
             id_gen: 0,
             live_tasks: HashSet::new(),
+            live_bash: HashMap::new(),
         }
+    }
+
+    /// 轮询正在运行的前台 Bash 的输出文件:文件变长就产出一条「实时输出」补丁(整体替换终端块)。
+    /// 没有前台命令时立即返回,可以高频调用。
+    pub fn poll_live(&mut self) -> Vec<AgentEvent> {
+        if self.live_bash.is_empty() {
+            return Vec::new();
+        }
+        let (session, cwd) = (self.session_id.clone(), self.cwd.clone());
+        let mut out = Vec::new();
+        for (task_id, live) in self.live_bash.iter_mut() {
+            if live.path.is_none() {
+                live.path = crate::live_output::find_output_file(&cwd, &session, task_id);
+            }
+            let Some(path) = live.path.as_deref() else { continue };
+            let Some(log) = loom_core::read_log(path, loom_core::LOG_CAP) else { continue };
+            if live.last_len == Some(log.total) {
+                continue;
+            }
+            live.last_len = Some(log.total);
+            out.push(AgentEvent::ToolUpdate {
+                parent: live.parent.clone(),
+                id: live.tool_id.clone(),
+                patch: ToolPatch { live_output: Some(log.text), ..Default::default() },
+            });
+        }
+        out
     }
 
     /// 本进程是否知道这个后台任务还在跑(见 `live_tasks`)。
@@ -300,7 +340,15 @@ impl Translator {
             },
             "task_started" => {
                 self.live_tasks.insert(str_of(v, "task_id").into());
-                vec![AgentEvent::TaskStarted(self.task_from(v))]
+                let task = self.task_from(v);
+                // 前台 Bash(不是后台、不是 Monitor、不是环境任务):盯它的输出文件,把进度实时显示在工具卡里
+                if !self.replay && !task.backgrounded && !task.ambient && task.kind == TaskKind::Shell {
+                    if let Some(info) = task.tool_use_id.as_deref().and_then(|id| self.tools.get(id)).filter(|i| i.name == "Bash") {
+                        let live = LiveBash { tool_id: task.tool_use_id.clone().unwrap_or_default(), parent: info.parent.clone(), path: None, last_len: None };
+                        self.live_bash.insert(task.task_id.clone(), live);
+                    }
+                }
+                vec![AgentEvent::TaskStarted(task)]
             }
             "task_progress" => {
                 let usage = &v["usage"];
@@ -323,6 +371,7 @@ impl Translator {
             }
             "task_notification" => {
                 self.live_tasks.remove(str_of(v, "task_id"));
+                self.live_bash.remove(str_of(v, "task_id"));
                 vec![AgentEvent::TaskNotification {
                 task_id: str_of(v, "task_id").into(),
                 status: TaskStatus::from_cli(str_of(v, "status")),
@@ -723,6 +772,7 @@ impl Translator {
         let id = str_of(block, "tool_use_id").to_string();
         let is_error = block.get("is_error").and_then(Value::as_bool).unwrap_or(false);
         let info = self.tools.remove(&id);
+        self.live_bash.retain(|_, l| l.tool_id != id);
 
         if self.subagents.contains(&id) {
             return self.subagent_result(&id, block, tur, is_error, info);
@@ -1646,6 +1696,59 @@ mod tests {
         assert!(!t.task_is_live("old-from-history"), "历史里遗留的任务属于已退出的进程");
         let _ = run(&mut t, &[json!({"type":"system","subtype":"task_notification","task_id":"live1","status":"stopped","summary":"x"})]);
         assert!(!t.task_is_live("live1"), "终态通知后不再算在运行");
+    }
+
+    #[test]
+    fn 前台_bash_运行期间实时显示输出文件的内容() {
+        // 指到临时目录,模拟 claude 把输出实时写进 tasks/<任务 id>.output
+        let root = std::env::temp_dir().join(format!("loom-live-tr-{}", std::process::id()));
+        let uid = unsafe { libc::getuid() };
+        let tasks = root.join(format!("claude-{uid}")).join("-w").join("sess").join("tasks");
+        std::fs::create_dir_all(&tasks).unwrap();
+        // SAFETY: 只有这个测试读写该环境变量
+        unsafe { std::env::set_var("CLAUDE_CODE_TMPDIR", &root) };
+
+        let mut t = Translator::new("/w");
+        t.session_id = "sess".into();
+        let mut events = Vec::new();
+        for l in [
+            json!({"type":"assistant","message":{"id":"m1","content":[{"type":"tool_use","id":"f1","name":"Bash","input":{"command":"./migrate.sh"}}]}}),
+            json!({"type":"system","subtype":"task_started","task_id":"fg1","tool_use_id":"f1","is_backgrounded":false,"task_type":"local_bash"}),
+        ] {
+            events.extend(t.handle(&l));
+        }
+        assert_eq!(t.live_bash.len(), 1, "前台 Bash 开始后登记");
+        assert!(t.poll_live().is_empty(), "文件还没创建时不产出");
+
+        std::fs::write(tasks.join("fg1.output"), "[进度] 1/9\n").unwrap();
+        events.extend(t.poll_live());
+        assert!(t.poll_live().is_empty(), "文件没变就不重复发");
+        std::fs::write(tasks.join("fg1.output"), "[进度] 1/9\n[进度] 2/9\n").unwrap();
+        events.extend(t.poll_live());
+
+        let s = reduce(events.clone());
+        let TimelineItem::Tool(tool) = &s.items[0] else { panic!() };
+        assert_eq!(tool.content.len(), 1, "实时输出整体替换,不累加");
+        assert!(matches!(&tool.content[0], ToolContent::Terminal { output, exit_code: None, .. } if output == "[进度] 1/9\n[进度] 2/9\n"));
+
+        // 命令结束:最终结果取代实时输出,并停止盯文件
+        events.extend(t.handle(&json!({"type":"user","message":{"content":[{"type":"tool_result","tool_use_id":"f1","content":"全部完成"}]},"tool_use_result":{"stdout":"全部完成","stderr":""}})));
+        assert!(t.live_bash.is_empty());
+        let s = reduce(events);
+        let TimelineItem::Tool(tool) = &s.items[0] else { panic!() };
+        assert_eq!(tool.content.len(), 1);
+        assert!(matches!(&tool.content[0], ToolContent::Terminal { output, exit_code: Some(0), .. } if output == "全部完成"));
+        let _ = std::fs::remove_dir_all(&root);
+    }
+
+    #[test]
+    fn 后台_bash_不盯实时输出() {
+        let mut t = Translator::new("/w");
+        let _ = run(&mut t, &[
+            json!({"type":"assistant","message":{"id":"m1","content":[{"type":"tool_use","id":"b1","name":"Bash","input":{"command":"x","run_in_background":true}}]}}),
+            json!({"type":"system","subtype":"task_started","task_id":"bg1","tool_use_id":"b1","is_backgrounded":true,"task_type":"local_bash"}),
+        ]);
+        assert!(t.live_bash.is_empty(), "后台命令走「任务」标签,不在工具卡里实时显示");
     }
 
     #[test]
