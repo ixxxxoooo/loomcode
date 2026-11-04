@@ -138,6 +138,43 @@ struct Geom {
     cols: Vec<Col>,
     /// 视口内各行的排版结果:(行, 栏) → 排版
     shaped: HashMap<(usize, u8), ShapedLine>,
+    /// 当前横向滚动量(各栏同步;命中测试要加回去)
+    xoff: f32,
+    /// 一个字符的宽度(等宽字体)与各栏里文字区的最小宽度,横向滚动上限由它们与最长行算出
+    adv: f32,
+    text_w: f32,
+}
+
+/// 横向滚动的视图参数:当前滚动量与最长行的显示列数(内联版不滚动,用默认值)。
+#[derive(Clone, Copy, Default)]
+struct XView {
+    off: f32,
+    max_cols: usize,
+}
+
+impl XView {
+    /// 横向最多能滚多远:最长行比文字区宽出的部分(再留一点右边距)。
+    fn limit(max_cols: usize, adv: f32, text_w: f32) -> f32 {
+        (max_cols as f32 * adv + PAD * 2. - text_w).max(0.)
+    }
+}
+
+/// 一行文字的显示列数(制表符按 4 列,中日韩等宽字符按 2 列)。
+fn display_cols(text: &str) -> usize {
+    text.chars().map(|c| if c == '\t' { 4 } else if c.is_ascii() { 1 } else { 2 }).sum()
+}
+
+/// 所有行里最长的显示列数。
+fn max_cols_of(rows: &[DRow]) -> usize {
+    let cell = |c: &Cell| display_cols(&c.text);
+    rows.iter()
+        .map(|r| match r {
+            DRow::Sep(_) => 0,
+            DRow::One(c) => cell(c),
+            DRow::Pair(l, n) => l.iter().chain(n.iter()).map(cell).max().unwrap_or(0),
+        })
+        .max()
+        .unwrap_or(0)
 }
 
 /// 选择的状态机(按下 / 拖动 / 松开):实体版(`DiffCode`)与无状态的内联版共用。
@@ -203,7 +240,7 @@ fn hit_test(rows: &[DRow], g: &Geom, pos: Point<Pixels>, force_side: Option<u8>)
         None => *g.cols.iter().find(|c| lx < c.x0 + c.w).or(g.cols.last())?,
     };
     let Some(cell) = cell_at(rows, row, col.side) else { return Some((col.side, row, 0)) };
-    let tx = lx - col.tx;
+    let tx = lx - col.tx + g.xoff;
     let byte = match g.shaped.get(&(row, col.side)) {
         Some(sh) => sh.closest_index_for_x(px(tx.max(0.))),
         None if tx <= 0. => 0,
@@ -274,6 +311,43 @@ fn build_mini(rows: &[DRow], layout: Layout) -> MiniRows {
     MiniRows { split: layout == Layout::Split, left: crate::minimap_model::MiniMap { rows: left }, right: crate::minimap_model::MiniMap { rows: right }, tints }
 }
 
+/// 展开第 `n` 处折叠,返回新的改动块与末尾折叠行数;`n` 越界或取不到被折叠的行返回 `None`。
+///
+/// 折叠处依次是:各改动块之前的折叠(`hidden_before > 0`)、最后一块之后的折叠(`tail > 0`);
+/// 被折叠的行从 `all`(整份差异的全部行)里按位置取回。
+fn expand_hunks(hunks: &[Hunk], tail: usize, all: &[DiffLine], n: usize) -> Option<(Vec<Hunk>, usize)> {
+    enum At {
+        Before(usize),
+        Tail,
+    }
+    let mut folds = Vec::new();
+    let mut pos = 0usize;
+    for (i, h) in hunks.iter().enumerate() {
+        if h.hidden_before > 0 {
+            folds.push((At::Before(i), pos, h.hidden_before));
+        }
+        pos += h.hidden_before + h.lines.len();
+    }
+    if tail > 0 {
+        folds.push((At::Tail, pos, tail));
+    }
+    let (at, start, len) = folds.into_iter().nth(n)?;
+    let hidden = all.get(start..start + len)?.to_vec();
+    let mut out = hunks.to_vec();
+    let mut tail = tail;
+    match at {
+        At::Before(i) => {
+            out[i].hidden_before = 0;
+            out[i].lines.splice(0..0, hidden);
+        }
+        At::Tail => {
+            out.last_mut()?.lines.extend(hidden);
+            tail = 0;
+        }
+    }
+    Some((out, tail))
+}
+
 pub struct DiffCode {
     hunks: Vec<Hunk>,
     hidden_tail: usize,
@@ -281,6 +355,11 @@ pub struct DiffCode {
     rows: Rc<Vec<DRow>>,
     /// 迷你地图用的逐行数据(随 `rows` 一起重建)
     mini: Rc<MiniRows>,
+    /// 整份差异的全部行(展开折叠时从这里取回被折叠的行)
+    all: std::sync::Arc<Vec<DiffLine>>,
+    /// 横向滚动量(左右两栏同步)与最长行的显示列数
+    xoff: f32,
+    max_cols: usize,
     layout: Layout,
     dark: bool,
     st: SelState,
@@ -297,7 +376,7 @@ fn build_rows(hunks: &[Hunk], hidden_tail: usize, layout: Layout, lang: &str, cx
     let mut rows = Vec::new();
     for h in hunks {
         if h.hidden_before > 0 {
-            rows.push(DRow::Sep(format!("⋯ 已折叠 {} 行未更改", h.hidden_before)));
+            rows.push(DRow::Sep(format!("⋯ 已折叠 {} 行未更改 · 点击展开", h.hidden_before)));
         }
         if layout == Layout::Split {
             let pairs = pair_rows(&h.lines);
@@ -323,17 +402,18 @@ fn build_rows(hunks: &[Hunk], hidden_tail: usize, layout: Layout, lang: &str, cx
         }
     }
     if hidden_tail > 0 {
-        rows.push(DRow::Sep(format!("⋯ 已折叠 {hidden_tail} 行未更改")));
+        rows.push(DRow::Sep(format!("⋯ 已折叠 {hidden_tail} 行未更改 · 点击展开")));
     }
     rows
 }
 
 impl DiffCode {
-    pub fn new(hunks: Vec<Hunk>, hidden_tail: usize, lang: String, split: bool, cx: &mut Context<Self>) -> Self {
+    pub fn new(hunks: Vec<Hunk>, hidden_tail: usize, all: std::sync::Arc<Vec<DiffLine>>, lang: String, split: bool, cx: &mut Context<Self>) -> Self {
         let layout = Layout::decide(&hunks, split);
         let rows = Rc::new(build_rows(&hunks, hidden_tail, layout, &lang, cx));
         let mini = Rc::new(build_mini(&rows, layout));
-        let mut this = Self { hunks, hidden_tail, lang, rows, mini, layout, dark: cx.theme().is_dark(), st: SelState::default(), focus: cx.focus_handle(), geom: Rc::default() };
+        let max_cols = max_cols_of(&rows);
+        let mut this = Self { hunks, hidden_tail, lang, rows, mini, all, xoff: 0., max_cols, layout, dark: cx.theme().is_dark(), st: SelState::default(), focus: cx.focus_handle(), geom: Rc::default() };
         // 调试用:LOOM_DIFF_SELECT=1 打开差异标签即全选(截图验证选区绘制)
         if std::env::var_os("LOOM_DIFF_SELECT").is_some() {
             let side = this.default_side();
@@ -355,12 +435,38 @@ impl DiffCode {
         self.dark = dark;
         self.rows = Rc::new(build_rows(&self.hunks, self.hidden_tail, layout, &self.lang, cx));
         self.mini = Rc::new(build_mini(&self.rows, layout));
+        self.max_cols = max_cols_of(&self.rows);
+        self.xoff = 0.;
         self.st.sel = None;
         cx.notify();
     }
 
     fn cell(&self, row: usize, side: u8) -> Option<&Cell> {
         cell_at(&self.rows, row, side)
+    }
+
+    /// 展开第 `n` 处折叠(按画面从上到下数,包含末尾那一处):把被折叠的未改动行并回相邻的改动块。
+    /// 点分隔条触发,对标 VS Code 差异编辑器里的「显示未更改区域」。
+    pub fn expand_fold(&mut self, n: usize, cx: &mut Context<Self>) {
+        let Some((hunks, tail)) = expand_hunks(&self.hunks, self.hidden_tail, &self.all, n) else { return };
+        self.hunks = hunks;
+        self.hidden_tail = tail;
+        self.rows = Rc::new(build_rows(&self.hunks, self.hidden_tail, self.layout, &self.lang, cx));
+        self.mini = Rc::new(build_mini(&self.rows, self.layout));
+        self.max_cols = max_cols_of(&self.rows);
+        self.st.sel = None;
+        cx.notify();
+    }
+
+    /// 横向滚动:`dx` 为滚轮的横向增量(正 = 内容右移 = 向左滚);按最长行限制范围。左右两栏共用一个滚动量,所以同步。
+    fn scroll_x(&mut self, dx: f32, cx: &mut Context<Self>) {
+        let (adv, text_w) = { let g = self.geom.borrow(); (g.adv, g.text_w) };
+        let limit = XView::limit(self.max_cols, adv, text_w);
+        let next = (self.xoff - dx).clamp(0., limit);
+        if (next - self.xoff).abs() > f32::EPSILON {
+            self.xoff = next;
+            cx.notify();
+        }
     }
 
     /// 迷你地图的逐行数据。
@@ -483,14 +589,22 @@ fn shape(text: &str, size: f32, segs: &[(Range<usize>, Option<HighlightStyle>)],
 }
 
 #[allow(clippy::too_many_arguments)]
-fn paint_all(rows: &[DRow], layout: Layout, sel: Option<Sel>, pal: Palette, geom: &Rc<RefCell<Geom>>, bounds: Bounds<Pixels>, window: &mut Window, cx: &mut App) {
+fn paint_all(rows: &[DRow], layout: Layout, sel: Option<Sel>, xv: XView, pal: Palette, geom: &Rc<RefCell<Geom>>, bounds: Bounds<Pixels>, window: &mut Window, cx: &mut App) {
     let width = f32::from(bounds.size.width);
     let cols = columns(layout, width);
+    // 文字区宽度取各栏里最窄的;字符宽度用等宽字体量一个字
+    let text_w = cols.iter().map(|c| c.w - (c.tx - c.x0)).fold(f32::MAX, f32::min).max(0.);
+    let adv = f32::from(shape("0", FONT, &[(0..1, None)], pal.fg, window).width);
+    // 窗口变宽 / 内容变短后,滚动量可能超出范围:夹回去
+    let xoff = xv.off.clamp(0., XView::limit(xv.max_cols, adv, text_w));
     {
         let mut g = geom.borrow_mut();
         g.origin = bounds.origin;
         g.cols = cols.clone();
         g.shaped.clear();
+        g.xoff = xoff;
+        g.adv = adv;
+        g.text_w = text_w;
     }
     let clip = window.content_mask().bounds;
     let first = (f32::from(clip.top() - bounds.top()) / ROW_H).floor().max(0.) as usize;
@@ -541,22 +655,26 @@ fn paint_all(rows: &[DRow], layout: Layout, sel: Option<Sel>, pal: Palette, geom
                         }
                         let segs = segments(cell.text.len(), &cell.styles);
                         let sh = shape(&cell.text, FONT, &segs, pal.fg, window);
-                        let tx = area.left() + px(col.tx - col.x0);
-                        // 选区底色(先画,文字盖在上面);跨行选区的非末行多画一小截表示换行也被选中
-                        if let Some((s, ((r0, c0), (r1, c1)))) = sel.filter(|(s, _)| s.side == col.side) {
-                            let _ = s;
-                            if r >= r0 && r <= r1 {
-                                let a = if r == r0 { c0 } else { 0 }.min(cell.text.len());
-                                let b = if r == r1 { c1 } else { cell.text.len() }.min(cell.text.len());
-                                let (xa, mut xb) = (sh.x_for_index(a), sh.x_for_index(b));
-                                if b == cell.text.len() { xb = sh.width; }
-                                if r < r1 { xb += px(6.); }
-                                if xb > xa || r < r1 {
-                                    window.paint_quad(fill(Bounds::new(point(tx + xa, top), size((xb - xa).max(px(3.)), px(ROW_H))), pal.selection));
+                        let tx = area.left() + px(col.tx - col.x0) - px(xoff);
+                        // 文字区(行号栏右侧):横向滚动时文字从这里被裁掉,不盖住行号
+                        let text_area = Bounds::new(point(area.left() + px(col.tx - col.x0 - PAD), top), size(px((col.w - (col.tx - col.x0 - PAD)).max(0.)), px(ROW_H)));
+                        window.with_content_mask(Some(ContentMask { bounds: text_area }), |window| {
+                            // 选区底色(先画,文字盖在上面);跨行选区的非末行多画一小截表示换行也被选中
+                            if let Some((s, ((r0, c0), (r1, c1)))) = sel.filter(|(s, _)| s.side == col.side) {
+                                let _ = s;
+                                if r >= r0 && r <= r1 {
+                                    let a = if r == r0 { c0 } else { 0 }.min(cell.text.len());
+                                    let b = if r == r1 { c1 } else { cell.text.len() }.min(cell.text.len());
+                                    let (xa, mut xb) = (sh.x_for_index(a), sh.x_for_index(b));
+                                    if b == cell.text.len() { xb = sh.width; }
+                                    if r < r1 { xb += px(6.); }
+                                    if xb > xa || r < r1 {
+                                        window.paint_quad(fill(Bounds::new(point(tx + xa, top), size((xb - xa).max(px(3.)), px(ROW_H))), pal.selection));
+                                    }
                                 }
                             }
-                        }
-                        let _ = sh.paint(point(tx, top), px(ROW_H), TextAlign::Left, None, window, cx);
+                            let _ = sh.paint(point(tx, top), px(ROW_H), TextAlign::Left, None, window, cx);
+                        });
                         geom.borrow_mut().shaped.insert((r, col.side), sh);
                     });
                 }
@@ -574,6 +692,7 @@ impl Render for DiffCode {
             blank: t.muted.opacity(0.35), sep: t.muted.opacity(0.5), selection: t.selection,
         };
         let (rows, layout, sel, geom) = (self.rows.clone(), self.layout, self.st.sel, self.geom.clone());
+        let xv = XView { off: self.xoff, max_cols: self.max_cols };
         let height = px(self.rows.len() as f32 * ROW_H);
         div().id("diff-code").key_context("DiffCode").track_focus(&self.focus).w_full().h(height).cursor(CursorStyle::IBeam)
             .on_action(cx.listener(|this, _: &DiffCopy, _, cx| {
@@ -591,8 +710,24 @@ impl Render for DiffCode {
             .on_mouse_down(MouseButton::Left, cx.listener(|this, ev: &MouseDownEvent, window, cx| {
                 window.focus(&this.focus, cx);
                 let (rows, geom) = (this.rows.clone(), this.geom.clone());
+                // 点折叠分隔条:展开那一处(按它是第几个分隔条定位),不开始选择
+                let row = (f32::from(ev.position.y - geom.borrow().origin.y) / ROW_H).floor();
+                if row >= 0. && matches!(rows.get(row as usize), Some(DRow::Sep(_))) && ev.click_count == 1 {
+                    let n = rows[..row as usize].iter().filter(|r| matches!(r, DRow::Sep(_))).count();
+                    this.expand_fold(n, cx);
+                    return;
+                }
                 this.st.press(&rows, &geom.borrow(), ev.position, ev.click_count);
                 cx.notify();
+            }))
+            // 横向滚动:触控板左右滑 / 横向滚轮,左右两栏一起动;竖向交给外层滚动容器
+            .on_scroll_wheel(cx.listener(|this, ev: &ScrollWheelEvent, _, cx| {
+                let d = ev.delta.pixel_delta(px(ROW_H));
+                let dx = if d.x.abs() > d.y.abs() { f32::from(d.x) } else if ev.modifiers.shift { f32::from(d.y) } else { 0. };
+                if dx != 0. {
+                    this.scroll_x(dx, cx);
+                    cx.stop_propagation();
+                }
             }))
             .on_mouse_move(cx.listener(|this, ev: &MouseMoveEvent, _, cx| {
                 let (rows, geom) = (this.rows.clone(), this.geom.clone());
@@ -603,7 +738,7 @@ impl Render for DiffCode {
             .on_mouse_up(MouseButton::Left, cx.listener(|this, _, _, cx| this.finish_drag(cx)))
             .on_mouse_up_out(MouseButton::Left, cx.listener(|this, _, _, cx| this.finish_drag(cx)))
             .child(
-                canvas(|_, _, _| (), move |bounds, _, window, cx| paint_all(&rows, layout, sel, pal, &geom, bounds, window, cx))
+                canvas(|_, _, _| (), move |bounds, _, window, cx| paint_all(&rows, layout, sel, xv, pal, &geom, bounds, window, cx))
                     .absolute()
                     .size_full(),
             )
@@ -712,7 +847,7 @@ pub fn inline_with(lines: &[DiffLine], max_lines: usize, lang: &str, split: bool
                 |_, _, _| (),
                 move |bounds, _, window, cx| {
                     let sel = paint.st.borrow().sel;
-                    paint_all(&paint.rows, paint.layout, sel, pal, &paint.geom, bounds, window, cx);
+                    paint_all(&paint.rows, paint.layout, sel, XView::default(), pal, &paint.geom, bounds, window, cx);
                     // 点到这个 Diff 以外的地方:取消选择(也避免 ⌘C 时复制到过期的选区)
                     let clear = paint.clone();
                     window.on_mouse_event(move |ev: &MouseDownEvent, phase, window, _| {
@@ -814,6 +949,42 @@ mod tests {
         assert_ne!(id(&a, true, false), id(&b, true, false));
         assert_ne!(id(&a, true, false), id(&a, false, false));
         assert_ne!(id(&a, true, false), id(&a, true, true));
+    }
+
+    #[::core::prelude::v1::test]
+    fn 点折叠条展开并回相邻改动块() {
+        let old = (1..=40).map(|i| format!("l{i}\n")).collect::<String>();
+        let new = old.replace("l5\n", "L5\n").replace("l30\n", "L30\n");
+        let (lines, _, _) = crate::diff::compute(&old, &new);
+        let (hunks, tail) = crate::ide_diff::hunks(&lines, 3);
+        assert_eq!(hunks.len(), 2);
+        assert!(hunks[1].hidden_before > 0 && tail > 0);
+        let total: usize = hunks.iter().map(|h| h.hidden_before + h.lines.len()).sum::<usize>() + tail;
+        assert_eq!(total, lines.len());
+        // 第 0 处折叠是块 0 之前的(改动在第 5 行,前面折叠 1 行),展开后并入块 0
+        let (h1, t1) = expand_hunks(&hunks, tail, &lines, 0).unwrap();
+        assert_eq!(h1[0].hidden_before, 0);
+        assert_eq!(h1[0].lines.len(), hunks[0].lines.len() + hunks[0].hidden_before);
+        assert_eq!(h1[0].lines[0].new_no, Some(1), "被折叠的行从第 1 行接上");
+        assert_eq!(t1, tail);
+        // 展开全部后每一行都在,没有折叠
+        let (mut hs, mut t) = (hunks, tail);
+        while let Some((h, tt)) = expand_hunks(&hs, t, &lines, 0) {
+            hs = h;
+            t = tt;
+        }
+        assert_eq!(t, 0);
+        assert!(hs.iter().all(|h| h.hidden_before == 0));
+        assert_eq!(hs.iter().map(|h| h.lines.len()).sum::<usize>(), lines.len());
+        assert!(expand_hunks(&hs, t, &lines, 0).is_none(), "没有折叠可展开");
+    }
+
+    #[::core::prelude::v1::test]
+    fn 显示列数与横向滚动范围() {
+        assert_eq!(display_cols("ab\t中"), 1 + 1 + 4 + 2);
+        // 最长 100 列、每列 7px、文字区 500px:能滚 100*7 + 12 - 500
+        assert_eq!(XView::limit(100, 7., 500.), 212.);
+        assert_eq!(XView::limit(10, 7., 500.), 0., "内容比文字区窄时不能滚");
     }
 
     #[::core::prelude::v1::test]

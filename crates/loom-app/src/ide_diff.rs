@@ -131,6 +131,8 @@ pub struct DiffTab {
 pub struct DiffBody {
     pub hunks: Vec<Hunk>,
     pub hidden_tail: usize,
+    /// 全部行(含被折叠的未改动行),点折叠条展开时用
+    pub all: std::sync::Arc<Vec<DiffLine>>,
     pub added: usize,
     pub removed: usize,
     /// 文件太大或不是文本时的说明
@@ -191,7 +193,7 @@ impl IdeView {
         cx.spawn(async move |this, cx| {
             let body = cx
                 .background_spawn(async move {
-                    let too_big = || DiffBody { hunks: Vec::new(), hidden_tail: 0, added: 0, removed: 0, note: Some("文件太大,没有显示差异(可在设置 → 源代码管理里调大上限)".into()) };
+                    let too_big = || DiffBody { hunks: Vec::new(), hidden_tail: 0, all: Default::default(), added: 0, removed: 0, note: Some("文件太大,没有显示差异(可在设置 → 源代码管理里调大上限)".into()) };
                     if src.rev.is_none() && std::fs::metadata(src.abs()).is_ok_and(|m| m.len() > max_bytes) {
                         return too_big();
                     }
@@ -202,15 +204,15 @@ impl IdeView {
                     let (lines, added, removed) = compute(&old, &new);
                     let (hunks, hidden_tail) = hunks(&lines, CONTEXT);
                     let note = hunks.is_empty().then(|| "没有可显示的文本差异(二进制、空文件,或内容相同)".to_string());
-                    DiffBody { hunks, hidden_tail, added, removed, note }
+                    DiffBody { hunks, hidden_tail, all: std::sync::Arc::new(lines), added, removed, note }
                 })
                 .await;
             let _ = this.update(cx, |this, cx| {
                 if let Some(tab) = this.diffs.get_mut(&key) {
                     if body.note.is_none() {
                         let split = crate::prefs(cx).scm.diff_split;
-                        let (hunks, tail) = (body.hunks.clone(), body.hidden_tail);
-                        tab.code = Some(cx.new(|cx| crate::diff_code::DiffCode::new(hunks, tail, lang.to_string(), split, cx)));
+                        let (hunks, tail, all) = (body.hunks.clone(), body.hidden_tail, body.all.clone());
+                        tab.code = Some(cx.new(|cx| crate::diff_code::DiffCode::new(hunks, tail, all, lang.to_string(), split, cx)));
                     }
                     tab.body = Some(body);
                     cx.notify();
