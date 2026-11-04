@@ -35,6 +35,19 @@ fn on_active_window(cx: &mut App, f: impl FnOnce(&mut Window, &mut App) + 'stati
     });
 }
 
+/// 在主窗口(Agent / 融合 IDE 所在的窗口)上执行;找不到主窗口时退回当前激活的窗口。
+fn on_main_window(cx: &mut App, f: impl FnOnce(&mut Window, &mut App) + 'static) {
+    cx.defer(move |cx| {
+        let Some(handle) = cx.try_global::<crate::MainWindow>().map(|m| m.0).or_else(|| cx.active_window()) else {
+            loom_diag::warn!("项目操作没有可用窗口");
+            return;
+        };
+        if let Err(e) = handle.update(cx, |_, window, cx| f(window, cx)) {
+            loom_diag::warn!("项目操作失败:{e}");
+        }
+    });
+}
+
 /// ⌘W 优先关标签:鼠标悬停在编辑器上且有文件标签 → 关当前文件标签;悬停在右栏上 →
 /// 「文件」标签里还有文件标签就关它,否则关右栏当前标签。没有可关的标签返回 false,由调用方走关窗口。
 ///
@@ -134,11 +147,20 @@ pub fn install(cx: &mut App) {
             crate::secondary::spawn(demo, None);
         });
     });
+    // 项目类动作一律在主窗口上执行:会话视图、输入框都属于主窗口,独立 IDE 窗口激活时也不能把它当成「当前窗口」
     cx.on_action(|a: &OpenRecentProject, cx| {
         let path = a.path.clone();
-        on_active_window(cx, move |window, cx| {
+        on_main_window(cx, move |window, cx| {
             if let Some(wb) = cx.try_global::<crate::WorkbenchRef>().and_then(|r| r.0.upgrade()) {
                 wb.update(cx, |wb, cx| wb.open_recent_project(path, window, cx));
+            }
+        });
+    });
+    // 「添加项目文件夹…」:工作台根元素上有处理;独立 IDE 窗口(焦点不在工作台里)走这里,兜底
+    cx.on_action(|_: &AddProject, cx| {
+        on_main_window(cx, |window, cx| {
+            if let Some(wb) = cx.try_global::<crate::WorkbenchRef>().and_then(|r| r.0.upgrade()) {
+                wb.update(cx, |wb, cx| wb.add_project(window, cx));
             }
         });
     });

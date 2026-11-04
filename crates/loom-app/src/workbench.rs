@@ -967,6 +967,11 @@ impl Workbench {
             }
             None => self.register_project(path, window, cx),
         }
+        self.repin_ide();
+    }
+
+    /// IDE 开着时让它重新固定到当前项目(IDE 的文件树 / 对话标签都固定在进入时的项目,换项目要显式通知)。
+    fn repin_ide(&mut self) {
         if self.ide || self.ide_window.is_some() {
             self.ide_enter += 1;
         }
@@ -1327,6 +1332,8 @@ impl Workbench {
         let list: Vec<(String, String)> = self.projects.iter().map(|p| (p.name.clone(), p.path.clone())).collect();
         self.automation.update(cx, |a, cx| a.set_projects(list, cx));
         self.new_session(ix, window, cx);
+        // 在 IDE 里添加 / 打开项目:IDE 跟着换到它
+        self.repin_ide();
     }
 
     /// 处理会话模型发来的界面请求;`source` 是发出请求的会话模型实体。
