@@ -78,7 +78,8 @@ impl StatusEntry {
     }
 }
 
-/// 解析 `git status --porcelain=v1 -z` 的输出:`XY 路径\0`;重命名 / 复制多带一个原路径字段,会被跳过。
+/// 解析 `git status --porcelain=v1 -z` 的输出:`XY 路径\0`;重命名 / 复制多带一个原路径字段,会被跳过;
+/// 未跟踪的嵌套仓库目录条目(`?? sub/`)忽略。
 pub fn parse_status(out: &str) -> Vec<StatusEntry> {
     let mut fields = out.split('\0');
     let mut list = Vec::new();
@@ -86,7 +87,9 @@ pub fn parse_status(out: &str) -> Vec<StatusEntry> {
         let mut cs = f.chars();
         let (Some(index), Some(worktree), Some(' ')) = (cs.next(), cs.next(), cs.next()) else { continue };
         let path = cs.as_str();
-        if path.is_empty() {
+        // 未跟踪的嵌套仓库,git 只报一个带斜杠的目录条目(`sub/`):它不是文件、也不该被当文件暂存,
+        // 嵌套仓库由仓库发现(`find_repos`)作为独立仓库列出,这里不算改动
+        if path.is_empty() || (index == '?' && path.ends_with('/')) {
             continue;
         }
         let orig = if matches!(index, 'R' | 'C') || matches!(worktree, 'R' | 'C') { fields.next().map(str::to_string) } else { None };
@@ -201,6 +204,8 @@ const SCAN_SKIP: &[&str] = &["node_modules", "target", "dist", "build", "vendor"
 /// 找出 `dir` 相关的所有仓库根(对标 VS Code 的 `git.autoRepositoryDetection`):
 /// 先是包含 `dir` 的仓库(`dir` 在仓库里时),再是 `dir` 往下 `depth` 层里的仓库(含 `.git` 的目录,
 /// 找到就不再往它里面扫;隐藏目录和 `SCAN_SKIP` 里的目录跳过)。结果按路径排序、去重。
+/// `dir` 已经在仓库里时也照常往下找:里面嵌套的子仓库(克隆进来的项目、子模块)各自是一个仓库,
+/// 外层仓库的状态里不再把它们当成一个个怪条目。
 pub fn find_repos(dir: &str, depth: usize) -> Vec<String> {
     let mut out: Vec<String> = Vec::new();
     let enclosing = repo_root(dir);
@@ -208,14 +213,11 @@ pub fn find_repos(dir: &str, depth: usize) -> Vec<String> {
         out.push(top.clone());
     }
     let base = std::path::Path::new(dir);
-    // 目录本身在某个仓库里就只用那个仓库(不去扫里面的子模块 / 嵌套仓库);否则才往下找子目录里的仓库
-    if enclosing.is_none() {
-        let mut found: Vec<String> = Vec::new();
-        let mut budget = 4000usize;
-        scan_repos(base, depth, &mut found, &mut budget);
-        found.sort();
-        out.extend(found);
-    }
+    let mut found: Vec<String> = Vec::new();
+    let mut budget = 4000usize;
+    scan_repos(base, depth, &mut found, &mut budget);
+    found.sort();
+    out.extend(found);
     out.dedup();
     out
 }
@@ -341,6 +343,40 @@ mod tests {
         // 深度 1 只能看到 a
         assert_eq!(find_repos(base.to_str().unwrap(), 1).len(), 1);
         let _ = std::fs::remove_dir_all(&base);
+    }
+
+    #[test]
+    fn 外层已是仓库时仍发现嵌套的子仓库且状态里没有怪条目() {
+        let base = std::env::temp_dir().join(format!("loom-nested-repos-{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&base);
+        std::fs::create_dir_all(base.join("kb")).unwrap();
+        let run = |dir: &std::path::Path, args: &[&str]| {
+            let ok = std::process::Command::new("git").arg("-C").arg(dir).args(args).output().unwrap().status.success();
+            assert!(ok, "git {args:?}");
+        };
+        run(&base, &["init", "-q"]);
+        run(&base.join("kb"), &["init", "-q"]);
+        std::fs::write(base.join("kb/f.txt"), "x").unwrap();
+        run(&base.join("kb"), &["add", "f.txt"]);
+        run(&base.join("kb"), &["-c", "user.email=a@b", "-c", "user.name=n", "commit", "-qm", "i"]);
+        std::fs::write(base.join("top.txt"), "y").unwrap();
+        let root = base.to_str().unwrap();
+        // 外层状态:嵌套仓库不算改动,只剩 top.txt
+        let st = status(root).unwrap();
+        assert_eq!(st.iter().map(|e| e.path.as_str()).collect::<Vec<_>>(), vec!["top.txt"], "{st:?}");
+        // 仓库发现:外层在前,子仓库随后
+        let repos = find_repos(root, 2);
+        let names: Vec<&str> = repos.iter().map(|p| p.rsplit('/').next().unwrap()).collect();
+        assert_eq!(repos.len(), 2, "{repos:?}");
+        assert_eq!(names[1], "kb");
+        let _ = std::fs::remove_dir_all(&base);
+    }
+
+    #[test]
+    fn 状态解析忽略未跟踪的嵌套仓库目录() {
+        let e = parse_status("?? kb/\0?? kb-fe/\0?? 新文件.txt\0 M sub\0");
+        let paths: Vec<&str> = e.iter().map(|x| x.path.as_str()).collect();
+        assert_eq!(paths, vec!["新文件.txt", "sub"], "已跟踪的子模块改动(无斜杠)要保留");
     }
 
     #[test]
