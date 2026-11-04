@@ -8,6 +8,7 @@
 #![recursion_limit = "512"]
 
 mod ansi;
+mod reopen;
 mod shimmer_text;
 mod ide_diff;
 mod branch_picker;
@@ -247,6 +248,10 @@ impl Global for UiPrefs {}
 pub struct Prefs(pub loom_config::AppSettings);
 
 /// 工作台的弱引用(各处的小控件改全局偏好时经它转交)。
+/// 主窗口的句柄(窗口根视图是 gpui-kit 包的 `Root`,没法按 `Workbench` 类型找窗口,所以创建时记下)。
+pub(crate) struct MainWindow(pub AnyWindowHandle);
+impl Global for MainWindow {}
+
 pub struct WorkbenchRef(pub WeakEntity<workbench::Workbench>);
 impl Global for WorkbenchRef {}
 impl Global for Prefs {}
@@ -267,6 +272,37 @@ fn log_startup_banner(demo: bool, is_dev: bool) {
         let model = run("sysctl", &["-n", "hw.model"]);
         loom_diag::info!("系统:macOS {os} · {} · {model} · {cpu} · 内存 {mem_gb} GB · CPU 核数 {}", std::env::consts::ARCH, std::thread::available_parallelism().map(|n| n.get()).unwrap_or(0));
     });
+}
+
+/// 打开主窗口(启动时与「窗口已销毁后再次打开应用」时共用)。
+///
+/// 主窗口的关闭按钮只隐藏应用、不销毁窗口:工作台里还有正在运行的会话与后台任务,销毁窗口会把它们一并带走。
+pub(crate) fn open_main_window(demo: bool, session_arg: Option<String>, cx: &mut App) {
+    let mut options = TitleBar::window_options();
+    // 红绿灯位置与 IDE 窗口统一(顶部行 35px,参考 OhMyAgent)
+    window_header::apply_traffic_light(&mut options);
+    // 调试用:LOOM_WINDOW_SIZE=宽,高 覆盖初始窗口大小(验证窄窗口布局)
+    let (w, h) = std::env::var("LOOM_WINDOW_SIZE").ok().and_then(|v| v.split_once(',').and_then(|(a, b)| Some((a.trim().parse::<f32>().ok()?, b.trim().parse::<f32>().ok()?)))).unwrap_or((1360., 860.));
+    // 有记忆就恢复上次的位置与大小;LOOM_WINDOW_SIZE 调试覆盖优先
+    options.window_bounds = Some(if std::env::var("LOOM_WINDOW_SIZE").is_ok() { WindowBounds::Windowed(Bounds::centered(None, size(px(w), px(h)), cx)) } else { window_memory::restore("main", (w, h), cx) });
+    // 最小宽度放到 640:窗口窄于 780 时侧栏自动收起,不再被 900 的下限挡住
+    options.window_min_size = Some(size(px(640.), px(480.)));
+    // 新窗口错开一点,免得正好盖在主窗口上
+    if secondary::is() && let Some(WindowBounds::Windowed(b)) = options.window_bounds {
+        options.window_bounds = Some(WindowBounds::Windowed(Bounds::new(b.origin + point(px(32.), px(32.)), b.size)));
+    }
+    let (handle, _) = open_window(options, cx, move |window, cx| cx.new(|cx| Workbench::new(demo, session_arg, window, cx)))
+        .expect("打开主窗口失败");
+    cx.set_global(MainWindow(handle));
+    // 红色关闭按钮 = 隐藏应用(与 ⌘W 一致);从属的新窗口进程是真关闭
+    if !secondary::is() {
+        let _ = handle.update(cx, |_, window, cx| {
+            window.on_window_should_close(cx, |_, cx| {
+                cx.hide();
+                false
+            });
+        });
+    }
 }
 
 fn main() {
@@ -299,7 +335,11 @@ fn main() {
         loom_diag::crash::trigger_test(&kind);
     }
 
-    application().with_assets(gpui_kit::assets::AllAssets).run(move |cx| {
+    let app = application().with_assets(gpui_kit::assets::AllAssets);
+    let reopen_session = session_arg.clone();
+    app.run(move |cx| {
+        // 点程序坞图标 / 再次打开应用:把窗口带回前台(没有主窗口就重建),见 `reopen`
+        reopen::install(cx, demo, reopen_session);
         init(cx);
         notice::init(cx);
         // 正常退出(⌘Q、托盘退出、更新重启等)时删除运行标记,下次启动才不会误判为异常退出
@@ -338,21 +378,7 @@ fn main() {
             KeyBinding::new("ctrl-shift-`", term_actions::NewTerminal, None),
             KeyBinding::new("shift-tab", workbench::CycleMode, Some("Workbench")),
         ]);
-        let mut options = TitleBar::window_options();
-        // 红绿灯位置与 IDE 窗口统一(顶部行 35px,参考 OhMyAgent)
-        window_header::apply_traffic_light(&mut options);
-        // 调试用:LOOM_WINDOW_SIZE=宽,高 覆盖初始窗口大小(验证窄窗口布局)
-        let (w, h) = std::env::var("LOOM_WINDOW_SIZE").ok().and_then(|v| v.split_once(',').and_then(|(a, b)| Some((a.trim().parse::<f32>().ok()?, b.trim().parse::<f32>().ok()?)))).unwrap_or((1360., 860.));
-        // 有记忆就恢复上次的位置与大小;LOOM_WINDOW_SIZE 调试覆盖优先
-        options.window_bounds = Some(if std::env::var("LOOM_WINDOW_SIZE").is_ok() { WindowBounds::Windowed(Bounds::centered(None, size(px(w), px(h)), cx)) } else { window_memory::restore("main", (w, h), cx) });
-        // 最小宽度放到 640:窗口窄于 780 时侧栏自动收起,不再被 900 的下限挡住
-        options.window_min_size = Some(size(px(640.), px(480.)));
-        // 新窗口错开一点,免得正好盖在主窗口上
-        if secondary::is() && let Some(WindowBounds::Windowed(b)) = options.window_bounds {
-            options.window_bounds = Some(WindowBounds::Windowed(Bounds::new(b.origin + point(px(32.), px(32.)), b.size)));
-        }
-        open_window(options, cx, move |window, cx| cx.new(|cx| Workbench::new(demo, session_arg, window, cx)))
-            .expect("打开主窗口失败");
+        open_main_window(demo, session_arg.clone(), cx);
         cx.activate(true);
     });
 }
