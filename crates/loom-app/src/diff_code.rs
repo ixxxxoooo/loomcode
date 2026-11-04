@@ -45,7 +45,7 @@ pub fn init(cx: &mut App) {
 }
 
 /// 行高 / 字号 / 行号栏宽 / 统一视图的 +− 标记栏宽 / 文字左右内边距(像素)。
-const ROW_H: f32 = 18.;
+pub(crate) const ROW_H: f32 = 18.;
 const FONT: f32 = 12.;
 const GUTTER: f32 = 44.;
 const MARK_W: f32 = 14.;
@@ -212,11 +212,75 @@ fn hit_test(rows: &[DRow], g: &Geom, pos: Point<Pixels>, force_side: Option<u8>)
     Some((col.side, row, byte.min(cell.text.len())))
 }
 
+/// 迷你地图里一行左 / 右半边的底色。
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum Tint {
+    None,
+    Add,
+    Del,
+    /// 折叠分隔条
+    Sep,
+}
+
+/// 迷你地图用的差异数据:每行的文字色块,以及左 / 右半边的增删底色。
+///
+/// 左右对比(`split`)时左半边画旧侧(`left`)、右半边画新侧(`right`);统一视图 / 只剩一栏时整行一份(`left`),
+/// 两半底色相同。
+pub struct MiniRows {
+    pub split: bool,
+    pub left: crate::minimap_model::MiniMap<Hsla>,
+    pub right: crate::minimap_model::MiniMap<Hsla>,
+    pub tints: Vec<(Tint, Tint)>,
+}
+
+fn tint_of(tag: ChangeTag) -> Tint {
+    match tag {
+        ChangeTag::Insert => Tint::Add,
+        ChangeTag::Delete => Tint::Del,
+        ChangeTag::Equal => Tint::None,
+    }
+}
+
+/// 一格的色块行(没有格子为空行)。
+fn mini_runs(cell: Option<&Cell>) -> Vec<crate::minimap_model::MiniRun<Hsla>> {
+    let Some(c) = cell else { return Vec::new() };
+    let mut styles: Vec<(Range<usize>, Option<Hsla>)> = c.styles.iter().map(|(r, s)| (r.clone(), s.color)).collect();
+    styles.sort_by_key(|(r, _)| r.start);
+    crate::minimap_model::build(&c.text, &styles).rows.into_iter().next().unwrap_or_default()
+}
+
+/// 由画布行生成迷你地图数据。
+fn build_mini(rows: &[DRow], layout: Layout) -> MiniRows {
+    let (mut left, mut right, mut tints) = (Vec::with_capacity(rows.len()), Vec::with_capacity(rows.len()), Vec::with_capacity(rows.len()));
+    for row in rows {
+        match row {
+            DRow::Sep(_) => {
+                left.push(Vec::new());
+                right.push(Vec::new());
+                tints.push((Tint::Sep, Tint::Sep));
+            }
+            DRow::One(c) => {
+                left.push(mini_runs(Some(c)));
+                right.push(Vec::new());
+                tints.push((tint_of(c.tag), tint_of(c.tag)));
+            }
+            DRow::Pair(l, r) => {
+                left.push(mini_runs(l.as_ref()));
+                right.push(mini_runs(r.as_ref()));
+                tints.push((l.as_ref().map_or(Tint::None, |c| tint_of(c.tag)), r.as_ref().map_or(Tint::None, |c| tint_of(c.tag))));
+            }
+        }
+    }
+    MiniRows { split: layout == Layout::Split, left: crate::minimap_model::MiniMap { rows: left }, right: crate::minimap_model::MiniMap { rows: right }, tints }
+}
+
 pub struct DiffCode {
     hunks: Vec<Hunk>,
     hidden_tail: usize,
     lang: String,
     rows: Rc<Vec<DRow>>,
+    /// 迷你地图用的逐行数据(随 `rows` 一起重建)
+    mini: Rc<MiniRows>,
     layout: Layout,
     dark: bool,
     st: SelState,
@@ -268,7 +332,8 @@ impl DiffCode {
     pub fn new(hunks: Vec<Hunk>, hidden_tail: usize, lang: String, split: bool, cx: &mut Context<Self>) -> Self {
         let layout = Layout::decide(&hunks, split);
         let rows = Rc::new(build_rows(&hunks, hidden_tail, layout, &lang, cx));
-        let mut this = Self { hunks, hidden_tail, lang, rows, layout, dark: cx.theme().is_dark(), st: SelState::default(), focus: cx.focus_handle(), geom: Rc::default() };
+        let mini = Rc::new(build_mini(&rows, layout));
+        let mut this = Self { hunks, hidden_tail, lang, rows, mini, layout, dark: cx.theme().is_dark(), st: SelState::default(), focus: cx.focus_handle(), geom: Rc::default() };
         // 调试用:LOOM_DIFF_SELECT=1 打开差异标签即全选(截图验证选区绘制)
         if std::env::var_os("LOOM_DIFF_SELECT").is_some() {
             let side = this.default_side();
@@ -289,12 +354,18 @@ impl DiffCode {
         self.layout = layout;
         self.dark = dark;
         self.rows = Rc::new(build_rows(&self.hunks, self.hidden_tail, layout, &self.lang, cx));
+        self.mini = Rc::new(build_mini(&self.rows, layout));
         self.st.sel = None;
         cx.notify();
     }
 
     fn cell(&self, row: usize, side: u8) -> Option<&Cell> {
         cell_at(&self.rows, row, side)
+    }
+
+    /// 迷你地图的逐行数据。
+    pub fn mini(&self) -> Rc<MiniRows> {
+        self.mini.clone()
     }
 
     /// 选中的文字(一栏内按行拼接,没有内容的行跳过)。

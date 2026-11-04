@@ -121,6 +121,10 @@ pub struct DiffTab {
     pub body: Option<DiffBody>,
     /// 算好后创建的代码区(可选中、可复制的自绘视图,见 `diff_code`)
     pub code: Option<Entity<crate::diff_code::DiffCode>>,
+    /// 正文滚动容器的句柄(迷你地图读它的位置、也靠它滚动正文)
+    pub scroll: ScrollHandle,
+    /// 迷你地图的共享界面状态
+    pub mini_ui: std::rc::Rc<crate::diff_minimap::DiffMiniUi>,
 }
 
 /// 算好的差异。
@@ -159,7 +163,7 @@ impl IdeView {
     pub fn open_diff(&mut self, src: DiffSource, preview: bool, window: &mut Window, cx: &mut Context<Self>) {
         self.note = None;
         let path = src.pseudo_path();
-        self.diffs.insert(path.clone(), DiffTab { src, body: None, code: None });
+        self.diffs.insert(path.clone(), DiffTab { src, body: None, code: None, scroll: ScrollHandle::new(), mini_ui: Default::default() });
         let out = self.tabs.open(&path, preview);
         if let Some(old) = out.replaced {
             self.docs.remove(&old);
@@ -251,9 +255,18 @@ impl IdeView {
                 None => div().into_any_element(),
             },
         };
-        v_flex().size_full().child(header)
-            .child(div().id(SharedString::from(format!("diffv-{}", path.to_string_lossy()))).flex_1().min_h_0().overflow_y_scroll().child(body))
-            .into_any_element()
+        // 迷你地图(偏好 `editor.minimap` 控制;区域太窄时自动隐藏,宽度取自上一帧的测量)
+        let prefs = crate::prefs(cx).editor;
+        let ui = tab.mini_ui.clone();
+        let wide = ui.row_width.get() == 0. || ui.row_width.get() >= crate::diff_minimap::MIN_W;
+        let mini = tab.code.as_ref().filter(|_| prefs.minimap && wide).map(|code| code.read(cx).mini());
+        let mm = mini.map(|mini| crate::diff_minimap::diff_minimap(mini, tab.scroll.clone(), ui.clone(), f32::from(prefs.minimap_width.clamp(60, 160)), prefs.minimap_slider_always, cx));
+        let scroller = div().id(SharedString::from(format!("diffv-{}", path.to_string_lossy()))).flex_1().min_w_0().h_full().overflow_y_scroll().track_scroll(&tab.scroll).child(body);
+        let area = h_flex().relative().flex_1().min_h_0().w_full()
+            .child(canvas(move |b, _, _| ui.row_width.set(f32::from(b.size.width)), |_, _, _, _| {}).absolute().size_full())
+            .child(scroller)
+            .children(mm);
+        v_flex().size_full().child(header).child(area).into_any_element()
     }
 }
 

@@ -164,6 +164,7 @@ mod image_size;
 mod lightbox;
 mod diagram_viewer;
 mod diff_code;
+mod diff_minimap;
 mod pan_zoom;
 mod row_probe;
 mod sticky_user;
