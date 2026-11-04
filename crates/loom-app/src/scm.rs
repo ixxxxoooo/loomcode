@@ -259,6 +259,13 @@ impl ScmView {
         .detach();
     }
 
+    /// 文件系统监视到改动(提交、切分支、暂存、工作区文件变化):立即刷新状态,不必等轮询。
+    pub(crate) fn on_fs_change(&mut self, cx: &mut Context<Self>) {
+        if self.busy.is_none() && !self.root.is_empty() {
+            self.refresh(cx);
+        }
+    }
+
     /// 重新扫描项目里的仓库并刷新(手动刷新、初始化仓库之后)。
     pub fn rescan(&mut self, cx: &mut Context<Self>) {
         self.scanned = None;

@@ -163,7 +163,11 @@ pub struct RightPanel {
     pub(crate) tabs_scroll: ScrollHandle,
     pub(crate) tabs_revealed: std::cell::Cell<Option<(RightTab, usize)>>,
     /// 项目目录的递归文件监视(外部改动自动刷新文件树);换项目时重建
-    _fs_watch: Option<(std::path::PathBuf, crate::fs_watch::FsWatch)>,
+    fs_root: Option<std::path::PathBuf>,
+    _fs_task: Option<Task<()>>,
+    /// 后台正在读 Git 状态 / 读的过程中又来了新请求(见 `refresh_git`)
+    pub(crate) git_reading: bool,
+    pub(crate) git_again: bool,
 }
 
 impl RightPanel {
@@ -212,7 +216,10 @@ impl RightPanel {
             _scm_subs: vec![scm_sub, scm_obs],
             tabs_scroll: ScrollHandle::new(),
             tabs_revealed: std::cell::Cell::new(None),
-            _fs_watch: None,
+            fs_root: None,
+            _fs_task: None,
+            git_reading: false,
+            git_again: false,
         };
         me.restart_watch(cx);
         if let Some(e) = attach {
@@ -250,34 +257,45 @@ impl RightPanel {
         cx.notify();
     }
 
-    /// 监视项目根目录:目录里(忽略目录之外)有文件增删改时,防抖后重读文件树与 Git 标记。
-    /// 根没变就不重建;突发的改动(编译、`git checkout`)最多每秒刷新一次。
+    /// 订阅项目根目录的文件系统改动(`fs_watch`,同一个根全工作台共用一个监视器)。根没变就不重建;
+    /// 换项目时丢弃旧任务(接收端随之关闭)。
     fn restart_watch(&mut self, cx: &mut Context<Self>) {
         let root = self.files.root_path().to_path_buf();
-        if self._fs_watch.as_ref().is_some_and(|(r, _)| *r == root) {
+        if self.fs_root.as_ref() == Some(&root) {
             return;
         }
-        self._fs_watch = None;
+        self._fs_task = None;
+        self.fs_root = None;
         if root.as_os_str().is_empty() || !root.is_dir() {
             return;
         }
-        let Some((watch, rx)) = crate::fs_watch::FsWatch::start(&root, crate::prefs(cx).intel.clone()) else { return };
-        self._fs_watch = Some((root, watch));
-        cx.spawn(async move |this, cx| {
-            // 监视器被丢弃(换项目 / 面板销毁)后通道关闭,循环结束
-            while rx.recv().await.is_ok() {
-                // 防抖:等一会儿让同一批改动落完,再合并掉期间积压的信号
-                cx.background_executor().timer(std::time::Duration::from_millis(300)).await;
-                while rx.try_recv().is_ok() {}
-                if this.update(cx, |this, cx| this.reload_files(cx)).is_err() {
+        let Some(rx) = crate::fs_watch::subscribe(&root, crate::prefs(cx).intel.clone()) else { return };
+        self.fs_root = Some(root);
+        self._fs_task = Some(cx.spawn(async move |this, cx| {
+            while let Ok(batch) = rx.recv().await {
+                if this.update(cx, |this, cx| this.on_fs(&batch, cx)).is_err() {
                     break;
                 }
-                // 限频:两次刷新之间至少隔 0.7 秒
-                cx.background_executor().timer(std::time::Duration::from_millis(700)).await;
-                while rx.try_recv().is_ok() {}
             }
-        })
-        .detach();
+        }));
+    }
+
+    /// 处理一批文件系统改动:文件树只重读受影响的目录(丢事件时整体重读),同时刷新 Git 标记、
+    /// 源代码管理状态,并通知编辑器检查已打开的文件。
+    fn on_fs(&mut self, b: &crate::fs_watch::Batch, cx: &mut Context<Self>) {
+        if b.rescan {
+            self.reload_files(cx);
+        } else {
+            if !b.dirs.is_empty() {
+                self.files.reload_dirs(&b.dirs);
+            }
+            self.refresh_git(cx);
+        }
+        self.scm.update(cx, |s, cx| s.on_fs_change(cx));
+        if let Some(ed) = self.src.clone() {
+            ed.update(cx, |v, cx| v.on_fs_change(b, cx));
+        }
+        cx.notify();
     }
 
     pub fn set_tab(&mut self, tab: RightTab, cx: &mut Context<Self>) {

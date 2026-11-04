@@ -28,7 +28,7 @@ impl GitStatus {
     ///
     /// 参数:`root` 项目根目录。
     pub fn read(root: &Path) -> Self {
-        let run = |args: &[&str]| Command::new("git").arg("-C").arg(root).args(args).output().ok().filter(|o| o.status.success());
+        let run = |args: &[&str]| Command::new("git").arg("--no-optional-locks").arg("-C").arg(root).args(args).output().ok().filter(|o| o.status.success());
         let _span = loom_diag::span("git status", 300);
         let Some(top) = run(&["rev-parse", "--show-toplevel"]) else { return Self::default() };
         let top = PathBuf::from(String::from_utf8_lossy(&top.stdout).trim());

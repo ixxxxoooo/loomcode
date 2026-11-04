@@ -104,6 +104,19 @@ impl FileTree {
         }
     }
 
+    /// 增量刷新:只重读 `dirs` 里属于「根或已展开」的目录;已不存在的展开目录顺手清掉。
+    /// 比 `reload` 轻得多,文件监视的批次用它。
+    pub fn reload_dirs(&mut self, dirs: &std::collections::HashSet<PathBuf>) {
+        self.expanded.retain(|d| d.is_dir());
+        let (root, expanded) = (self.root.clone(), self.expanded.clone());
+        self.children.retain(|d, _| *d == root || expanded.contains(d));
+        for d in dirs {
+            if *d == self.root || self.expanded.contains(d) {
+                self.children.insert(d.clone(), read_dir_sorted(d));
+            }
+        }
+    }
+
     fn toggle_dir(&mut self, dir: &Path) {
         if !self.expanded.remove(dir) {
             self.expanded.insert(dir.to_path_buf());
@@ -163,5 +176,35 @@ impl FileTree {
     /// 展开 / 收起一个目录。
     pub(crate) fn toggle(&mut self, dir: &Path) {
         self.toggle_dir(dir);
+    }
+}
+
+#[cfg(test)]
+mod incremental_tests {
+    use super::*;
+    use std::collections::HashSet;
+
+    #[::core::prelude::v1::test]
+    fn 增量重读只刷新指定的展开目录_清掉已删除的展开目录() {
+        let root = std::env::temp_dir().join(format!("loom-tree-{}", std::process::id()));
+        let (a, b) = (root.join("a"), root.join("b"));
+        std::fs::create_dir_all(&a).unwrap();
+        std::fs::create_dir_all(&b).unwrap();
+        let mut t = FileTree::new(root.to_string_lossy().to_string());
+        t.toggle(&a);
+        t.toggle(&b);
+        let names = |t: &FileTree, d: &Path| t.children.get(d).map(|v| v.iter().map(|n| n.name.clone()).collect::<Vec<_>>()).unwrap_or_default();
+        // a、b 里各新建一个文件,但只通知 a 变了:b 的旧列表保持不变(证明没有整树重读)
+        std::fs::write(a.join("x.txt"), b"1").unwrap();
+        std::fs::write(b.join("y.txt"), b"1").unwrap();
+        t.reload_dirs(&HashSet::from([a.clone()]));
+        assert_eq!(names(&t, &a), ["x.txt"]);
+        assert!(names(&t, &b).is_empty());
+        // 展开的目录被删除:从展开集合与缓存里清掉
+        std::fs::remove_dir_all(&b).unwrap();
+        t.reload_dirs(&HashSet::from([root.clone()]));
+        assert!(!t.is_open(&b) && !t.children.contains_key(&b));
+        assert!(names(&t, &root).iter().all(|n| n != "b"));
+        let _ = std::fs::remove_dir_all(&root);
     }
 }

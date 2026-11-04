@@ -8,8 +8,10 @@ use gpui_kit::*;
 use std::path::PathBuf;
 use std::time::{Duration, SystemTime};
 
-/// 轮询间隔。
-const TICK: Duration = Duration::from_millis(1200);
+/// 节拍:只读一个标志位,几乎没有开销;文件监视报告有改动时在下一拍就检查磁盘。
+const TICK: Duration = Duration::from_millis(200);
+/// 兜底:没有监视事件时每隔这么多拍(5 秒)也按修改时间检查一次,覆盖监视不到的文件(项目根之外、事件丢失)。
+const FALLBACK_TICKS: u32 = 25;
 
 /// 磁盘变化的处理结论。
 #[derive(Debug, PartialEq, Eq)]
@@ -36,15 +38,33 @@ pub fn classify(known: Option<SystemTime>, disk: Option<SystemTime>, saved: bool
 }
 
 impl IdeView {
-    /// 启动轮询:窗口存在期间每隔 `TICK` 检查一次所有已打开文件。
+    /// 启动检查循环:有监视事件(`fs_dirty`)就立刻检查所有已打开文件,否则每 5 秒兜底检查一次。
     pub fn start_watch(&mut self, window: &mut Window, cx: &mut Context<Self>) {
         cx.spawn_in(window, async move |this, cx| loop {
             cx.background_executor().timer(TICK).await;
-            if this.update_in(cx, |this, window, cx| this.check_disk(window, cx)).is_err() {
+            let alive = this.update_in(cx, |this, window, cx| {
+                this.fs_tick += 1;
+                if this.fs_dirty || this.fs_tick >= FALLBACK_TICKS {
+                    this.fs_dirty = false;
+                    this.fs_tick = 0;
+                    this.check_disk(window, cx);
+                }
+            });
+            if alive.is_err() {
                 break;
             }
         })
         .detach();
+    }
+
+    /// 文件监视的一批改动:涉及已打开的文件(或系统报告丢了事件)就标记,下一拍检查磁盘;拆分出的次组同理。
+    pub(crate) fn on_fs_change(&mut self, b: &crate::fs_watch::Batch, cx: &mut Context<Self>) {
+        if b.rescan || self.docs.keys().any(|p| b.paths.contains(p)) {
+            self.fs_dirty = true;
+        }
+        if let Some(child) = self.split.as_ref().map(|s| s.child.clone()) {
+            child.update(cx, |c, cx| c.on_fs_change(b, cx));
+        }
     }
 
     /// 对比每个文档的修改时间,按结论重新载入或标记冲突。

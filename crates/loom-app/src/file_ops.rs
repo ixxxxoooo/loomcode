@@ -29,13 +29,30 @@ impl RightPanel {
     /// 重新读取目录,并在后台线程刷新 Git 状态(不阻塞界面)。
     pub fn reload_files(&mut self, cx: &mut Context<Self>) {
         self.files.reload();
+        self.refresh_git(cx);
+    }
+
+    /// 后台刷新文件树的 Git 标记。已有一次在读时只记一笔「读完后再读一次」,不堆积(大仓库里 `git status` 较慢)。
+    pub(crate) fn refresh_git(&mut self, cx: &mut Context<Self>) {
+        if self.git_reading {
+            self.git_again = true;
+            return;
+        }
+        self.git_reading = true;
         let root = self.files.root_path().to_path_buf();
         cx.spawn(async move |this, cx| {
             let git = cx.background_spawn(async move { crate::git_status::GitStatus::read(&root) }).await;
-            let _ = this.update(cx, |this, cx| {
-                this.files.set_git(git);
-                cx.notify();
-            });
+            let again = this
+                .update(cx, |this, cx| {
+                    this.files.set_git(git);
+                    this.git_reading = false;
+                    cx.notify();
+                    std::mem::take(&mut this.git_again)
+                })
+                .unwrap_or(false);
+            if again {
+                let _ = this.update(cx, |this, cx| this.refresh_git(cx));
+            }
         })
         .detach();
     }

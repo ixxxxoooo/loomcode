@@ -118,6 +118,9 @@ pub struct IdeView {
     pub(crate) recent: Vec<String>,
     /// 最近关闭的真实文件(⇧⌘T 重新打开,最新的在末尾)
     pub(crate) closed: Vec<PathBuf>,
+    /// 文件监视报告已打开的文件有改动:下一个 200 ms 节拍立刻检查磁盘(见 `ide_watch`)
+    pub(crate) fs_dirty: bool,
+    pub(crate) fs_tick: u32,
     /// 切换项目后待恢复的标签记忆(渲染时有窗口再恢复)
     pub(crate) pending_restore: Option<loom_config::IdeMemory>,
     /// Markdown 文件的预览 / 源码模式与就地编辑状态
@@ -144,7 +147,7 @@ pub struct IdeView {
 impl IdeView {
     /// 创建空的编辑器视图。
     pub fn new() -> Self {
-        Self { root: String::new(), docs: HashMap::new(), tabs: TabModel::default(), hover_win: None, crumb: None, cmd_click: None, note: None, images: Default::default(), sheets: HashMap::new(), sheet_subs: HashMap::new(), diffs: HashMap::new(), as_text: Default::default(), minimap_ui: Default::default(), applied: None, edit_gen: 0, nav: Default::default(), nav_quiet: false, fresh_open: false, recent: Vec::new(), closed: Vec::new(), pending_restore: None, md: HashMap::new(), blame_gutter: false, blame_ui: Default::default(), lsp_listening: false, hover_ui: Default::default(), overlay: None, cursor_msg: None, overlay_sub: None, tabs_scroll: ScrollHandle::new(), tabs_revealed: None, untitled_seq: 0, wrap_tabs: true, split: None, parent: None, active_second: false, saved_as: Vec::new() }
+        Self { root: String::new(), docs: HashMap::new(), tabs: TabModel::default(), hover_win: None, crumb: None, cmd_click: None, note: None, images: Default::default(), sheets: HashMap::new(), sheet_subs: HashMap::new(), diffs: HashMap::new(), as_text: Default::default(), minimap_ui: Default::default(), applied: None, edit_gen: 0, nav: Default::default(), nav_quiet: false, fresh_open: false, recent: Vec::new(), closed: Vec::new(), fs_dirty: false, fs_tick: 0, pending_restore: None, md: HashMap::new(), blame_gutter: false, blame_ui: Default::default(), lsp_listening: false, hover_ui: Default::default(), overlay: None, cursor_msg: None, overlay_sub: None, tabs_scroll: ScrollHandle::new(), tabs_revealed: None, untitled_seq: 0, wrap_tabs: true, split: None, parent: None, active_second: false, saved_as: Vec::new() }
     }
 
     /// 设置项目根目录(会话切换时由宿主调用)。
