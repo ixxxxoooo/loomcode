@@ -162,6 +162,8 @@ pub struct RightPanel {
     /// 标签条的滚动句柄(标签放不下时横向滚动)与上次已滚到可见处的 (当前标签, 标签数)
     pub(crate) tabs_scroll: ScrollHandle,
     pub(crate) tabs_revealed: std::cell::Cell<Option<(RightTab, usize)>>,
+    /// 项目目录的递归文件监视(外部改动自动刷新文件树);换项目时重建
+    _fs_watch: Option<(std::path::PathBuf, crate::fs_watch::FsWatch)>,
 }
 
 impl RightPanel {
@@ -210,7 +212,9 @@ impl RightPanel {
             _scm_subs: vec![scm_sub, scm_obs],
             tabs_scroll: ScrollHandle::new(),
             tabs_revealed: std::cell::Cell::new(None),
+            _fs_watch: None,
         };
+        me.restart_watch(cx);
         if let Some(e) = attach {
             me.attach_outline(e, cx);
         }
@@ -242,7 +246,38 @@ impl RightPanel {
         self.scm.update(cx, |s, cx| s.set_root(&root, cx));
         self.files.set_root(root.clone());
         self.reload_files(cx);
+        self.restart_watch(cx);
         cx.notify();
+    }
+
+    /// 监视项目根目录:目录里(忽略目录之外)有文件增删改时,防抖后重读文件树与 Git 标记。
+    /// 根没变就不重建;突发的改动(编译、`git checkout`)最多每秒刷新一次。
+    fn restart_watch(&mut self, cx: &mut Context<Self>) {
+        let root = self.files.root_path().to_path_buf();
+        if self._fs_watch.as_ref().is_some_and(|(r, _)| *r == root) {
+            return;
+        }
+        self._fs_watch = None;
+        if root.as_os_str().is_empty() || !root.is_dir() {
+            return;
+        }
+        let Some((watch, rx)) = crate::fs_watch::FsWatch::start(&root, crate::prefs(cx).intel.clone()) else { return };
+        self._fs_watch = Some((root, watch));
+        cx.spawn(async move |this, cx| {
+            // 监视器被丢弃(换项目 / 面板销毁)后通道关闭,循环结束
+            while rx.recv().await.is_ok() {
+                // 防抖:等一会儿让同一批改动落完,再合并掉期间积压的信号
+                cx.background_executor().timer(std::time::Duration::from_millis(300)).await;
+                while rx.try_recv().is_ok() {}
+                if this.update(cx, |this, cx| this.reload_files(cx)).is_err() {
+                    break;
+                }
+                // 限频:两次刷新之间至少隔 0.7 秒
+                cx.background_executor().timer(std::time::Duration::from_millis(700)).await;
+                while rx.try_recv().is_ok() {}
+            }
+        })
+        .detach();
     }
 
     pub fn set_tab(&mut self, tab: RightTab, cx: &mut Context<Self>) {

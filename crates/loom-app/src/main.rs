@@ -128,6 +128,7 @@ mod explorer_sections;
 mod tab_style;
 mod ide_close;
 mod ide_edit;
+mod fs_watch;
 mod ide_split;
 mod ide_untitled;
 mod ide_tabs;
