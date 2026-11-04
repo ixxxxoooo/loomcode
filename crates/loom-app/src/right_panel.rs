@@ -139,6 +139,12 @@ pub struct RightPanel {
     pub(crate) plan: Option<String>,
     /// 「任务」标签正在查看输出的任务(task_id)
     pub(crate) task_sel: Option<String>,
+    /// 「任务」标签日志区的滚动句柄(贴底跟随用)
+    pub(crate) task_scroll: ScrollHandle,
+    /// 日志区上次显示的是哪个任务(切换任务时回到底部)
+    pub(crate) task_scroll_for: std::cell::RefCell<Option<String>>,
+    /// 日志文件轮询任务(见 `tasks_tab::start_log_poll`)
+    pub(crate) log_poll: Option<Task<()>>,
     _sub: Option<Subscription>,
     /// 「改动」里已展开 Diff 的文件
     open_changes: HashSet<String>,
@@ -194,6 +200,9 @@ impl RightPanel {
             subagent: None,
             plan: None,
             task_sel: None,
+            task_scroll: ScrollHandle::new(),
+            task_scroll_for: std::cell::RefCell::new(None),
+            log_poll: None,
             root,
             _term_hub_sub: sub,
             changes_mode: crate::git_changes::ChangesMode::initial(),

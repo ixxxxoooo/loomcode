@@ -14,16 +14,58 @@ use gpui_kit::prelude::FluentBuilder as _;
 use gpui_kit::*;
 use loom_core::*;
 use std::io::{Read, Seek, SeekFrom};
+use std::time::Duration;
 
-/// 读取输出文件的尾部(最多 `OUTPUT_CAP` 字节);文件不存在或读失败返回 `None`。
-pub fn read_tail(path: &str) -> Option<String> {
+/// 「任务」标签里日志最多读多少字节(取文件末尾;比内存里的 `OUTPUT_CAP` 大得多,长日志才看得到近况)。
+pub const LOG_CAP: usize = 96 * 1024;
+/// 日志文件的轮询间隔:运行中的任务文件变长就刷新输出。
+const POLL: Duration = Duration::from_millis(800);
+
+/// 读到的日志尾部。
+pub struct LogTail {
+    /// 整理后的文本(已去掉回车覆盖的进度行,截断时从整行开始)
+    pub text: String,
+    /// 文件比读取上限大,前面的部分没显示
+    pub truncated: bool,
+    /// 文件总字节数
+    pub total: u64,
+}
+
+/// 读取输出文件的尾部(最多 `cap` 字节);文件不存在或读失败返回 `None`。
+///
+/// 截断时丢掉不完整的第一行;每行只保留最后一个 `\r` 之后的内容(进度条反复覆盖同一行),`\r\n` 当普通换行。
+pub fn read_log(path: &str, cap: usize) -> Option<LogTail> {
     let mut f = std::fs::File::open(path).ok()?;
-    let len = f.metadata().ok()?.len();
-    let cap = OUTPUT_CAP as u64;
-    f.seek(SeekFrom::Start(len.saturating_sub(cap))).ok()?;
+    let total = f.metadata().ok()?.len();
+    let truncated = total > cap as u64;
+    f.seek(SeekFrom::Start(total.saturating_sub(cap as u64))).ok()?;
     let mut buf = Vec::new();
-    f.take(cap).read_to_end(&mut buf).ok()?;
-    Some(String::from_utf8_lossy(&buf).into_owned())
+    f.take(cap as u64).read_to_end(&mut buf).ok()?;
+    let mut text = String::from_utf8_lossy(&buf).into_owned();
+    if truncated {
+        if let Some(i) = text.find('\n') {
+            text.drain(..=i);
+        }
+    }
+    Some(LogTail { text: tidy_log(&text), truncated, total })
+}
+
+/// 整理终端输出:`\r\n` 归一,行内的回车覆盖只留最后一段。
+fn tidy_log(text: &str) -> String {
+    let text = text.replace("\r\n", "\n");
+    if !text.contains('\r') {
+        return text;
+    }
+    text.split('\n').map(|l| l.rsplit('\r').find(|x| !x.is_empty()).unwrap_or("")).collect::<Vec<_>>().join("\n")
+}
+
+/// 文件大小的简短写法。
+fn human_bytes(n: u64) -> String {
+    match n {
+        0..=1023 => format!("{n} B"),
+        1024..=1_048_575 => format!("{:.0} KB", n as f64 / 1024.),
+        _ => format!("{:.1} MB", n as f64 / 1_048_576.),
+    }
 }
 
 impl RightPanel {
@@ -35,6 +77,38 @@ impl RightPanel {
             self.task_sel = id;
         }
         self.open_tab(crate::workbench::RightTab::Tasks, cx);
+        self.start_log_poll(cx);
+    }
+
+    /// 启动日志轮询(只启动一次):停在「任务」标签时,运行中任务的输出文件变长就重绘,实现实时查看。
+    /// 后台命令的输出只写进文件、不会有事件通知界面,所以必须自己盯文件。
+    fn start_log_poll(&mut self, cx: &mut Context<Self>) {
+        if self.log_poll.is_some() {
+            return;
+        }
+        self.log_poll = Some(cx.spawn(async move |this, cx| {
+            let mut last: u64 = 0;
+            loop {
+                cx.background_executor().timer(POLL).await;
+                let Ok(files) = this.update(cx, |this, cx| {
+                    if this.tab != crate::workbench::RightTab::Tasks {
+                        return Vec::new();
+                    }
+                    let Some(m) = &this.model else { return Vec::new() };
+                    m.read(cx).state.tasks.iter().filter(|x| x.counts_as_running()).filter_map(|x| x.output_file.clone()).collect::<Vec<_>>()
+                }) else {
+                    break;
+                };
+                // 文件长度的总和当签名:有任何一个变长(或任务集合变了)就重绘
+                let sig = files.iter().map(|f| std::fs::metadata(f).map_or(0, |m| m.len()) + 1).sum::<u64>();
+                if sig != last {
+                    last = sig;
+                    if this.update(cx, |_, cx| cx.notify()).is_err() {
+                        break;
+                    }
+                }
+            }
+        }));
     }
 
     /// 「任务」标签内容。
@@ -84,7 +158,22 @@ impl RightPanel {
         // 详情
         let run = sel.counts_as_running();
         let stalled = run && sel.idle_ms(now) >= STALL_MS;
-        let output = if !sel.output.is_empty() { sel.output.clone() } else { sel.output_file.as_deref().and_then(read_tail).unwrap_or_default() };
+        // 输出:演示后端把输出放在内存里;真实后端只给输出文件,读它的末尾
+        let log = if !sel.output.is_empty() { None } else { sel.output_file.as_deref().and_then(|f| read_log(f, LOG_CAP)) };
+        let (output, truncated, total) = match log {
+            Some(l) => (l.text, l.truncated, l.total),
+            None => (sel.output.clone(), false, sel.output.len() as u64),
+        };
+        // 贴底跟随:切换任务时、或上一帧已经停在底部,就跟着新输出往下走;用户往上翻看时不打扰
+        let switched = self.task_scroll_for.borrow().as_deref() != Some(sel_id.as_str());
+        if switched {
+            *self.task_scroll_for.borrow_mut() = Some(sel_id.clone());
+        }
+        let (off, max) = (f32::from(self.task_scroll.offset().y), f32::from(self.task_scroll.max_offset().y));
+        if switched || max <= 0. || off <= -max + 24. {
+            self.task_scroll.scroll_to_bottom();
+        }
+        let parsed = crate::ansi::parse(&output);
         let card_id = sel.tool_use_id.clone().filter(|_| sel.kind == TaskKind::Agent);
         let (m_stop, id_stop) = (model.clone(), sel.task_id.clone());
         let copy_text = output.clone();
@@ -111,14 +200,28 @@ impl RightPanel {
                     )
                     .child(div().text_size(px(11.)).text_color(t.muted_foreground).child(format!("{} · {}{}", sel.kind.label(), meta_text(Some(sel.elapsed_ms(now)), sel.tool_uses, sel.tokens), if stalled { format!(" · 已 {} 无进展", format_elapsed(sel.idle_ms(now))) } else { String::new() })))
                     .when(!sel.summary.is_empty(), |d| d.child(div().text_size(px(12.)).text_color(t.foreground).child(sel.summary.clone())))
-                    .when_some(sel.output_file.clone(), |d, f| d.child(div().text_size(px(11.)).font_family(MONO).text_color(t.muted_foreground).truncate().child(f))),
+                    .when_some(sel.output_file.clone(), |d, f| {
+                        let copy = f.clone();
+                        d.child(
+                            div().id("task-log-path").text_size(px(11.)).font_family(MONO).text_color(t.muted_foreground).truncate().cursor_pointer().hover(|d| d.text_color(t.foreground))
+                                .tooltip(move |window, cx| gpui_kit::component::tooltip::Tooltip::new("点击复制日志文件路径").build(window, cx))
+                                .on_click(move |_, _, cx| { cx.write_to_clipboard(ClipboardItem::new_string(copy.clone())); })
+                                .child(f),
+                        )
+                    }),
             )
             .child(
-                v_flex().id("task-output").flex_1().min_h_0().overflow_y_scroll().p_3()
+                v_flex().id("task-output").flex_1().min_h_0().overflow_y_scroll().track_scroll(&self.task_scroll).p_3().gap_1()
+                    .when(truncated, |d| d.child(
+                        div().text_size(px(11.)).text_color(t.muted_foreground).child(format!("日志共 {},只显示最后 {};完整内容在上方文件里", human_bytes(total), human_bytes(LOG_CAP as u64))),
+                    ))
                     .child(if output.is_empty() {
                         div().text_size(px(12.)).text_color(t.muted_foreground).child(if run { "暂无输出" } else { "没有输出记录" }).into_any_element()
                     } else {
-                        div().w_full().text_size(px(12.)).font_family(MONO).text_color(t.foreground).child(output).into_any_element()
+                        // 可拖选 / ⌘C 的等宽文本,带 ANSI 颜色;元素 id 按任务固定,日志变长时选区不丢
+                        div().w_full().text_size(px(12.)).font_family(MONO).text_color(t.foreground)
+                            .child(gpui_base::SelectableText::new(SharedString::from(format!("task-log-{}", sel.task_id)), parsed.text).highlights(parsed.runs))
+                            .into_any_element()
                     }),
             );
 
@@ -143,11 +246,26 @@ mod tests {
         let dir = std::env::temp_dir().join(format!("loom-tail-{}", std::process::id()));
         std::fs::create_dir_all(&dir).unwrap();
         let p = dir.join("a.output");
-        std::fs::write(&p, "x".repeat(OUTPUT_CAP + 100)).unwrap();
-        assert_eq!(read_tail(p.to_str().unwrap()).unwrap().len(), OUTPUT_CAP);
+        let path = p.to_str().unwrap();
+        // 超限:只留末尾,且丢掉不完整的第一行
+        std::fs::write(&p, format!("{}\n第二行\n第三行\n", "x".repeat(200))).unwrap();
+        let l = read_log(path, 30).unwrap();
+        assert!(l.truncated);
+        assert_eq!(l.text, "第二行\n第三行\n");
+        assert!(l.total > 200);
+        // 未超限:原样
         std::fs::write(&p, "短文本").unwrap();
-        assert_eq!(read_tail(p.to_str().unwrap()).unwrap(), "短文本");
-        assert!(read_tail("/不存在/x").is_none());
+        let l = read_log(path, LOG_CAP).unwrap();
+        assert!(!l.truncated);
+        assert_eq!(l.text, "短文本");
+        assert!(read_log("/不存在/x", LOG_CAP).is_none());
         let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    #[::core::prelude::v1::test]
+    fn 整理回车覆盖的进度行() {
+        assert_eq!(tidy_log("a\r\nb\n"), "a\nb\n");
+        assert_eq!(tidy_log("10%\r50%\r100%\n完成"), "100%\n完成");
+        assert_eq!(tidy_log("普通\n文本"), "普通\n文本");
     }
 }
