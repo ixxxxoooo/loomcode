@@ -1046,7 +1046,9 @@ impl Workbench {
         cx.spawn(async move |this, cx| {
             let info = cx
                 .background_spawn(async move {
-                    let bin = custom.unwrap_or_else(|| "claude".into());
+                    // 从程序坞 / 访达启动的应用 PATH 很短(没有 ~/.local/bin),不能直接用裸命令名,
+                    // 要走与启动会话相同的查找(用户配置 → 环境变量 → PATH → 常见安装位置)
+                    let bin = loom_claude::options::find_claude(custom.as_deref())?;
                     std::process::Command::new(&bin).arg("--version").output().ok().filter(|o| o.status.success()).map(|o| String::from_utf8_lossy(&o.stdout).trim().to_string())
                 })
                 .await;
