@@ -166,6 +166,9 @@ pub struct Translator {
     seq: u64,
     /// 实时条目 id 的代号:同一会话的进程重启后序号从头开始,靠它区分,避免与旧进程的条目撞 id
     pub id_gen: u64,
+    /// 本进程见过、还没收到终态通知的后台任务 id(`task_started` / 存活快照里出现的)。
+    /// 恢复会话时历史里遗留的任务不在其中:它们属于已退出的上一个进程,无法再停止。
+    live_tasks: HashSet<String>,
 }
 
 /// 是不是 claude 为 API 错误合成的 assistant 消息:带 `isApiErrorMessage` 标记,或模型是 `<synthetic>` 且文字以 `API Error` 开头。
@@ -193,7 +196,13 @@ impl Translator {
             api_error: None,
             seq: 0,
             id_gen: 0,
+            live_tasks: HashSet::new(),
         }
+    }
+
+    /// 本进程是否知道这个后台任务还在跑(见 `live_tasks`)。
+    pub fn task_is_live(&self, task_id: &str) -> bool {
+        self.live_tasks.contains(task_id)
     }
 
     /// 回放模式:用于历史 jsonl。
@@ -289,7 +298,10 @@ impl Translator {
                 Some(m) => vec![AgentEvent::ModeChanged(m)],
                 None => Vec::new(),
             },
-            "task_started" => vec![AgentEvent::TaskStarted(self.task_from(v))],
+            "task_started" => {
+                self.live_tasks.insert(str_of(v, "task_id").into());
+                vec![AgentEvent::TaskStarted(self.task_from(v))]
+            }
             "task_progress" => {
                 let usage = &v["usage"];
                 vec![AgentEvent::TaskProgress {
@@ -309,14 +321,18 @@ impl Translator {
                     output_file: None,
                 }]
             }
-            "task_notification" => vec![AgentEvent::TaskNotification {
+            "task_notification" => {
+                self.live_tasks.remove(str_of(v, "task_id"));
+                vec![AgentEvent::TaskNotification {
                 task_id: str_of(v, "task_id").into(),
                 status: TaskStatus::from_cli(str_of(v, "status")),
                 summary: str_of(v, "summary").into(),
                 output_file: v.get("output_file").and_then(Value::as_str).map(String::from),
-            }],
+            }]
+            }
             "background_tasks_changed" => {
-                let list = v.get("tasks").and_then(Value::as_array).map(|a| a.iter().map(|t| self.task_from(t)).collect()).unwrap_or_default();
+                let list: Vec<BackgroundTask> = v.get("tasks").and_then(Value::as_array).map(|a| a.iter().map(|t| self.task_from(t)).collect()).unwrap_or_default();
+                self.live_tasks.extend(list.iter().map(|t| t.task_id.clone()));
                 vec![AgentEvent::TasksChanged(list)]
             }
             // 钩子:只有失败值得打扰用户(开始与进度太碎)
@@ -1620,6 +1636,16 @@ mod tests {
         // 子 Agent 的结果写在自己的卡片上,不再额外插通知行
         assert_eq!(card.summary, "盘点完成,共 12 页");
         assert!(!s.items.iter().any(|i| matches!(i, TimelineItem::TaskNote { .. })));
+    }
+
+    #[test]
+    fn 只有本进程见过的任务才算在运行() {
+        let mut t = Translator::new("/w");
+        let _ = run(&mut t, &[json!({"type":"system","subtype":"task_started","task_id":"live1","is_backgrounded":true,"task_type":"local_bash"})]);
+        assert!(t.task_is_live("live1"));
+        assert!(!t.task_is_live("old-from-history"), "历史里遗留的任务属于已退出的进程");
+        let _ = run(&mut t, &[json!({"type":"system","subtype":"task_notification","task_id":"live1","status":"stopped","summary":"x"})]);
+        assert!(!t.task_is_live("live1"), "终态通知后不再算在运行");
     }
 
     #[test]

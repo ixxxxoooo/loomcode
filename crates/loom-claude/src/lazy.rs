@@ -82,9 +82,17 @@ fn run(inner: ClaudeBackend, mut config: BackendConfig, cmd_rx: async_channel::R
     // 等第一条命令;界面丢弃会话(通道关闭)时直接退出,从未启动过子进程
     let Ok(mut first) = cmd_rx.recv_blocking() else { return };
     let mut started_once = false;
+    // 还没有进程时的「停止任务」:任务只可能是历史回放里遗留的,在本地收尾,不为它启动进程
+    let stop_locally = |cmd: &AgentCommand| match cmd {
+        AgentCommand::StopTask { task_id } => {
+            let _ = ev_tx.send_blocking(crate::backend::stale_task_stopped(task_id.clone()));
+            true
+        }
+        _ => false,
+    };
     loop {
         // 换环境变量只记下,不为它启动进程
-        while matches!(first, AgentCommand::SetEnv(_)) {
+        while matches!(first, AgentCommand::SetEnv(_)) || stop_locally(&first) {
             remember(&mut config, &first);
             match cmd_rx.recv_blocking() {
                 Ok(cmd) => first = cmd,
@@ -153,7 +161,10 @@ fn run(inner: ClaudeBackend, mut config: BackendConfig, cmd_rx: async_channel::R
             // 进程已退出:提示、回退文件与关闭会重新启动,其余命令(查用量、切模型等)只记下不启动
             match cmd {
                 AgentCommand::Prompt { .. } | AgentCommand::RewindFiles { .. } | AgentCommand::Shutdown => break cmd,
-                _ => continue,
+                other => {
+                    stop_locally(&other);
+                    continue;
+                }
             }
         };
         let id = session_id.lock().ok().and_then(|s| s.clone());

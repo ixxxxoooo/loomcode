@@ -15,6 +15,11 @@ use std::process::{Child, ChildStdin, Command, Stdio};
 use std::sync::mpsc;
 use loom_core::*;
 
+/// 一个已经不在运行的任务(上一个进程留下的)被用户「停止」时,本地补的终态通知。
+pub fn stale_task_stopped(task_id: String) -> AgentEvent {
+    AgentEvent::TaskNotification { task_id, status: TaskStatus::Stopped, summary: "任务已不在运行(上次的进程已退出)".into(), output_file: None }
+}
+
 /// 真实 Claude 后端。
 #[derive(Debug, Clone, Default)]
 pub struct ClaudeBackend {
@@ -340,6 +345,12 @@ impl Actor {
                 self.request(kind, |id| protocol::rewind_files(id, &uuid, dry_run));
             }
             AgentCommand::StopTask { task_id } => {
+                // 本进程不认识的任务(恢复会话时历史里遗留的,属于已退出的上一个进程):
+                // claude 对未知 id 也回「成功」却什么都不发,界面会永远停在运行中,这里直接在本地收尾
+                if !self.translator.task_is_live(&task_id) {
+                    loom_diag::info!("停止任务 {task_id}:本进程没有这个任务,按已停止处理");
+                    return self.emit(stale_task_stopped(task_id));
+                }
                 self.request(ReqKind::Other("停止任务"), |id| protocol::stop_task(id, &task_id));
             }
             AgentCommand::BackgroundCurrent { tool_use_id } => {
