@@ -235,6 +235,10 @@ pub fn replay_lines<'a>(lines: impl Iterator<Item = &'a str>, cwd: &str) -> Vec<
     }
     flush_stats(&mut cur_uid, &mut turn_usage, &mut durations);
     events.extend(durations);
+    // 回放到末尾仍没有终态通知的后台任务,属于已经退出的上一个进程:后台任务随进程而死,
+    // 不会在重开会话后继续跑。用一份空的存活快照把它们收尾成「已停止」(不插通知行),
+    // 否则任务坞会一直显示「运行中」。之后本进程自己启动的任务由实时事件创建,不受影响。
+    events.push(AgentEvent::TasksChanged(Vec::new()));
     if let Some(t) = title {
         events.insert(0, AgentEvent::TitleChanged(t));
     }
@@ -338,6 +342,21 @@ mod tests {
         assert_eq!(s.durations.get(&think), Some(&8), "思考:上一条记录到这一条 8 秒");
         assert_eq!(s.durations.get(users[0]), Some(&70), "第一个回合 70 秒");
         assert_eq!(s.durations.get(users[1]), Some(&30), "最后一个回合用最后一条记录收尾");
+    }
+
+    #[test]
+    fn 回放末尾没有终态的后台任务收尾为已停止() {
+        let jsonl = r#"{"type":"user","timestamp":"2026-10-09T10:00:00.000Z","cwd":"/w","message":{"role":"user","content":[{"type":"text","text":"起服务"}]}}
+{"type":"assistant","timestamp":"2026-10-09T10:00:05.000Z","message":{"id":"m1","content":[{"type":"tool_use","id":"b1","name":"Bash","input":{"command":"npm start","description":"Run server","run_in_background":true}}]}}
+{"type":"user","timestamp":"2026-10-09T10:00:06.000Z","message":{"role":"user","content":[{"type":"tool_result","tool_use_id":"b1","content":"Command running in background with ID: bx1. Output is being written to: /tmp/bx1.output."}]},"toolUseResult":{"stdout":"","stderr":"","backgroundTaskId":"bx1"}}
+"#;
+        let mut s = SessionState::default();
+        for e in replay_lines(jsonl.lines(), "/w") {
+            s.apply(e);
+        }
+        assert_eq!(s.running_task_count(), 0, "上个进程的任务不会在重开后继续跑");
+        assert_eq!(s.task("bx1").map(|t| t.status), Some(loom_core::TaskStatus::Stopped));
+        assert!(!s.items.iter().any(|i| matches!(i, TimelineItem::TaskNote { .. })), "收尾不插通知行");
     }
 
     #[test]
