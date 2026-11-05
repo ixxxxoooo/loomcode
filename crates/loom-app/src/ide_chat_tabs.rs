@@ -262,7 +262,14 @@ impl IdeWindow {
             .child(
                 h_flex().id("ide-chat-tabs").h_full().flex_1().min_w_0().overflow_x_scroll().track_scroll(&self.chat_scroll)
                     .on_scroll_wheel(crate::tab_style::wheel_to_horizontal(self.chat_scroll.clone()))
-                    .children(tabs),
+                    .children(tabs)
+                    // 标签右侧的空白:双击新建会话(与编辑器标签条的双击新建一致)
+                    .child(div().id("ct-fill").flex_1().min_w(px(24.)).h_full()
+                        .on_click(cx.listener(|this, ev: &ClickEvent, window, cx| {
+                            if ev.click_count() >= 2 {
+                                this.new_chat(window, cx);
+                            }
+                        }))),
             )
             .child(
                 h_flex().h_full().flex_none().px_1().gap_0p5().items_center()
