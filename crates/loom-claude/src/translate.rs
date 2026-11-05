@@ -880,12 +880,16 @@ impl Translator {
         }
         let usage = &v["usage"];
         // 取最后一次迭代的用量作为当前上下文占用;没有迭代信息时用整体用量
-        let last = usage.get("iterations").and_then(Value::as_array).and_then(|a| a.last()).unwrap_or(usage);
+        let iter_last = usage.get("iterations").and_then(Value::as_array).and_then(|a| a.last());
+        let last = iter_last.unwrap_or(usage);
         let used: u64 = ["input_tokens", "cache_read_input_tokens", "cache_creation_input_tokens", "output_tokens"]
             .iter()
             .map(|k| last.get(*k).and_then(Value::as_u64).unwrap_or(0))
             .sum();
-        if used > 0 {
+        // 没有迭代明细时 `usage` 是整个回合所有调用的合计(缓存读取被重复累加,多轮工具调用会虚高到变红);
+        // 多于一次调用就保留实时值(每次调用自带的用量,已是准确的当前占用)
+        let multi_call = v.get("num_turns").and_then(Value::as_u64).unwrap_or(1) > 1;
+        if used > 0 && (iter_last.is_some() || !multi_call) {
             self.usage.context_used = used;
         }
         let cache = |u: &Value| {
@@ -1979,6 +1983,17 @@ mod tests {
         // 带完整用量的 message_delta 把输出算进去
         let ev = plan_stream(&mut t, json!({"type":"message_delta","usage":{"input_tokens":10,"cache_read_input_tokens":9000,"output_tokens":200}}));
         assert!(matches!(&ev[..], [AgentEvent::Usage(u)] if u.context_used == 9_210));
+    }
+
+    #[test]
+    fn 多轮回合的result合计用量不覆盖实时上下文占用() {
+        let mut t = Translator::new("/p");
+        let ev = plan_stream(&mut t, json!({"type":"message_start","message":{"id":"m1","usage":{"input_tokens":10,"cache_read_input_tokens":60_000,"output_tokens":1}}}));
+        assert!(matches!(&ev[..], [AgentEvent::Usage(u)] if u.context_used == 60_011));
+        // 5 次调用的合计:缓存读取被累加成 300k,不能当作当前占用
+        t.handle(&json!({"type":"result","subtype":"success","is_error":false,"result":"ok","num_turns":5,
+            "usage":{"input_tokens":50,"cache_read_input_tokens":300_000,"cache_creation_input_tokens":0,"output_tokens":500}}));
+        assert_eq!(t.usage.context_used, 60_011);
     }
 
     #[test]
