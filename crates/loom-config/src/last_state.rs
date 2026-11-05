@@ -70,6 +70,12 @@ pub struct IdeLayout {
     pub chat_wide: bool,
     /// 左栏选中的分段键(files / changes)
     pub left_tab: Option<String>,
+    /// 左栏宽度;`None` = 默认
+    pub left_w: Option<f32>,
+    /// 对话栏宽度;`None` = 默认
+    pub chat_w: Option<f32>,
+    /// 底部终端面板高度;`None` = 默认
+    pub term_h: Option<f32>,
 }
 
 #[cfg(test)]

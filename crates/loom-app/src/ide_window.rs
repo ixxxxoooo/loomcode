@@ -65,6 +65,14 @@ pub struct IdeWindow {
     pub(crate) chat_empty: bool,
     /// 对话栏展开为占满窗口
     pub(crate) chat_wide: bool,
+    /// 左栏 | 编辑区 | 对话栏 的拖动状态,以及上下分栏(编辑器 | 终端)的;宽高会被记住
+    pub(crate) split: Entity<gpui_kit::component::resizable::ResizableState>,
+    pub(crate) vsplit: Entity<gpui_kit::component::resizable::ResizableState>,
+    pub(crate) left_w: f32,
+    pub(crate) chat_w: f32,
+    pub(crate) term_h: f32,
+    /// 拖动停下后再通知保存(拖动中每帧都回调,不能每次落盘)
+    pub(crate) size_save_pending: bool,
     /// 通知面板(状态栏铃铛)是否展开
     pub(crate) notice_open: bool,
     /// 分支选择器(点状态栏分支名或 SCM 顶部分支名弹出)
@@ -208,7 +216,7 @@ impl IdeWindow {
             .detach();
         }
         // 此时工作台可能正处于更新中,不在这里回读它;首次渲染时再同步
-        Self { wb, panel, ide, panel_root: String::new(), focus, left_open: true, chat_open: true, left_narrow: false, left_before: true, chat_narrow: false, chat_before: true, synced: None, _subs: subs, search, search_open: false, quick: None, _quick_sub: None, term_open, term, chat_tabs: wb_tabs, pinned: None, seen_enter: 0, chat_last_active: None, chat_empty: false, chat_wide: std::env::var("LOOM_CHAT_WIDE").is_ok(), notice_open: false, branch_picker: None, _branch_sub: None, history_picker: None, _history_sub: None, chat_scroll: ScrollHandle::new(), chat_revealed: Default::default() }
+        Self { wb, panel, ide, panel_root: String::new(), focus, left_open: true, chat_open: true, left_narrow: false, left_before: true, chat_narrow: false, chat_before: true, synced: None, _subs: subs, search, search_open: false, quick: None, _quick_sub: None, term_open, term, chat_tabs: wb_tabs, pinned: None, seen_enter: 0, chat_last_active: None, chat_empty: false, chat_wide: std::env::var("LOOM_CHAT_WIDE").is_ok(), notice_open: false, branch_picker: None, _branch_sub: None, history_picker: None, _history_sub: None, chat_scroll: ScrollHandle::new(), chat_revealed: Default::default(), split: cx.new(|_| gpui_kit::component::resizable::ResizableState::default()), vsplit: cx.new(|_| gpui_kit::component::resizable::ResizableState::default()), left_w: 260., chat_w: 420., term_h: 260., size_save_pending: false }
     }
 
     /// 让面板与根目录跟随工作台当前会话。
@@ -458,8 +466,15 @@ impl Render for IdeWindow {
                             // 展开:对话栏占满整个区域
                             div().size_full().child(chat_col).into_any_element()
                         } else {
-                            h_resizable("ide-split")
-                                .child(resizable_panel().size(px(260.)).size_range(px(160.)..px(520.)).flex_none().fixed().visible(self.left_open)
+                            h_resizable("ide-split").with_state(&self.split)
+                                .on_resize({
+                                    let me = cx.entity().downgrade();
+                                    move |state, _, cx| {
+                                        let sizes = state.read(cx).sizes().clone();
+                                        let _ = me.update(cx, |this, cx| this.on_split_resized(&sizes, cx));
+                                    }
+                                })
+                                .child(resizable_panel().size(px(self.left_w)).size_range(px(160.)..px(520.)).flex_none().fixed().visible(self.left_open)
                                     .child(div().size_full()
                                         // Esc:搜索面板里按 Esc 关闭搜索(回到文件树)并把焦点还给编辑器
                                         .when(self.search_open, |d| d.on_key_down(cx.listener(|this, ev: &KeyDownEvent, window, cx| {
@@ -470,12 +485,19 @@ impl Render for IdeWindow {
                                         })))
                                         .child(if self.search_open { self.search.clone().into_any_element() } else { self.panel.clone().into_any_element() })))
                                 .child(resizable_panel().size_range(px(320.)..Pixels::MAX).child(
-                                    v_resizable("ide-vsplit")
+                                    v_resizable("ide-vsplit").with_state(&self.vsplit)
+                                        .on_resize({
+                                            let me = cx.entity().downgrade();
+                                            move |state, _, cx| {
+                                                let sizes = state.read(cx).sizes().clone();
+                                                let _ = me.update(cx, |this, cx| this.on_vsplit_resized(&sizes, cx));
+                                            }
+                                        })
                                         .child(resizable_panel().size_range(px(120.)..Pixels::MAX).child(div().size_full().child(self.ide.clone())))
-                                        .child(resizable_panel().size(px(260.)).size_range(px(120.)..px(600.)).flex_none().visible(self.term_open)
+                                        .child(resizable_panel().size(px(self.term_h)).size_range(px(120.)..px(600.)).flex_none().visible(self.term_open)
                                             .child(div().size_full().child(self.term.clone()))),
                                 ))
-                                .child(resizable_panel().size(px(420.)).size_range(px(crate::layout_rules::COMPOSER_MIN_W)..px(900.)).flex_none().fixed().visible(self.chat_open)
+                                .child(resizable_panel().size(px(self.chat_w)).size_range(px(crate::layout_rules::COMPOSER_MIN_W)..px(900.)).flex_none().fixed().visible(self.chat_open)
                                     .child(chat_col))
                                 .into_any_element()
                         }),

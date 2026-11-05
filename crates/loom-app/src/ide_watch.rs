@@ -4,6 +4,7 @@
 //! @author ixxxxoooo
 
 use crate::ide::IdeView;
+use gpui_kit::component::RopeExt as _;
 use gpui_kit::*;
 use std::path::PathBuf;
 use std::time::{Duration, SystemTime};
@@ -87,13 +88,15 @@ impl IdeView {
                     doc.mtime = disk;
                     doc.crlf = text.contains("\r\n");
                     let editor = doc.editor.clone();
-                    let focused = editor.read(cx).focus_handle(cx).is_focused(window);
-                    let pos = editor.read(cx).cursor_position();
+                    // 无论是否有焦点(软件在后台时就没有),都要保住光标与滚动位置:
+                    // `set_value` 会把两者重置到文件开头,外部改动重载后不该把人带走
+                    let (pos, scroll) = { let e = editor.read(cx); (e.cursor_position(), e.scroll_offset()) };
                     editor.update(cx, |e, cx| {
                         e.set_value(text, window, cx);
-                        if focused {
-                            e.set_cursor_position(pos, window, cx);
-                        }
+                        // 用 `set_selected_range` 而不是 `set_cursor_position`:后者会抢焦点
+                        let off = e.text().position_to_offset(&pos);
+                        e.set_selected_range(off..off, cx);
+                        e.set_scroll_offset(scroll, cx);
                     });
                     reloaded.push(path.clone());
                     changed = true;

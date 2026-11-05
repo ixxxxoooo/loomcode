@@ -106,6 +106,9 @@ impl IdeWindow {
             term_open: self.term_open,
             chat_wide: self.chat_wide,
             left_tab: Some(self.panel.read(cx).tab.key().to_string()),
+            left_w: Some(self.left_w.round()),
+            chat_w: Some(self.chat_w.round()),
+            term_h: Some(self.term_h.round()),
         }
     }
 
@@ -120,6 +123,11 @@ impl IdeWindow {
             self.chat_before = v;
         }
         self.search_open = l.search_open;
+        // 栏宽 / 终端高度:夹到各自的允许范围内,坏值退回默认
+        let pick = |v: Option<f32>, lo: f32, hi: f32, d: f32| v.filter(|x| x.is_finite()).map_or(d, |x| x.clamp(lo, hi));
+        self.left_w = pick(l.left_w, 160., 520., 260.);
+        self.chat_w = pick(l.chat_w, crate::layout_rules::COMPOSER_MIN_W, 900., 420.);
+        self.term_h = pick(l.term_h, 120., 600., 260.);
         if std::env::var_os("LOOM_IDE_TERM").is_none() {
             self.term_open = l.term_open;
         }
@@ -130,6 +138,45 @@ impl IdeWindow {
         if let Some(tab) = l.left_tab.as_deref().and_then(RightTab::from_key).filter(|t| matches!(t, RightTab::Files | RightTab::Changes)) {
             self.panel.update(cx, |p, cx| p.set_tab(tab, cx));
         }
+    }
+
+    /// 横向分栏拖动回调:记下新的左栏 / 对话栏宽度(不可见的栏宽度不可信,忽略),停下后再触发保存。
+    pub(crate) fn on_split_resized(&mut self, sizes: &[Pixels], cx: &mut Context<Self>) {
+        let [left, _, chat] = sizes else { return };
+        let (left, chat) = (f32::from(*left), f32::from(*chat));
+        if self.left_open && left > 1. {
+            self.left_w = left.clamp(160., 520.);
+        }
+        if self.chat_open && chat > 1. {
+            self.chat_w = chat.clamp(crate::layout_rules::COMPOSER_MIN_W, 900.);
+        }
+        self.schedule_size_sync(cx);
+    }
+
+    /// 上下分栏拖动回调:记下终端面板高度。
+    pub(crate) fn on_vsplit_resized(&mut self, sizes: &[Pixels], cx: &mut Context<Self>) {
+        let [_, term] = sizes else { return };
+        let term = f32::from(*term);
+        if self.term_open && term > 1. {
+            self.term_h = term.clamp(120., 600.);
+        }
+        self.schedule_size_sync(cx);
+    }
+
+    /// 拖动停下 0.4 秒后重绘一次,渲染里的 `sync_layout` 会发现宽高变了并落盘。
+    fn schedule_size_sync(&mut self, cx: &mut Context<Self>) {
+        if self.size_save_pending {
+            return;
+        }
+        self.size_save_pending = true;
+        cx.spawn(async move |this, cx| {
+            cx.background_executor().timer(std::time::Duration::from_millis(400)).await;
+            let _ = this.update(cx, |this, cx| {
+                this.size_save_pending = false;
+                cx.notify();
+            });
+        })
+        .detach();
     }
 
     /// 渲染里调用:内部布局变了就推迟到渲染之后告诉工作台去记(渲染期间不能更新工作台)。
