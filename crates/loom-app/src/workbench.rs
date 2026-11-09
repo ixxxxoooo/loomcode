@@ -1038,6 +1038,17 @@ impl Workbench {
         self.current_project_ix().and_then(|ix| self.projects.get(ix)).map(|p| self.work_root(&p.path))
     }
 
+    /// 进 IDE 时要固定的项目:最近一次在侧栏点选的项目(点项目名或点会话都会更新它),
+    /// 所以没点会话、只点了项目名再切 IDE 也生效;没有点选过时同 `current_project_ix`。
+    pub fn ide_project_ix(&self) -> Option<usize> {
+        self.focus_project.as_ref().and_then(|f| self.projects.iter().position(|p| &p.path == f)).or_else(|| self.current_project_ix())
+    }
+
+    /// 进 IDE 时要固定的项目的主目录(规则见 `ide_project_ix`)。
+    fn ide_project_path(&self) -> Option<String> {
+        self.ide_project_ix().and_then(|ix| self.projects.get(ix)).map(|p| self.work_root(&p.path))
+    }
+
     /// 当前项目的下标(规则见 `active_project_path`)。
     pub fn current_project_ix(&self) -> Option<usize> {
         self.active.as_ref().and_then(|id| self.views.get(id)).map(|v| v.project_ix)
@@ -1506,7 +1517,7 @@ impl Workbench {
             self.page = Page::Chat;
             if self.ide_shell.is_none() {
                 let wb = cx.entity();
-                let root = self.active_project_path().unwrap_or_default();
+                let root = self.ide_project_path().unwrap_or_default();
                 let demo = self.demo;
                 let tabs = self.ui_state.last.chat_tabs.clone();
                 let editor = self.editor.clone();
@@ -1534,7 +1545,7 @@ impl Workbench {
         }
         let wb = cx.entity();
         let demo = self.demo;
-        let root = self.active_project_path().unwrap_or_default();
+        let root = self.ide_project_path().unwrap_or_default();
         let tabs = self.ui_state.last.chat_tabs.clone();
         let layout = self.ui_state.last.layout.ide_layout.clone();
         let editor = self.editor.clone();

@@ -67,7 +67,7 @@ impl IdeWindow {
     pub(crate) fn ensure_pin(&mut self, cx: &mut Context<Self>) -> bool {
         let (epoch, cur, tabs) = {
             let wb = self.wb.read(cx);
-            let cur = wb.current_project_ix();
+            let cur = wb.ide_project_ix();
             let path = cur.and_then(|i| wb.projects.get(i)).map(|p| p.path.clone());
             let tabs: Vec<String> = match cur {
                 Some(ix) => wb.ui_state.last.chat_tabs.iter().filter(|id| project_of(wb, id) == Some(ix)).cloned().collect(),
