@@ -3651,7 +3651,7 @@ dependencies = [
 
 [[package]]
 name = "loom-app"
-version = "0.1.16"
+version = "0.1.17"
 dependencies = [
  "anyhow",
  "async-channel",
@@ -3690,7 +3690,7 @@ dependencies = [
 
 [[package]]
 name = "loom-automation"
-version = "0.1.16"
+version = "0.1.17"
 dependencies = [
  "chrono",
  "loom-diag",
@@ -3701,7 +3701,7 @@ dependencies = [
 
 [[package]]
 name = "loom-browser"
-version = "0.1.16"
+version = "0.1.17"
 dependencies = [
  "thiserror 2.0.21",
  "ureq",
@@ -3710,7 +3710,7 @@ dependencies = [
 
 [[package]]
 name = "loom-canvas"
-version = "0.1.16"
+version = "0.1.17"
 dependencies = [
  "serde",
  "serde_json",
@@ -3719,7 +3719,7 @@ dependencies = [
 
 [[package]]
 name = "loom-claude"
-version = "0.1.16"
+version = "0.1.17"
 dependencies = [
  "async-channel",
  "base64 0.22.1",
@@ -3735,7 +3735,7 @@ dependencies = [
 
 [[package]]
 name = "loom-config"
-version = "0.1.16"
+version = "0.1.17"
 dependencies = [
  "loom-core",
  "loom-diag",
@@ -3747,7 +3747,7 @@ dependencies = [
 
 [[package]]
 name = "loom-core"
-version = "0.1.16"
+version = "0.1.17"
 dependencies = [
  "async-channel",
  "serde",
@@ -3757,7 +3757,7 @@ dependencies = [
 
 [[package]]
 name = "loom-demo"
-version = "0.1.16"
+version = "0.1.17"
 dependencies = [
  "async-channel",
  "loom-core",
@@ -3766,7 +3766,7 @@ dependencies = [
 
 [[package]]
 name = "loom-diag"
-version = "0.1.16"
+version = "0.1.17"
 dependencies = [
  "backtrace",
  "crash-handler",
@@ -3778,7 +3778,7 @@ dependencies = [
 
 [[package]]
 name = "loom-lsp"
-version = "0.1.16"
+version = "0.1.17"
 dependencies = [
  "async-channel",
  "loom-diag",
@@ -3787,14 +3787,14 @@ dependencies = [
 
 [[package]]
 name = "loom-mermaid"
-version = "0.1.16"
+version = "0.1.17"
 dependencies = [
  "thiserror 2.0.21",
 ]
 
 [[package]]
 name = "loom-search"
-version = "0.1.16"
+version = "0.1.17"
 dependencies = [
  "ignore",
  "regex",
@@ -3802,7 +3802,7 @@ dependencies = [
 
 [[package]]
 name = "loom-sheet"
-version = "0.1.16"
+version = "0.1.17"
 dependencies = [
  "calamine",
  "chardetng",
@@ -3811,7 +3811,7 @@ dependencies = [
 
 [[package]]
 name = "loom-term"
-version = "0.1.16"
+version = "0.1.17"
 dependencies = [
  "alacritty_terminal",
  "loom-diag",
