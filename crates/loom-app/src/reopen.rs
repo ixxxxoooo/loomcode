@@ -1,10 +1,12 @@
 //! 再次打开应用(点程序坞图标、双击应用、快捷键 / 启动器唤醒)时把窗口带回前台。
 //!
 //! **多个窗口进程**(⇧⌘N 新窗口是另起一个同 bundle id 的进程):启动器 / 全局快捷键 / `open` 按 bundle id
-//! 唤醒时,系统只把「再次打开」交给其中一个进程(通常是先启动的主进程),被隐藏的另一个进程永远收不到。
-//! 所以每个进程被隐藏时(⌘H、启动器快捷键、程序坞菜单都算,监听 `NSApplicationDidHideNotification`)把自己的
-//! pid 记进 `~/.loomcode/run/last-hidden`;任一进程收到「再次打开」时,若最近被隐藏的是同一应用的**另一个**进程
-//! 且它仍隐藏着,就替它取消隐藏并激活,自己不动(见 `mac::redirect_to_hidden_sibling`)。
+//! 找应用,只认其中一个进程(通常是先启动的主进程)。「显示 / 隐藏」切换类快捷键判断的是「这个进程在不在最前面」,
+//! 所以在另一个窗口进程里按快捷键,它只会把主进程拉到前面,永远隐藏不了当前窗口;被隐藏的另一个进程也收不到「再次打开」。
+//! 因此每个进程失去前台或被隐藏时(`NSApplicationDidResignActiveNotification` / `DidHideNotification`,
+//! ⌘H、启动器快捷键、程序坞菜单都算)把「谁、怎么了、何时」记进 `~/.loomcode/run/last-used`;
+//! 收到「再次打开」的进程按 [`decide`] 处理:最近使用的是另一个窗口进程且它此刻在前台(或刚被这次快捷键抢走前台)
+//! = 在那个窗口里按了切换键,把它和自己一起隐藏;否则最近使用的是另一个窗口进程就唤醒它;都不是才唤醒自己。
 //!
 //! 为什么要自己处理:gpui 把 `applicationShouldHandleReopen:hasVisibleWindows:` 声明成没有返回值,
 //! 而 AppKit 期望一个 BOOL;返回值是随机的,为真时系统才会自己取消隐藏、恢复窗口,
@@ -25,7 +27,7 @@ pub fn install(cx: &mut App, demo: bool, session: Option<String>) {
     {
         let (tx, rx) = async_channel::unbounded::<()>();
         if mac::hook_delegate(tx) {
-            mac::watch_hide();
+            mac::watch_usage();
             cx.spawn(async move |cx| {
                 while rx.recv().await.is_ok() {
                     let session = session.clone();
@@ -64,20 +66,89 @@ fn bring_back(cx: &mut App, demo: bool, session: Option<String>) {
     cx.activate(true);
 }
 
-/// 「最近被隐藏的窗口进程」记录文件:`~/.loomcode/run/last-hidden`。
-fn last_hidden_path() -> Option<std::path::PathBuf> {
-    std::env::var_os("HOME").map(|h| std::path::PathBuf::from(h).join(".loomcode").join("run").join("last-hidden"))
+/// 「最近使用的窗口进程」记录文件:`~/.loomcode/run/last-used`。
+fn last_used_path() -> Option<std::path::PathBuf> {
+    std::env::var_os("HOME").map(|h| std::path::PathBuf::from(h).join(".loomcode").join("run").join("last-used"))
 }
 
-/// 记录内容的格式:`<pid> <bundle id>`。
-fn format_hidden(pid: i32, bundle: &str) -> String {
-    format!("{pid} {bundle}")
+/// 窗口进程最近一次被记录的事件。
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum Usage {
+    /// 失去前台(切到别的应用,或被别的进程抢走前台)
+    Resign,
+    /// 被隐藏
+    Hide,
 }
 
-/// 解析记录;格式不对返回 `None`。
-fn parse_hidden(text: &str) -> Option<(i32, String)> {
-    let (pid, bundle) = text.trim().split_once(' ')?;
-    Some((pid.parse().ok()?, bundle.to_string()))
+/// 一条使用记录。
+#[derive(Debug, Clone, PartialEq, Eq)]
+struct Record {
+    pid: i32,
+    bundle: String,
+    usage: Usage,
+    /// 记录时间(Unix 毫秒)
+    ms: u64,
+}
+
+impl Record {
+    /// 序列化:`<pid> <bundle id> <resign|hide> <毫秒>`。
+    fn format(&self) -> String {
+        let u = match self.usage { Usage::Resign => "resign", Usage::Hide => "hide" };
+        format!("{} {} {u} {}", self.pid, self.bundle, self.ms)
+    }
+
+    /// 解析;格式不对返回 `None`。
+    fn parse(text: &str) -> Option<Self> {
+        let mut it = text.split_whitespace();
+        let pid = it.next()?.parse().ok()?;
+        let bundle = it.next()?.to_string();
+        let usage = match it.next()? { "resign" => Usage::Resign, "hide" => Usage::Hide, _ => return None };
+        let ms = it.next()?.parse().ok()?;
+        Some(Self { pid, bundle, usage, ms })
+    }
+}
+
+/// 记录里那个进程此刻的状态(由调用方从系统查询)。
+#[derive(Debug, Clone, Copy)]
+struct Sibling {
+    hidden: bool,
+    active: bool,
+}
+
+/// 收到「再次打开」后怎么做。
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum Decision {
+    /// 照常把自己的窗口带回前台
+    Normal,
+    /// 在另一个窗口进程里按了切换键:把它和自己一起隐藏
+    HideAll(i32),
+    /// 唤醒另一个窗口进程(取消隐藏并激活),自己不动
+    Bring(i32),
+}
+
+/// 「刚被这次快捷键抢走前台」的时间窗:另一个进程失去前台后这么久之内收到的「再次打开」视为在它里面按的。
+const TOGGLE_WINDOW_MS: u64 = 1500;
+
+/// 决定收到「再次打开」时怎么做(纯函数)。
+///
+/// 参数:`own_pid` / `own_bundle` 本进程;`rec` 最近使用记录;`sibling` 记录里那个进程的状态(已退出或不是同一应用为 `None`);`now_ms` 当前时间。
+fn decide(own_pid: i32, own_bundle: &str, rec: Option<&Record>, sibling: Option<Sibling>, now_ms: u64) -> Decision {
+    let Some(rec) = rec else { return Decision::Normal };
+    if rec.pid == own_pid || rec.bundle != own_bundle {
+        return Decision::Normal;
+    }
+    let Some(sib) = sibling else { return Decision::Normal };
+    let just_left = rec.usage == Usage::Resign && now_ms.saturating_sub(rec.ms) <= TOGGLE_WINDOW_MS;
+    if !sib.hidden && (sib.active || just_left) {
+        Decision::HideAll(rec.pid)
+    } else {
+        Decision::Bring(rec.pid)
+    }
+}
+
+/// 当前 Unix 毫秒。
+fn now_ms() -> u64 {
+    std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH).map(|d| d.as_millis() as u64).unwrap_or(0)
 }
 
 #[cfg(target_os = "macos")]
@@ -89,6 +160,7 @@ mod mac {
     use objc2_foundation::NSString;
     use std::ffi::{c_char, c_void};
     use std::sync::OnceLock;
+    use std::sync::atomic::{AtomicU64, Ordering};
 
     unsafe extern "C" {
         fn object_getClass(obj: *const c_void) -> *const c_void;
@@ -101,7 +173,7 @@ mod mac {
     /// 新的 `applicationShouldHandleReopen:hasVisibleWindows:`:先取消隐藏并恢复最小化的窗口,通知界面激活,明确返回 YES。
     /// 最近被隐藏的是同一应用的另一个窗口进程时改为唤醒它,自己什么也不做(返回 NO)。
     extern "C" fn should_handle_reopen(_this: *mut AnyObject, _sel: Sel, _app: *mut AnyObject, _has_visible: Bool) -> Bool {
-        if redirect_to_hidden_sibling() {
+        if redirect_to_sibling() {
             return Bool::NO;
         }
         unhide_and_restore();
@@ -137,57 +209,89 @@ mod mac {
         NSRunningApplication::currentApplication().bundleIdentifier().map(|s| s.to_string())
     }
 
-    /// 应用被隐藏时的通知回调:记下自己的 pid 与 bundle id。
-    extern "C" fn did_hide(_this: *mut AnyObject, _sel: Sel, _note: *mut AnyObject) {
-        let (Some(path), Some(bundle)) = (super::last_hidden_path(), own_bundle()) else { return };
+    /// 本进程替别的窗口进程处理「再次打开」后的一小段时间里,自己的失去前台 / 隐藏不记录
+    /// (那是被我们自己让出去的,记下来会盖掉真正的「最近使用」)。值为截止时间(Unix 毫秒)。
+    static QUIET_UNTIL: AtomicU64 = AtomicU64::new(0);
+
+    /// 写一条使用记录(安静期内忽略)。
+    fn note(usage: super::Usage) {
+        if super::now_ms() < QUIET_UNTIL.load(Ordering::Relaxed) {
+            return;
+        }
+        let (Some(path), Some(bundle)) = (super::last_used_path(), own_bundle()) else { return };
         if let Some(dir) = path.parent() {
             let _ = std::fs::create_dir_all(dir);
         }
-        let _ = std::fs::write(&path, super::format_hidden(std::process::id() as i32, &bundle));
+        let rec = super::Record { pid: std::process::id() as i32, bundle, usage, ms: super::now_ms() };
+        let _ = std::fs::write(&path, rec.format());
     }
 
-    /// 监听本应用被隐藏(`NSApplicationDidHideNotification`):给应用代理加一个 `loomDidHide:` 方法并注册为观察者。
-    /// 不用代理的 `applicationDidHide:`:代理是 gpui 设置的,设置之后再加的方法 AppKit 不会自动接上。
-    pub fn watch_hide() {
+    extern "C" fn did_hide(_this: *mut AnyObject, _sel: Sel, _note: *mut AnyObject) {
+        note(super::Usage::Hide);
+    }
+
+    extern "C" fn did_resign(_this: *mut AnyObject, _sel: Sel, _note: *mut AnyObject) {
+        note(super::Usage::Resign);
+    }
+
+    /// 监听本应用被隐藏 / 失去前台:给应用代理加 `loomDidHide:` / `loomDidResign:` 方法并注册为通知观察者。
+    /// 不用代理的 `applicationDidHide:` 等:代理是 gpui 设置的,设置之后再加的方法 AppKit 不会自动接上。
+    pub fn watch_usage() {
         let Some(mtm) = MainThreadMarker::new() else { return };
         let app = NSApplication::sharedApplication(mtm);
         let delegate: Option<Retained<AnyObject>> = unsafe { msg_send![&*app, delegate] };
         let Some(delegate) = delegate else { return };
         let Some(center_cls) = AnyClass::get(c"NSNotificationCenter") else { return };
         let cls = unsafe { object_getClass(&*delegate as *const AnyObject as *const c_void) };
-        let sel = sel!(loomDidHide:);
-        unsafe {
-            class_replaceMethod(cls, std::mem::transmute::<Sel, *const c_void>(sel), did_hide as extern "C" fn(*mut AnyObject, Sel, *mut AnyObject) as *const c_void, c"v@:@".as_ptr());
-            let center: Retained<AnyObject> = msg_send![center_cls, defaultCenter];
-            let name = NSString::from_str("NSApplicationDidHideNotification");
-            let _: () = msg_send![&*center, addObserver: &*delegate, selector: sel, name: &*name, object: &*app];
+        let center: Retained<AnyObject> = unsafe { msg_send![center_cls, defaultCenter] };
+        let hooks: [(Sel, extern "C" fn(*mut AnyObject, Sel, *mut AnyObject), &str); 2] = [
+            (sel!(loomDidHide:), did_hide, "NSApplicationDidHideNotification"),
+            (sel!(loomDidResign:), did_resign, "NSApplicationDidResignActiveNotification"),
+        ];
+        for (sel, imp, name) in hooks {
+            unsafe {
+                class_replaceMethod(cls, std::mem::transmute::<Sel, *const c_void>(sel), imp as *const c_void, c"v@:@".as_ptr());
+                let name = NSString::from_str(name);
+                let _: () = msg_send![&*center, addObserver: &*delegate, selector: sel, name: &*name, object: &*app];
+            }
         }
     }
 
-    /// 最近被隐藏的若是同一应用的另一个进程且它仍隐藏着:取消它的隐藏并激活它。返回是否这样做了。
-    fn redirect_to_hidden_sibling() -> bool {
+    /// 按最近使用记录处理「再次打开」:隐藏另一个窗口进程(连同自己)或唤醒它。返回是否替别的进程处理了。
+    fn redirect_to_sibling() -> bool {
         let Some(own) = own_bundle() else { return false };
-        let Some((pid, bundle)) = super::last_hidden_path().and_then(|p| std::fs::read_to_string(p).ok()).and_then(|t| super::parse_hidden(&t)) else { return false };
-        if pid == std::process::id() as i32 || bundle != own {
-            return false;
-        }
-        let Some(other) = NSRunningApplication::runningApplicationWithProcessIdentifier(pid) else { return false };
-        // pid 可能已被别的程序复用:再核对一次 bundle id
-        if other.isTerminated() || !other.isHidden() || other.bundleIdentifier().map(|s| s.to_string()).as_deref() != Some(own.as_str()) {
-            return false;
-        }
-        loom_diag::info!("再次打开:唤醒最近被隐藏的另一个窗口进程(pid {pid})");
-        other.unhide();
-        // macOS 14 起激活改为「协作式」:先把激活权让给它,它才能真正到前台
-        if let Some(mtm) = MainThreadMarker::new() {
-            let app = NSApplication::sharedApplication(mtm);
-            let responds: bool = unsafe { msg_send![&*app, respondsToSelector: sel!(yieldActivationToApplication:)] };
-            if responds {
-                let _: () = unsafe { msg_send![&*app, yieldActivationToApplication: &*other] };
+        let rec = super::last_used_path().and_then(|p| std::fs::read_to_string(p).ok()).and_then(|t| super::Record::parse(&t));
+        let own_pid = std::process::id() as i32;
+        // 记录里的进程:pid 可能已被别的程序复用,再核对一次 bundle id
+        let other = rec.as_ref().filter(|r| r.pid != own_pid).and_then(|r| NSRunningApplication::runningApplicationWithProcessIdentifier(r.pid))
+            .filter(|o| !o.isTerminated() && o.bundleIdentifier().map(|s| s.to_string()).as_deref() == Some(own.as_str()));
+        let sib = other.as_ref().map(|o| super::Sibling { hidden: o.isHidden(), active: o.isActive() });
+        let now = super::now_ms();
+        let decision = super::decide(own_pid, &own, rec.as_ref(), sib, now);
+        let (Some(other), Some(mtm)) = (other, MainThreadMarker::new()) else { return false };
+        let app = NSApplication::sharedApplication(mtm);
+        match decision {
+            super::Decision::Normal => false,
+            super::Decision::HideAll(pid) => {
+                loom_diag::info!("再次打开:在另一个窗口进程(pid {pid})里按了切换键,一起隐藏");
+                QUIET_UNTIL.store(now + super::TOGGLE_WINDOW_MS, Ordering::Relaxed);
+                other.hide();
+                app.hide(None);
+                true
+            }
+            super::Decision::Bring(pid) => {
+                loom_diag::info!("再次打开:唤醒最近使用的另一个窗口进程(pid {pid})");
+                QUIET_UNTIL.store(now + super::TOGGLE_WINDOW_MS, Ordering::Relaxed);
+                other.unhide();
+                // macOS 14 起激活改为「协作式」:先把激活权让给它,它才能真正到前台
+                let responds: bool = unsafe { msg_send![&*app, respondsToSelector: sel!(yieldActivationToApplication:)] };
+                if responds {
+                    let _: () = unsafe { msg_send![&*app, yieldActivationToApplication: &*other] };
+                }
+                other.activateWithOptions(NSApplicationActivationOptions::ActivateAllWindows);
+                true
             }
         }
-        other.activateWithOptions(NSApplicationActivationOptions::ActivateAllWindows);
-        true
     }
 
     /// 取消应用隐藏,并恢复所有被最小化到程序坞的窗口(`makeKeyAndOrderFront` 不会恢复最小化的窗口)。
@@ -213,11 +317,37 @@ mod mac {
 mod tests {
     use super::*;
 
+    const B: &str = "dev.loomcode.app";
+
+    fn rec(pid: i32, usage: Usage, ms: u64) -> Record {
+        Record { pid, bundle: B.into(), usage, ms }
+    }
+
     #[::core::prelude::v1::test]
-    fn 隐藏记录的读写() {
-        assert_eq!(parse_hidden(&format_hidden(4321, "dev.loomcode.app")), Some((4321, "dev.loomcode.app".into())));
-        assert_eq!(parse_hidden("4321 dev.loomcode.app\n"), Some((4321, "dev.loomcode.app".into())));
-        assert_eq!(parse_hidden("abc dev"), None);
-        assert_eq!(parse_hidden(""), None);
+    fn 使用记录的读写() {
+        let r = rec(4321, Usage::Resign, 1_700_000_000_123);
+        assert_eq!(Record::parse(&r.format()), Some(r));
+        assert_eq!(Record::parse(&format!("{}\n", rec(1, Usage::Hide, 5).format())), Some(rec(1, Usage::Hide, 5)));
+        assert_eq!(Record::parse("4321 dev.loomcode.app"), None);
+        assert_eq!(Record::parse("x y hide 1"), None);
+    }
+
+    #[::core::prelude::v1::test]
+    fn 收到再次打开时的决定() {
+        let me = 100;
+        let sib = |hidden, active| Some(Sibling { hidden, active });
+        // 没有记录 / 记录是自己 / 不同应用 / 那个进程已退出:照常
+        assert_eq!(decide(me, B, None, None, 0), Decision::Normal);
+        assert_eq!(decide(me, B, Some(&rec(me, Usage::Hide, 0)), sib(true, false), 0), Decision::Normal);
+        assert_eq!(decide(me, "other", Some(&rec(7, Usage::Hide, 0)), sib(true, false), 0), Decision::Normal);
+        assert_eq!(decide(me, B, Some(&rec(7, Usage::Hide, 0)), None, 0), Decision::Normal);
+        // 在另一个窗口里按了切换键:它还在前台,或刚刚失去前台 → 一起隐藏
+        assert_eq!(decide(me, B, Some(&rec(7, Usage::Resign, 10_000)), sib(false, true), 10_000), Decision::HideAll(7));
+        assert_eq!(decide(me, B, Some(&rec(7, Usage::Resign, 10_000)), sib(false, false), 10_800), Decision::HideAll(7));
+        // 它已被隐藏 → 唤醒它(即使刚刚失去前台)
+        assert_eq!(decide(me, B, Some(&rec(7, Usage::Hide, 10_000)), sib(true, false), 10_100), Decision::Bring(7));
+        assert_eq!(decide(me, B, Some(&rec(7, Usage::Resign, 10_000)), sib(true, false), 10_100), Decision::Bring(7));
+        // 很久以前切到别的应用(没隐藏)→ 唤醒最近使用的那个窗口
+        assert_eq!(decide(me, B, Some(&rec(7, Usage::Resign, 10_000)), sib(false, false), 60_000), Decision::Bring(7));
     }
 }
