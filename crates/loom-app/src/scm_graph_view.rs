@@ -123,6 +123,13 @@ fn status_color(c: char, cx: &App) -> Hsla {
 impl ScmView {
     /// 整个「图形」区。没有提交历史时返回 `None`。
     pub(crate) fn graph_section(&self, cx: &mut Context<Self>) -> Option<AnyElement> {
+        let t = cx.theme().clone();
+        let (header, body) = self.graph_parts(cx);
+        Some(v_flex().w_full().border_t_1().border_color(t.border.opacity(0.5)).child(header).child(body).into_any_element())
+    }
+
+    /// 图形区拆成标题行与正文两部分:多仓库模式下标题行固定、只有正文滚动(`ScmView::multi_view`)。
+    pub(crate) fn graph_parts(&self, cx: &mut Context<Self>) -> (AnyElement, AnyElement) {
         let g = &self.graph;
         let t = cx.theme().clone();
         let open = g.open;
@@ -178,7 +185,7 @@ impl ScmView {
                 }
             }
         }
-        Some(v_flex().w_full().border_t_1().border_color(t.border.opacity(0.5)).child(header).child(body).into_any_element())
+        (header.into_any_element(), body.into_any_element())
     }
 
     /// 一个提交行 + (展开时的)详情。

@@ -18,6 +18,7 @@ use gpui_kit::prelude::FluentBuilder as _;
 use gpui_kit::*;
 use loom_core::git::StatusEntry;
 use std::path::{Path, PathBuf};
+use std::time::Duration;
 
 /// 状态字母的颜色(对标 VS Code:修改偏黄、新增 / 未跟踪偏绿、删除红、重命名偏蓝、冲突红)。
 fn kind_color(kind: char, cx: &App) -> Hsla {
@@ -162,22 +163,55 @@ impl ScmView {
             }));
         v_flex().w_full().min_w_0().px_3().pb_2().gap_2().flex_none()
             .when(self.amend, |d| d.child(div().text_size(px(11.)).text_color(t.warning).child("正在修改上次提交(再次选择「修改上次提交」可取消)")))
-            .child(
-                h_flex().w_full().rounded(px(6.)).border_1().border_color(t.border).pl_2().pr_1().py_1p5().gap_1().items_start()
-                    .child(div().flex_1().min_w_0().child(Textarea::new(&self.message).appearance(false).bordered(false)))
-                    .child(
-                        Button::new("scm-generate").xsmall().ghost().icon(if self.generating { IconName::LoaderCircle } else { IconName::Sparkles })
-                            .tooltip(if self.generating { "正在生成提交说明…" } else { "根据改动与最近提交风格生成提交说明" })
-                            .disabled(self.generating || self.busy.is_some() || self.groups.distinct() == 0)
-                            .on_click(cx.listener(|this, _, window, cx| this.generate_message(window, cx))),
-                    ),
-            )
+            .child(self.message_box(cx))
             .child(
                 h_flex().w_full().gap_px().items_center()
                     .child(div().flex_1().min_w_0().child(main))
                     .child(Button::new("scm-commit-more").small().primary().icon(IconName::ChevronDown).disabled(self.busy.is_some()).tooltip("更多提交操作").dropdown_menu(menu)),
             )
             .into_any_element()
+    }
+
+    /// 提交说明输入框 + 右上角「生成」按钮。生成期间:按钮换成旋转的加载圈、边框随呼吸变成主题色、
+    /// 框内底部多一行流光文字「正在生成提交说明…」(输入框照常可编辑,生成期间改过就不覆盖)。
+    fn message_box(&self, cx: &mut Context<Self>) -> AnyElement {
+        let t = cx.theme().clone();
+        let generating = self.generating;
+        let button = if generating {
+            div().id("scm-generating").size(px(22.)).flex_none().flex().items_center().justify_center()
+                .tooltip(|window, cx| gpui_kit::component::tooltip::Tooltip::new("正在生成提交说明…").build(window, cx))
+                .child(icon(IconName::LoaderCircle, 14., t.primary).with_animation(
+                    "scm-generate-spin",
+                    Animation::new(Duration::from_millis(1000)).repeat().with_max_fps(crate::ui::fps::SPIN),
+                    |ic, delta| ic.transform(Transformation::rotate(percentage(delta))),
+                ))
+                .into_any_element()
+        } else {
+            Button::new("scm-generate").xsmall().ghost().icon(IconName::Sparkles)
+                .tooltip("根据改动与最近提交风格生成提交说明")
+                .disabled(self.busy.is_some() || self.groups.distinct() == 0)
+                .on_click(cx.listener(|this, _, window, cx| this.generate_message(window, cx)))
+                .into_any_element()
+        };
+        let body = v_flex().flex_1().min_w_0().gap_1()
+            .child(Textarea::new(&self.message).appearance(false).bordered(false))
+            .when(generating, |d| d.child(div().text_size(px(11.5)).text_color(t.muted_foreground).child(crate::shimmer_text::shimmer_label("正在生成提交说明…", "scm-generate-shimmer", cx))));
+        let row = h_flex().w_full().rounded(px(6.)).border_1().border_color(t.border).pl_2().pr_1().py_1p5().gap_1().items_start()
+            .child(body)
+            .child(button);
+        if !generating {
+            return row.into_any_element();
+        }
+        let (base, hi) = (t.border, t.primary);
+        row.with_animation(
+            "scm-generate-breathe",
+            Animation::new(Duration::from_millis(1600)).repeat().with_max_fps(crate::ui::fps::BREATHE),
+            move |d, delta| {
+                let k = 0.5 - 0.5 * (delta * std::f32::consts::TAU).cos();
+                d.border_color(base.blend(hi.opacity(0.35 + 0.45 * k)))
+            },
+        )
+        .into_any_element()
     }
 
     /// 一个分组:标题行(折叠箭头、组名、悬停操作、数量)+ 文件行。
@@ -389,12 +423,16 @@ impl ScmView {
             let sw = crate::scm::GraphSwitch { current: name_of(&p), repos, owner: weak };
             view.update(cx, |v, cx| {
                 v.graph_switch = Some(sw);
-                v.graph_section(cx)
+                Some(v.graph_parts(cx))
             })
         });
         v_flex().size_full().min_w_0().bg(t.background)
             .child(div().id("scm-multi").flex_1().min_h(px(120.)).min_w_0().overflow_y_scroll().child(list))
-            .when_some(graph, |d, g| d.child(div().id("scm-multi-graph").flex_none().max_h(px(360.)).overflow_y_scroll().w_full().border_t_1().border_color(t.border).child(g)))
+            // 标题行固定,只有提交列表滚动
+            .when_some(graph, |d, (head, body)| {
+                d.child(v_flex().flex_none().w_full().border_t_1().border_color(t.border).child(head)
+                    .child(div().id("scm-multi-graph").max_h(px(334.)).overflow_y_scroll().w_full().child(body)))
+            })
             .into_any_element()
     }
 }
