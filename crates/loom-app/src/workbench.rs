@@ -1075,10 +1075,14 @@ impl Workbench {
     }
 
     /// 让右侧面板跟随当前会话。
-    fn sync_panel(&mut self, cx: &mut Context<Self>) {
+    pub(crate) fn sync_panel(&mut self, cx: &mut Context<Self>) {
         let model = self.active_model().cloned();
-        if let Some(root) = self.active_project_path() {
-            self.panel.update(cx, |p, cx| p.set_session(model, root.clone(), cx));
+        if let (Some(root), Some(roots)) = (self.active_project_path(), self.active_work_roots()) {
+            let name = self.active_workspace_name();
+            self.panel.update(cx, |p, cx| {
+                p.workspace_name = name;
+                p.set_session(model, roots, cx);
+            });
             self.sync_editor_root(&root, cx);
             // 文件树换根后会清掉展开状态,按记忆重新展开
             let dirs = self.restore_expanded.clone();

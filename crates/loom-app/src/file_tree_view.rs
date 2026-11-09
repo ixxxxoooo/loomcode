@@ -31,7 +31,12 @@ impl RightPanel {
     pub(crate) fn files_view(&self, cx: &mut Context<Self>) -> AnyElement {
         let t = cx.theme().clone();
         let root = self.files.root_path().to_path_buf();
-        let root_name = root.file_name().map(|n| n.to_string_lossy().to_string()).unwrap_or_default();
+        let multi = self.files.is_multi();
+        // 多根工作区的区块标题用工作区名(对标 VS Code「名称 (工作区)」)
+        let root_name = match (&self.workspace_name, multi) {
+            (Some(n), true) => format!("{n}(工作区)"),
+            _ => root.file_name().map(|n| n.to_string_lossy().to_string()).unwrap_or_default(),
+        };
         let rows = self.files.rows();
         let folder_actions = h_flex().gap_1().items_center().children([
             ("ft-refresh", IconName::RefreshCw, "刷新", 0u8),
@@ -83,6 +88,9 @@ impl RightPanel {
             .children(rows.into_iter().enumerate().map(|(ix, (depth, node))| {
                 let (selected, open) = (self.files.is_selected(&node.path), node.is_dir && self.files.is_open(&node.path));
                 let (path, is_dir) = (node.path.clone(), node.is_dir);
+                // 多根工作区的顶层文件夹行:加粗、不能拖走
+                let is_root = multi && depth == 0 && self.files.is_root(&node.path);
+                let node_root = self.files.root_of(&node.path);
                 let mark = self.files.git_mark(&node.path);
                 let color = match mark {
                     Some(GitMark::Modified) => t.warning,
@@ -93,8 +101,8 @@ impl RightPanel {
                 // 放置目标:文件夹本身,或文件所在的文件夹
                 let target: PathBuf = if is_dir { node.path.clone() } else { node.path.parent().map(|p| p.to_path_buf()).unwrap_or_else(|| root.clone()) };
                 let (t_move, t_copy) = (target.clone(), target);
-                let rel = node.path.strip_prefix(&root).map(|p| p.to_string_lossy().to_string()).unwrap_or_else(|_| node.path.to_string_lossy().to_string());
-                let drag = DraggedPath { path: node.path.clone(), rel };
+                let rel = node.path.strip_prefix(&node_root).map(|p| p.to_string_lossy().to_string()).unwrap_or_else(|_| node.path.to_string_lossy().to_string());
+                let drag = (!is_root).then(|| DraggedPath { path: node.path.clone(), rel });
                 div().id(SharedString::from(format!("ft-{ix}"))).w_full().px_1().child(
                     h_flex().id(SharedString::from(format!("ft-row-{ix}"))).h(px(ROW_H)).w_full().pr_2().gap_1p5().items_center().cursor_pointer().rounded(px(6.)).text_size(px(13.))
                         .pl(px(8. + depth as f32 * INDENT))
@@ -113,14 +121,14 @@ impl RightPanel {
                                 cx.emit(PanelEvent::OpenFile(path.clone()));
                             }
                         }))
-                        .on_drag(drag, |d, _, _, cx| cx.new(|_| d.clone()))
+                        .when_some(drag, |d, drag| d.on_drag(drag, |d, _, _, cx| cx.new(|_| d.clone())))
                         .drag_over::<DraggedPath>(move |s, _, _, _| s.bg(accent))
                         .on_drop(cx.listener(move |this, d: &DraggedPath, window, cx| this.drop_into(&[d.path.clone()], &t_move, false, window, cx)))
                         .on_drop(cx.listener(move |this, p: &ExternalPaths, window, cx| this.drop_into(p.paths(), &t_copy, true, window, cx)))
-                        .context_menu(row_menu(cx.entity().downgrade(), node.path.clone(), is_dir, self.files.root_path().to_path_buf()))
+                        .context_menu(row_menu(cx.entity().downgrade(), node.path.clone(), is_dir, node_root))
                         .child(div().w(px(12.)).flex_none().when(is_dir, |d| d.child(icon(if open { IconName::ChevronDown } else { IconName::ChevronRight }, 12., t.muted_foreground))))
                         .child(file_icon_img(&node.name, is_dir, open, 16.))
-                        .child(div().flex_1().min_w_0().truncate().text_color(color).child(node.name))
+                        .child(div().flex_1().min_w_0().truncate().text_color(color).when(is_root, |d| d.font_weight(FontWeight::SEMIBOLD)).child(node.name))
                         .when_some(mark.filter(|_| !is_dir), |d, m| {
                             d.child(div().text_size(px(11.)).font_family(MONO).text_color(color).child(match m {
                                 GitMark::Modified => "M",

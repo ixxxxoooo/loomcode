@@ -143,6 +143,44 @@ pub fn search(root: &Path, q: &SearchQuery, cancel: &AtomicBool) -> Result<Searc
     Ok(SearchOutcome { files, total, truncated, files_scanned: scanned.load(Ordering::Relaxed), cancelled: cancel.load(Ordering::Relaxed) })
 }
 
+/// 在多个根目录下搜索(多根工作区),结果合并。
+///
+/// 参数:`roots` 各根目录(互相嵌套时同一文件只算一次);`q` 条件;`cancel` 取消标志。
+/// 返回:合并后的结果(按路径排序,总数仍受 `MAX_RESULTS` 限制);任一根的条件非法时返回错误文案。
+pub fn search_many(roots: &[PathBuf], q: &SearchQuery, cancel: &AtomicBool) -> Result<SearchOutcome, String> {
+    let mut all = SearchOutcome { files: Vec::new(), total: 0, truncated: false, files_scanned: 0, cancelled: false };
+    let mut seen = std::collections::HashSet::new();
+    for root in roots {
+        if all.total >= MAX_RESULTS {
+            all.truncated = true;
+            break;
+        }
+        let o = search(root, q, cancel)?;
+        all.files_scanned += o.files_scanned;
+        all.truncated |= o.truncated;
+        all.cancelled |= o.cancelled;
+        for mut f in o.files {
+            if !seen.insert(f.path.clone()) {
+                continue;
+            }
+            let room = MAX_RESULTS - all.total;
+            if f.matches.len() > room {
+                f.matches.truncate(room);
+                all.truncated = true;
+            }
+            all.total += f.matches.len();
+            if !f.matches.is_empty() {
+                all.files.push(f);
+            }
+        }
+        if all.cancelled {
+            break;
+        }
+    }
+    all.files.sort_by(|a, b| a.path.cmp(&b.path));
+    Ok(all)
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -165,6 +203,18 @@ mod tests {
 
     fn run(dir: &Path, q: &SearchQuery) -> SearchOutcome {
         search(dir, q, &AtomicBool::new(false)).unwrap()
+    }
+
+    #[test]
+    fn 多根搜索合并结果_嵌套根不重复() {
+        let dir = sandbox("many");
+        let q = SearchQuery { pattern: "foo".into(), ..Default::default() };
+        let one = run(&dir, &q);
+        // 根目录与它的子目录同时作为根:src 里的文件只算一次
+        let many = search_many(&[dir.clone(), dir.join("src")], &q, &AtomicBool::new(false)).unwrap();
+        assert_eq!(many.total, one.total);
+        assert_eq!(many.files.len(), one.files.len());
+        let _ = fs::remove_dir_all(&dir);
     }
 
     fn names(o: &SearchOutcome, root: &Path) -> Vec<String> {

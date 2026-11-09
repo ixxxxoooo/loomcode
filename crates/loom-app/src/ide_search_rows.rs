@@ -51,7 +51,15 @@ pub(crate) fn file_row(this: &SearchPanel, fi: usize, cx: &mut Context<SearchPan
     let t = cx.theme().clone();
     let f = &this.files[fi];
     let name = f.path.file_name().map(|n| n.to_string_lossy().to_string()).unwrap_or_default();
-    let dir = f.path.parent().and_then(|p| p.strip_prefix(&this.root).ok()).map(|p| p.display().to_string()).unwrap_or_default();
+    // 多根工作区:目录前缀带上所在文件夹的名字,区分同名文件
+    let root = std::path::Path::new(this.root_of(&f.path));
+    let rel = f.path.parent().and_then(|p| p.strip_prefix(root).ok()).map(|p| p.display().to_string()).unwrap_or_default();
+    let dir = if this.extra_roots.is_empty() {
+        rel
+    } else {
+        let name = root.file_name().map(|n| n.to_string_lossy().to_string()).unwrap_or_default();
+        if rel.is_empty() { name } else { format!("{name}/{rel}") }
+    };
     let collapsed = this.collapsed.contains(&f.path);
     let group = SharedString::from(format!("sr-fg-{fi}"));
     let weak = cx.weak_entity();

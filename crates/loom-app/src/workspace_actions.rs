@@ -23,6 +23,30 @@ impl Workbench {
         self.ui_state.workspace_by_dir(project_path).and_then(|w| w.folders.first().cloned()).unwrap_or_else(|| project_path.to_string())
     }
 
+    /// 项目的全部「真实工作根」:工作区是它的所有文件夹(第一个是主目录),普通项目只有自己。
+    /// 资源管理器、源代码管理、文件监视与项目内搜索都覆盖这些目录(对标 VS Code 多根工作区)。
+    pub fn work_roots(&self, project_path: &str) -> Vec<String> {
+        match self.ui_state.workspace_by_dir(project_path) {
+            Some(w) if !w.folders.is_empty() => w.folders.clone(),
+            _ => vec![project_path.to_string()],
+        }
+    }
+
+    /// 项目是工作区时返回工作区名称。
+    pub fn workspace_name(&self, project_path: &str) -> Option<String> {
+        self.ui_state.workspace_by_dir(project_path).map(|w| w.name.clone())
+    }
+
+    /// 当前项目的工作区名称(不是工作区为 `None`)。
+    pub fn active_workspace_name(&self) -> Option<String> {
+        self.current_project_ix().and_then(|ix| self.projects.get(ix)).and_then(|p| self.workspace_name(&p.path))
+    }
+
+    /// 当前项目的全部工作根(规则见 `work_roots`)。
+    pub fn active_work_roots(&self) -> Option<Vec<String>> {
+        self.current_project_ix().and_then(|ix| self.projects.get(ix)).map(|p| self.work_roots(&p.path))
+    }
+
     /// 打开新建工作区对话框。
     pub fn new_workspace_dialog(&mut self, window: &mut Window, cx: &mut Context<Self>) {
         let id = uuid::Uuid::new_v4().to_string();
@@ -74,6 +98,8 @@ impl Workbench {
         self.ui_state.apply_workspaces(&mut self.projects);
         self.remap_views(&owners);
         self.persist_ui_state();
+        // 编辑时文件夹可能增删:资源管理器 / 源代码管理随之更新
+        self.sync_panel(cx);
         if is_new {
             if let Some(ix) = self.projects.iter().position(|p| p.path == dir) {
                 self.new_session(ix, window, cx);

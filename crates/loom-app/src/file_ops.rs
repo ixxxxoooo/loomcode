@@ -39,9 +39,9 @@ impl RightPanel {
             return;
         }
         self.git_reading = true;
-        let root = self.files.root_path().to_path_buf();
+        let roots: Vec<PathBuf> = self.files.roots().cloned().collect();
         cx.spawn(async move |this, cx| {
-            let git = cx.background_spawn(async move { crate::git_status::GitStatus::read(&root) }).await;
+            let git = cx.background_spawn(async move { crate::git_status::GitStatus::read_all(&roots) }).await;
             let again = this
                 .update(cx, |this, cx| {
                     this.files.set_git(git);
@@ -217,6 +217,10 @@ pub fn row_menu(panel: WeakEntity<RightPanel>, path: PathBuf, is_dir: bool, root
                 this.set_tab(crate::workbench::RightTab::Changes, cx);
             });
         });
+        // 多根工作区的顶层文件夹:不能在这里重命名 / 删除 / 剪切(那是改工作区本身,去「编辑工作区」)
+        if path == root {
+            return menu.item(new_file).item(new_dir).separator().item(paste).separator().item(copy).item(reveal);
+        }
         let mut menu = menu.item(new_file).item(new_dir).separator().item(copy_f).item(cut_f).item(paste).separator().item(rename).item(delete).separator();
         if !is_dir {
             menu = menu.item(history).separator();

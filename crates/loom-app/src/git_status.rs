@@ -73,6 +73,15 @@ impl GitStatus {
         Self { marks }
     }
 
+    /// 依次读取多个根目录(多根工作区)并合并。
+    pub fn read_all(roots: &[PathBuf]) -> Self {
+        let mut all = Self::default();
+        for r in roots {
+            all.marks.extend(Self::read(r).marks);
+        }
+        all
+    }
+
     /// 某路径的改动类型。
     pub fn get(&self, path: &Path) -> Option<GitMark> {
         self.marks.get(path).copied()

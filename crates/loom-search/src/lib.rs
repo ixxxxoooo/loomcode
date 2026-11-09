@@ -11,7 +11,7 @@ mod preview;
 mod query;
 mod replace;
 
-pub use engine::{FileMatches, Match, SearchOutcome, MAX_FILE_BYTES, MAX_RESULTS, search};
+pub use engine::{FileMatches, Match, SearchOutcome, MAX_FILE_BYTES, MAX_RESULTS, search, search_many};
 pub use preview::Preview;
 pub use query::SearchQuery;
 pub use replace::{MatchKey, apply_case, replace_in_file};

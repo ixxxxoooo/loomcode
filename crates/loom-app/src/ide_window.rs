@@ -229,14 +229,20 @@ impl IdeWindow {
     /// 实际同步;有变化返回 true。渲染时也调用它(不触发 notify)。
     fn sync_state(&mut self, cx: &mut Context<Self>) -> bool {
         let pin_changed = self.ensure_pin(cx);
-        let (id, model, root) = {
+        let (id, model, roots, name) = {
             let wb = self.wb.read(cx);
             // 目录固定为 IDE 的项目;当前会话不属于它时(独立窗口里 Agent 切去了别的项目)不跟随
-            let root = self.pinned.as_ref().map(|p| wb.work_root(p)).or_else(|| wb.active_project_path());
+            let roots = self.pinned.as_ref().map(|p| wb.work_roots(p)).or_else(|| wb.active_work_roots()).unwrap_or_default();
+            let name = match &self.pinned {
+                Some(p) => wb.workspace_name(p),
+                None => wb.active_workspace_name(),
+            };
             let model = if self.active_is_foreign(wb) { None } else { wb.active_model().cloned() };
-            (wb.active.clone(), model, root)
+            (wb.active.clone(), model, roots, name)
         };
-        let key = (id, root.clone());
+        let root = roots.first().cloned();
+        // 工作区的文件夹增删也要重新同步,所以键里放全部根
+        let key = (id, (!roots.is_empty()).then(|| roots.join("\n")));
         if !pin_changed && self.synced.as_ref() == Some(&key) {
             return false;
         }
@@ -248,8 +254,11 @@ impl IdeWindow {
                 wb.ide_tree = Some(panel);
                 wb.sync_editor_root(&root, cx);
             });
-            self.search.update(cx, |s, cx| s.set_root(root.clone(), cx));
-            self.panel.update(cx, |p, cx| p.set_session(model, root.clone(), cx));
+            self.search.update(cx, |s, cx| s.set_roots(roots.clone(), cx));
+            self.panel.update(cx, |p, cx| {
+                p.workspace_name = name;
+                p.set_session(model, roots.clone(), cx);
+            });
             if self.panel_root != root {
                 self.panel_root = root.clone();
                 // 文件树换根后会清掉展开状态,按记忆重新展开

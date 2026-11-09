@@ -42,6 +42,8 @@ pub(crate) enum Scope {
 /// 搜索面板。字段对同模块的视图文件开放。
 pub struct SearchPanel {
     pub(crate) root: String,
+    /// 多根工作区里主目录之外的其余文件夹(一起搜索)
+    pub(crate) extra_roots: Vec<String>,
     pub input: Entity<InputState>,
     pub(crate) replace_input: Entity<InputState>,
     pub(crate) include_input: Entity<InputState>,
@@ -87,18 +89,25 @@ impl SearchPanel {
             }));
         }
         Self {
-            root, input, replace_input, include_input, exclude_input, case: false, word: false, regex: false, preserve_case: false, use_ignore: true,
+            root, extra_roots: Vec::new(), input, replace_input, include_input, exclude_input, case: false, word: false, regex: false, preserve_case: false, use_ignore: true,
             replace_open: false, details_open: false, files: Vec::new(), rows: Vec::new(), collapsed: HashSet::new(), truncated: false, error: None,
             running: false, searched: false, active: None, scroll: UniformListScrollHandle::new(), generation: 0, cancel: Arc::new(AtomicBool::new(false)), _subs: subs,
         }
     }
 
-    /// 切换项目根目录并清空结果。
-    pub fn set_root(&mut self, root: String, cx: &mut Context<Self>) {
-        if self.root != root {
-            self.root = root;
+    /// 切换到一组根目录(多根工作区:第一个是主目录,其余一起搜索);没变就什么都不做。
+    pub fn set_roots(&mut self, roots: Vec<String>, cx: &mut Context<Self>) {
+        let Some((first, rest)) = roots.split_first() else { return };
+        if self.root != *first || self.extra_roots != rest {
+            self.root = first.clone();
+            self.extra_roots = rest.to_vec();
             self.schedule(0, cx);
         }
+    }
+
+    /// 文件所在的根目录(多根时取包含它的那个,找不到退回主目录)。
+    pub(crate) fn root_of(&self, path: &std::path::Path) -> &str {
+        std::iter::once(&self.root).chain(&self.extra_roots).filter(|r| path.starts_with(r.as_str())).max_by_key(|r| r.len()).unwrap_or(&self.root)
     }
 
     /// 用选中文字作为搜索词(⌘⇧F 时编辑器有选区)并立即搜索。
@@ -137,7 +146,8 @@ impl SearchPanel {
             cx.notify();
             return;
         }
-        let (root, cancel) = (PathBuf::from(&self.root), self.cancel.clone());
+        let roots: Vec<PathBuf> = std::iter::once(&self.root).chain(&self.extra_roots).map(PathBuf::from).collect();
+        let cancel = self.cancel.clone();
         self.running = true;
         cx.notify();
         cx.spawn(async move |this, cx| {
@@ -147,7 +157,7 @@ impl SearchPanel {
                     return;
                 }
             }
-            let result = cx.background_spawn(async move { loom_search::search(&root, &query, &cancel) }).await;
+            let result = cx.background_spawn(async move { loom_search::search_many(&roots, &query, &cancel) }).await;
             let _ = this.update(cx, |t, cx| if t.generation == generation { t.apply(result, cx) });
         })
         .detach();

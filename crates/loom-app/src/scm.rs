@@ -49,6 +49,8 @@ pub enum After {
 pub struct ScmView {
     /// 当前项目根(可能在仓库子目录里)
     pub(crate) root: String,
+    /// 多根工作区里主目录之外的其余文件夹:仓库发现覆盖全部文件夹
+    pub(crate) extra_roots: Vec<String>,
     /// 当前查看的仓库根目录;不在仓库里为 `None`
     pub(crate) top: Option<String>,
     /// 项目里发现的所有仓库(项目所在仓库 + 子目录里的仓库,对标 VS Code 自动检测)。
@@ -117,6 +119,20 @@ pub(crate) struct RepoChild {
     _subs: Vec<Subscription>,
 }
 
+/// 在多个根目录里发现仓库并合并:按根的顺序,各根内部保持 `find_repos` 的顺序,去掉重复
+/// (两个文件夹同属一个仓库时只算一次)。
+fn find_repos_all(roots: &[String]) -> Vec<String> {
+    let mut out: Vec<String> = Vec::new();
+    for r in roots {
+        for repo in git::find_repos(r, 2) {
+            if !out.contains(&repo) {
+                out.push(repo);
+            }
+        }
+    }
+    out
+}
+
 /// `error` 里表示「不是仓库」的固定文案。
 const NOT_REPO: &str = "当前目录不在 Git 仓库里";
 
@@ -137,6 +153,7 @@ impl ScmView {
         let tree = !std::env::var("LOOM_SCM").is_ok_and(|v| v.contains("list"));
         let mut this = Self {
             root,
+            extra_roots: Vec::new(),
             top: None,
             repos: Vec::new(),
             children: Vec::new(),
@@ -176,10 +193,18 @@ impl ScmView {
 
     /// 切换项目根;根没变就什么都不做。
     pub fn set_root(&mut self, root: &str, cx: &mut Context<Self>) {
-        if self.root == root {
+        self.set_roots(&[root.to_string()], cx);
+    }
+
+    /// 切换到一组根目录(多根工作区:第一个是主目录);没变就什么都不做。
+    /// 仓库发现覆盖全部文件夹,合起来有两个及以上仓库时进入多仓库模式。
+    pub fn set_roots(&mut self, roots: &[String], cx: &mut Context<Self>) {
+        let Some((root, rest)) = roots.split_first() else { return };
+        if self.root == *root && self.extra_roots == rest {
             return;
         }
-        self.root = root.to_string();
+        self.root = root.clone();
+        self.extra_roots = rest.to_vec();
         self.top = None;
         self.repos.clear();
         self.children.clear();
@@ -314,13 +339,13 @@ impl ScmView {
             return;
         }
         self.loading = true;
-        let root = self.root.clone();
+        let roots: Vec<String> = std::iter::once(self.root.clone()).chain(self.extra_roots.iter().cloned()).collect();
         let known = self.repos.clone();
         let rescan = self.scanned.is_none_or(|t| t.elapsed() > Duration::from_secs(30));
         cx.spawn(async move |this, cx| {
             let result = cx
                 .background_spawn(async move {
-                    let repos = if rescan { git::find_repos(&root, 2) } else { known };
+                    let repos = if rescan { find_repos_all(&roots) } else { known };
                     // 两个及以上仓库:本视图不读状态,交给各自的子视图
                     let data = match repos.as_slice() {
                         [] => return Err(NOT_REPO.to_string()),
@@ -832,5 +857,30 @@ impl ScmView {
     /// 删除某条储藏。
     pub(crate) fn stash_drop(&mut self, index: usize, window: &mut Window, cx: &mut Context<Self>) {
         self.run("删除储藏", Some("已删除储藏".into()), window, cx, move |top, _| git_log::stash_drop(top, index));
+    }
+}
+
+#[cfg(test)]
+mod multi_root_tests {
+    use super::*;
+
+    #[::core::prelude::v1::test]
+    fn 多根工作区合并各文件夹里的仓库_同一仓库只算一次() {
+        let base = std::env::temp_dir().join(format!("loom-scm-multi-{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&base);
+        let (a, b, plain) = (base.join("a"), base.join("b"), base.join("plain"));
+        for d in [&a, &b, &plain] {
+            std::fs::create_dir_all(d).unwrap();
+        }
+        for d in [&a, &b] {
+            assert!(std::process::Command::new("git").arg("init").arg("-q").arg(d).status().unwrap().success());
+        }
+        let s = |p: &std::path::Path| p.to_string_lossy().to_string();
+        let canon = |p: &std::path::Path| p.canonicalize().unwrap().to_string_lossy().to_string();
+        // a 出现两次(a 本身与 a/sub),普通文件夹没有仓库
+        std::fs::create_dir_all(a.join("sub")).unwrap();
+        let repos = find_repos_all(&[s(&a), s(&a.join("sub")), s(&plain), s(&b)]);
+        assert_eq!(repos, [canon(&a), canon(&b)]);
+        let _ = std::fs::remove_dir_all(&base);
     }
 }

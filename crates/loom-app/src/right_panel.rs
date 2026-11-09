@@ -149,6 +149,8 @@ pub struct RightPanel {
     /// 「改动」里已展开 Diff 的文件
     open_changes: HashSet<String>,
     pub files: FileTree,
+    /// 多根工作区的名称(资源管理器「文件夹」区块的标题);普通项目为 `None`
+    pub workspace_name: Option<String>,
     /// 当前项目根目录(终端的工作目录)
     pub(crate) root: String,
     /// 终端集合变化时重绘面板
@@ -162,9 +164,9 @@ pub struct RightPanel {
     /// 标签条的滚动句柄(标签放不下时横向滚动)与上次已滚到可见处的 (当前标签, 标签数)
     pub(crate) tabs_scroll: ScrollHandle,
     pub(crate) tabs_revealed: std::cell::Cell<Option<(RightTab, usize)>>,
-    /// 项目目录的递归文件监视(外部改动自动刷新文件树);换项目时重建
-    fs_root: Option<std::path::PathBuf>,
-    _fs_task: Option<Task<()>>,
+    /// 项目目录的递归文件监视(外部改动自动刷新文件树);换项目时重建。多根工作区每个文件夹一个
+    fs_roots: Vec<std::path::PathBuf>,
+    _fs_tasks: Vec<Task<()>>,
     /// 后台正在读 Git 状态 / 读的过程中又来了新请求(见 `refresh_git`)
     pub(crate) git_reading: bool,
     pub(crate) git_again: bool,
@@ -203,6 +205,7 @@ impl RightPanel {
             _sub: None,
             open_changes: HashSet::new(),
             files: FileTree::new(root.clone()),
+            workspace_name: None,
             subagent: None,
             plan: None,
             task_sel: None,
@@ -216,8 +219,8 @@ impl RightPanel {
             _scm_subs: vec![scm_sub, scm_obs],
             tabs_scroll: ScrollHandle::new(),
             tabs_revealed: std::cell::Cell::new(None),
-            fs_root: None,
-            _fs_task: None,
+            fs_roots: Vec::new(),
+            _fs_tasks: Vec::new(),
             git_reading: false,
             git_again: false,
         };
@@ -243,15 +246,18 @@ impl RightPanel {
     }
 
     /// 切换到另一个会话。
-    pub fn set_session(&mut self, model: Option<Entity<SessionModel>>, root: String, cx: &mut Context<Self>) {
+    ///
+    /// 参数:`roots` 项目的工作根(多根工作区是全部文件夹,第一个是主目录;为空时忽略)。
+    pub fn set_session(&mut self, model: Option<Entity<SessionModel>>, roots: Vec<String>, cx: &mut Context<Self>) {
+        let Some(root) = roots.first().cloned() else { return };
         self._sub = model.as_ref().map(|m| cx.observe(m, |_, _, cx| cx.notify()));
         self.model = model;
         self.open_changes.clear();
         self.run_tabs.clear();
         self.active_run = None;
-        self.root = root.clone();
-        self.scm.update(cx, |s, cx| s.set_root(&root, cx));
-        self.files.set_root(root.clone());
+        self.root = root;
+        self.scm.update(cx, |s, cx| s.set_roots(&roots, cx));
+        self.files.set_roots(&roots);
         self.reload_files(cx);
         self.restart_watch(cx);
         cx.notify();
@@ -260,24 +266,26 @@ impl RightPanel {
     /// 订阅项目根目录的文件系统改动(`fs_watch`,同一个根全工作台共用一个监视器)。根没变就不重建;
     /// 换项目时丢弃旧任务(接收端随之关闭)。
     fn restart_watch(&mut self, cx: &mut Context<Self>) {
-        let root = self.files.root_path().to_path_buf();
-        if self.fs_root.as_ref() == Some(&root) {
+        let roots: Vec<std::path::PathBuf> = self.files.roots().cloned().collect();
+        if self.fs_roots == roots {
             return;
         }
-        self._fs_task = None;
-        self.fs_root = None;
-        if root.as_os_str().is_empty() || !root.is_dir() {
-            return;
-        }
-        let Some(rx) = crate::fs_watch::subscribe(&root, crate::prefs(cx).intel.clone()) else { return };
-        self.fs_root = Some(root);
-        self._fs_task = Some(cx.spawn(async move |this, cx| {
-            while let Ok(batch) = rx.recv().await {
-                if this.update(cx, |this, cx| this.on_fs(&batch, cx)).is_err() {
-                    break;
-                }
+        self._fs_tasks.clear();
+        self.fs_roots = roots.clone();
+        let intel = crate::prefs(cx).intel.clone();
+        for root in roots {
+            if root.as_os_str().is_empty() || !root.is_dir() {
+                continue;
             }
-        }));
+            let Some(rx) = crate::fs_watch::subscribe(&root, intel.clone()) else { continue };
+            self._fs_tasks.push(cx.spawn(async move |this, cx| {
+                while let Ok(batch) = rx.recv().await {
+                    if this.update(cx, |this, cx| this.on_fs(&batch, cx)).is_err() {
+                        break;
+                    }
+                }
+            }));
+        }
     }
 
     /// 处理一批文件系统改动:文件树只重读受影响的目录(丢事件时整体重读),同时刷新 Git 标记、
