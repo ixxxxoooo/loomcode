@@ -139,6 +139,11 @@ const NOT_REPO: &str = "当前目录不在 Git 仓库里";
 impl ScmView {
     /// 创建。`root` 为空时先不读取。
     pub fn new(root: String, window: &mut Window, cx: &mut Context<Self>) -> Self {
+        Self::new_with(root, false, window, cx)
+    }
+
+    /// 创建多仓库模式里的子视图:`embedded` 从第一次刷新起就生效(只当单个仓库,不再做仓库发现,否则会无限嵌套)。
+    fn new_with(root: String, embedded: bool, window: &mut Window, cx: &mut Context<Self>) -> Self {
         let message = cx.new(|cx| TextareaState::new(window, cx).auto_grow(1, 8).placeholder("消息(⌘Enter 提交)").submit_on_enter(true));
         // Enter 换行,⌘Enter 提交(与 VS Code 一致)
         let sub = cx.subscribe_in(&message, window, |this: &mut Self, input, ev: &InputEvent, window, cx| {
@@ -158,7 +163,7 @@ impl ScmView {
             repos: Vec::new(),
             children: Vec::new(),
             collapsed_repos: HashSet::new(),
-            embedded: false,
+            embedded,
             graph_repo: None,
             graph_switch: None,
             scanned: None,
@@ -239,8 +244,7 @@ impl ScmView {
             if self.children.iter().any(|c| c.path == path) {
                 continue;
             }
-            let view = cx.new(|cx| ScmView::new(path.clone(), window, cx));
-            view.update(cx, |v, _| v.embedded = true);
+            let view = cx.new(|cx| ScmView::new_with(path.clone(), true, window, cx));
             let fwd = cx.subscribe(&view, |_, _, ev: &ScmEvent, cx| cx.emit(ev.clone()));
             let obs = cx.observe(&view, |_, _, cx| cx.notify());
             self.children.push(RepoChild { path, view, _subs: vec![fwd, obs] });
@@ -342,10 +346,18 @@ impl ScmView {
         let roots: Vec<String> = std::iter::once(self.root.clone()).chain(self.extra_roots.iter().cloned()).collect();
         let known = self.repos.clone();
         let rescan = self.scanned.is_none_or(|t| t.elapsed() > Duration::from_secs(30));
+        let embedded = self.embedded;
         cx.spawn(async move |this, cx| {
             let result = cx
                 .background_spawn(async move {
-                    let repos = if rescan { find_repos_all(&roots) } else { known };
+                    // 嵌入的子视图本身就代表一个仓库:不再发现嵌套仓库(嵌套的由外层各自列出),否则会无限递归
+                    let repos = if embedded {
+                        vec![roots[0].clone()]
+                    } else if rescan {
+                        find_repos_all(&roots)
+                    } else {
+                        known
+                    };
                     // 两个及以上仓库:本视图不读状态,交给各自的子视图
                     let data = match repos.as_slice() {
                         [] => return Err(NOT_REPO.to_string()),
