@@ -300,7 +300,7 @@ pub(crate) fn open_main_window(demo: bool, session_arg: Option<String>, cx: &mut
     if !secondary::is() {
         let _ = handle.update(cx, |_, window, cx| {
             window.on_window_should_close(cx, |_, cx| {
-                cx.hide();
+                crate::reopen::hide_self(cx);
                 false
             });
         });
