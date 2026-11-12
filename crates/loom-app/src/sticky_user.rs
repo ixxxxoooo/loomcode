@@ -78,18 +78,11 @@ pub fn push_offset(next_top: Option<f32>, card_h: f32) -> f32 {
     next_top.map_or(0., |y| (y - INSET - card_h - STICKY_TOP).min(0.))
 }
 
-// 吸附卡上一帧的实际高度(消息 id, 高度):卡片与会话流里的消息卡是同一个组件(同样的折叠 / 展开高度),
-// 高度由内容决定,画出来才知道,所以在绘制阶段量一次,下一帧用来算「被下一条消息顶出」的位移。
-thread_local! {
-    static MEASURED: std::cell::RefCell<(String, f32)> = const { std::cell::RefCell::new((String::new(), 0.)) };
-}
-
-/// 取吸附卡的高度:量过就用实际值,第一帧(还没量)先按一行的高度估。
-fn card_height(id: &str) -> f32 {
-    MEASURED.with(|m| {
-        let m = m.borrow();
-        if m.0 == id && m.1 > 0. { m.1 } else { 60. }
-    })
+/// 吸附卡下缘渐隐带的高度:默认 [`FADE_H`];下一条用户消息已经靠近时,只铺到它的顶边为止。
+///
+/// 参数:`next_top` 下一条消息顶边相对视口的 Y,未渲染为 None;`card_bottom` 吸附卡底边相对视口的 Y。
+pub fn fade_height(next_top: Option<f32>, card_bottom: f32) -> f32 {
+    next_top.map_or(FADE_H, |y| (y - card_bottom).clamp(0., FADE_H))
 }
 
 /// 某条正在编辑的用户消息所在的行下标。
@@ -99,7 +92,7 @@ fn editing_row(session: &Entity<SessionModel>, eid: &str, cx: &App) -> Option<us
     m.rows.iter().position(|r| matches!(r, Row::Item(i) if *i == item))
 }
 
-/// 渲染吸附层(绝对定位在会话流顶部);无需吸附且没有悬浮编辑时返回 None。
+/// 渲染吸附层(绝对定位在会话流顶部):吸顶卡 + 悬浮编辑卡。
 ///
 /// 参数:`session` 会话;`scroller` 滚动状态。
 pub fn render(session: &Entity<SessionModel>, scroller: &Entity<ChatScroll>, cx: &App) -> Option<AnyElement> {
@@ -117,55 +110,66 @@ pub fn render(session: &Entity<SessionModel>, scroller: &Entity<ChatScroll>, cx:
         )
     }).collect();
     // 吸顶卡照常显示:打开某条消息的编辑卡不影响顶部的吸顶卡(只有吸顶的正是这条被编辑的消息时,编辑卡已盖在顶部,才不画)
-    let editing_ids = crate::user_message::pinned_edit_ids(session, cx);
-    let sticky = sticky_card(session, sc, &editing_ids, cx);
-    if pinned.is_empty() {
-        return sticky;
-    }
-    Some(div().absolute().top_0().left_0().right_0().children(sticky).children(pinned).into_any_element())
+    Some(div().absolute().top_0().left_0().right_0().child(sticky_layer(session.clone(), scroller.clone())).children(pinned).into_any_element())
 }
 
-/// 吸顶的那张用户消息卡;没有消息到顶、或吸顶的消息正在编辑(编辑卡已盖在顶部)时返回 None。
-fn sticky_card(session: &Entity<SessionModel>, sc: &ChatScroll, editing_ids: &[String], cx: &App) -> Option<AnyElement> {
-    let t = cx.theme();
+/// 吸顶卡所在的层:一块零高度的画布,卡片在**预绘制阶段**才决定画不画、画在哪。
+///
+/// 为什么不在渲染阶段算:行的位置(`RowProbe`)是列表预绘制时才记下的,渲染阶段读到的是上一帧的。
+/// 滚动时每一帧都在动,按上一帧的位置摆吸顶卡就总慢一帧——卡片到顶的那一刻先被裁掉一截再弹回顶边,
+/// 被下一条消息顶出时两张卡之间的缝隙忽大忽小,看起来就是「跳」。画布排在列表之后,
+/// 它预绘制时本帧的行位置已经记好,在这里现场排版并定位,和列表同帧。
+/// 卡片高度也在这里现场量(`layout_as_root` 的结果),不用再拿上一帧量到的高度去估。
+fn sticky_layer(session: Entity<SessionModel>, scroller: Entity<ChatScroll>) -> AnyElement {
+    canvas(
+        move |bounds, window, cx| {
+            let (target, next_top) = {
+                let sc = scroller.read(cx);
+                let m = session.read(cx);
+                let target = resolve(&m.rows, &m.state.items, sc.max_painted().unwrap_or(0), |r| sc.row_scrolled_past(r))?;
+                let next_top = target.next.and_then(|n| sc.row_top(n));
+                (target, next_top)
+            };
+            // 吸顶的正是被编辑的那条:编辑卡已盖在顶部,不再画
+            if crate::user_message::pinned_edit_ids(&session, cx).contains(&target.id) {
+                return None;
+            }
+            let mut el = sticky_element(&session, &target, bounds.size.width, cx);
+            let size = el.layout_as_root(gpui_kit::size(AvailableSpace::Definite(bounds.size.width), AvailableSpace::MinContent), window, cx);
+            let h = f32::from(size.height);
+            let push = push_offset(next_top, h);
+            let top = STICKY_TOP + push;
+            el.prepaint_at(point(bounds.left(), bounds.top() + px(top)), window, cx);
+            // 卡片下缘的渐隐带:正文从卡片下面平滑淡入;下一条用户消息靠近时收窄到两张卡之间的缝隙,不盖住它的上边框
+            let fade = fade_height(next_top, top + h);
+            let band = Bounds::new(point(bounds.left(), bounds.top() + px(top + h)), gpui_kit::size(bounds.size.width, px(fade)));
+            Some((el, band, cx.theme().background))
+        },
+        |_, state: Option<(AnyElement, Bounds<Pixels>, Hsla)>, window, cx| {
+            if let Some((mut el, band, bg)) = state {
+                el.paint(window, cx);
+                if band.size.height > px(0.) {
+                    window.paint_quad(fill(band, linear_gradient(180., linear_color_stop(bg, 0.), linear_color_stop(bg.opacity(0.), 1.))));
+                }
+            }
+        },
+    ).absolute().top_0().left_0().right_0().h(px(0.)).into_any_element()
+}
+
+/// 吸顶卡的元素:与会话流里的消息卡是同一个组件(同样的折叠 / 展开、悬停的回退 / 重试 / 复制、点击编辑),
+/// 外层容器的写法也与会话流的行完全一致(`px_3` → `px_1` + 居中 → 限宽),所以宽度与左右位置分毫不差,
+/// 吸顶前后只是「停住」,大小不变。
+///
+/// 参数:`target` 吸顶的消息;`width` 会话流视口宽度。
+fn sticky_element(session: &Entity<SessionModel>, target: &Target, width: Pixels, cx: &App) -> AnyElement {
+    let bg = cx.theme().background;
     let max_w = px(crate::timeline::content_max_w(cx));
-    let bg = t.background;
-    // 卡片范围内是不透明的背景色(把滚过去的原卡完全盖住,吸顶后不能再看到它),卡片下缘另有一段向下渐隐
-    let backdrop = |h: f32| {
-        div().absolute().top_0().left_0().right_0().h(px(h + FADE_H))
-            .child(div().absolute().top_0().left_0().right_0().h(px(h)).bg(bg))
-            .child(
-                div().absolute().top(px(h)).left_0().right_0().h(px(FADE_H))
-                    .bg(linear_gradient(180., linear_color_stop(bg, 0.), linear_color_stop(bg.opacity(0.), 1.))),
-            )
-    };
-    let top = sc.max_painted().unwrap_or(0);
-    let target = {
-        let m = session.read(cx);
-        resolve(&m.rows, &m.state.items, top, |r| sc.row_scrolled_past(r))
-    }?;
-    if editing_ids.contains(&target.id) {
-        return None;
-    }
-    let push = push_offset(target.next.and_then(|n| sc.row_top(n)), card_height(&target.id));
-    let Target { id, text, images, files, .. } = target;
-    let h = card_height(&id);
-    // 与会话流里的消息卡完全相同的卡片(同样的折叠 / 展开、悬停的回退 / 重试 / 复制、点击编辑),只是固定在顶部
-    let card = crate::user_message::render_card(session, &id, &text, &images, &files, cx);
-    let measure_id = id.clone();
-    Some(
-        div().absolute().top(px(STICKY_TOP + push)).left_0().right_0()
-            // 卡片范围内与背景同色,下缘再渐隐,内容从卡片下面平滑淡入
-            .child(backdrop(h))
-            .child(
-                div().w_full().px_3().flex().justify_center().child(
-                    div().relative().w_full().px_1().max_w(max_w).child(card)
-                        // 量出卡片实际高度,供下一帧计算顶出位移
-                        .child(canvas(move |b, _, _| MEASURED.with(|m| *m.borrow_mut() = (measure_id.clone(), f32::from(b.size.height))), |_, _, _, _| {}).absolute().size_full()),
-                ),
-            )
-            .into_any_element(),
-    )
+    let card = crate::user_message::render_card(session, &target.id, &target.text, &target.images, &target.files, cx);
+    div().relative().w(width)
+        // 卡片范围内是不透明的背景色(把滚过去的原卡完全盖住,吸顶后不能再看到它)
+        .child(div().absolute().top_0().left_0().right_0().bottom_0().bg(bg))
+        .child(div().relative().w_full().px_3().child(div().w_full().px_1().flex().justify_center().child(div().w_full().max_w(max_w).child(card))))
+        .into_any_element()
 }
 
 #[cfg(test)]
@@ -205,6 +209,16 @@ mod tests {
         assert_eq!(editor_body_max(600., 8.), 600. - 8. - 16. - EDITOR_CHROME);
         // 视口很矮时保底,不会变成 0 或负数
         assert_eq!(editor_body_max(100., 8.), EDITOR_MIN_BODY);
+    }
+
+    #[::core::prelude::v1::test]
+    fn 渐隐带不盖住下一条消息() {
+        // 下一条还远(或没渲染):完整的渐隐带
+        assert_eq!(fade_height(None, 40.), FADE_H);
+        assert_eq!(fade_height(Some(300.), 40.), FADE_H);
+        // 下一条顶上来:只剩两张卡之间的缝隙
+        assert_eq!(fade_height(Some(48.), 40.), INSET);
+        assert_eq!(fade_height(Some(30.), 40.), 0.);
     }
 
     #[::core::prelude::v1::test]
