@@ -62,7 +62,7 @@ use crate::theme::R_SM;
 use crate::ui::icon;
 use std::time::Duration;
 use crate::window_header::{HEADER_H, draggable};
-use crate::workbench::{Page, Workbench};
+use crate::workbench::Workbench;
 use gpui_kit::assets::IconName;
 use gpui_kit::component::{ActiveTheme, Sizable, h_flex, v_flex};
 use gpui_kit::prelude::FluentBuilder as _;
@@ -289,7 +289,7 @@ pub fn render(wb: &mut Workbench, window: &mut Window, cx: &mut Context<Workbenc
                 .child(
                     h_flex().id("st-back").h(px(30.)).px_2().gap_2().items_center().rounded(px(R_SM)).cursor_pointer().text_size(px(13.))
                         .hover(|d| d.bg(t.sidebar_accent))
-                        .on_click(cx.listener(|this, _, _, cx| this.set_page(Page::Chat, cx)))
+                        .on_click(cx.listener(|this, _, window, cx| this.close_settings(window, cx)))
                         .child(icon(IconName::ArrowLeft, 14., t.muted_foreground))
                         .child("返回"),
                 )

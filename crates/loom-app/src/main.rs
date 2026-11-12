@@ -90,6 +90,7 @@ mod ide_search_view;
 mod ide_status;
 mod ide_terminal;
 mod ide_detail;
+mod ide_settings;
 mod ide_watch;
 mod ide_chat_tabs;
 mod ide_blame;

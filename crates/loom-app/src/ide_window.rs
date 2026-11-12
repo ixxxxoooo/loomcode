@@ -87,6 +87,8 @@ pub struct IdeWindow {
     /// 详情面板(计划 / 子 Agent / 任务 / 命令输出,见 `ide_detail`)与当前显示的类别
     pub(crate) detail: Entity<RightPanel>,
     pub(crate) detail_view: Option<crate::ide_detail::Detail>,
+    /// 设置页宿主(独立窗口里打开设置时整窗显示它)
+    pub(crate) settings_host: Entity<crate::ide_settings::SettingsHost>,
 }
 
 impl IdeWindow {
@@ -148,6 +150,7 @@ impl IdeWindow {
         let focus = cx.focus_handle();
         window.focus(&focus, cx);
         let term = cx.new(|cx| crate::ide_terminal::BottomTerminal::new(panel.clone(), cx));
+        let settings_host = cx.new(|cx| crate::ide_settings::SettingsHost::new(wb.clone(), cx));
         let detail = cx.new(|cx| {
             let mut d = RightPanel::new(_root.clone(), demo, None, scm_events.clone(), window, cx);
             d.show_tabs = false;
@@ -224,7 +227,7 @@ impl IdeWindow {
             .detach();
         }
         // 此时工作台可能正处于更新中,不在这里回读它;首次渲染时再同步
-        Self { wb, panel, ide, panel_root: String::new(), focus, left_open: true, chat_open: true, left_narrow: false, left_before: true, chat_narrow: false, chat_before: true, synced: None, _subs: subs, search, search_open: false, quick: None, _quick_sub: None, term_open, term, chat_tabs: wb_tabs, pinned: None, seen_enter: 0, chat_last_active: None, chat_empty: false, chat_wide: std::env::var("LOOM_CHAT_WIDE").is_ok(), notice_open: false, branch_picker: None, _branch_sub: None, history_picker: None, _history_sub: None, chat_scroll: ScrollHandle::new(), chat_revealed: Default::default(), detail, detail_view: None, split: cx.new(|_| gpui_kit::component::resizable::ResizableState::default()), vsplit: cx.new(|_| gpui_kit::component::resizable::ResizableState::default()), left_w: 260., chat_w: 420., term_h: 260., size_save_pending: false }
+        Self { wb, panel, ide, panel_root: String::new(), focus, left_open: true, chat_open: true, left_narrow: false, left_before: true, chat_narrow: false, chat_before: true, synced: None, _subs: subs, search, search_open: false, quick: None, _quick_sub: None, term_open, term, chat_tabs: wb_tabs, pinned: None, seen_enter: 0, chat_last_active: None, chat_empty: false, chat_wide: std::env::var("LOOM_CHAT_WIDE").is_ok(), notice_open: false, branch_picker: None, _branch_sub: None, history_picker: None, _history_sub: None, chat_scroll: ScrollHandle::new(), chat_revealed: Default::default(), detail, detail_view: None, settings_host, split: cx.new(|_| gpui_kit::component::resizable::ResizableState::default()), vsplit: cx.new(|_| gpui_kit::component::resizable::ResizableState::default()), left_w: 260., chat_w: 420., term_h: 260., size_save_pending: false }
     }
 
     /// 让面板与根目录跟随工作台当前会话。
@@ -415,6 +418,7 @@ impl Render for IdeWindow {
         self.sync_detail(cx);
         self.apply_responsive(f32::from(window.viewport_size().width));
         self.sync_layout(cx);
+        let in_settings = self.wb.read(cx).ide_settings;
         let t = cx.theme().clone();
         let foreign = self.active_is_foreign(self.wb.read(cx));
         let (parts, project, project_name, mode, fused, branch, demo) = {
@@ -482,18 +486,25 @@ impl Render for IdeWindow {
             .on_action(cx.listener(|this, _: &crate::workbench::ForkActive, window, cx| this.forward(window, cx, |wb, window, cx| wb.fork_active_session(window, cx))))
             .on_action(cx.listener(|this, _: &crate::workbench::SwitchMode, window, cx| this.forward(window, cx, |wb, window, cx| wb.request_switch_mode(window, cx))))
             .on_action(cx.listener(|this, _: &crate::app_menu::AddProject, window, cx| this.forward(window, cx, |wb, window, cx| wb.add_project(window, cx))))
-            .on_action(cx.listener(|this, _: &crate::workbench::OpenSettings, _, cx| {
+            .on_action(cx.listener(|this, _: &crate::workbench::OpenSettings, window, cx| {
                 if this.wb.read(cx).settings.fused_ide { cx.propagate(); return; }
-                this.wb.update(cx, |wb, cx| wb.set_page(crate::workbench::Page::Settings, cx));
-                this.back_to_agent(cx);
+                // ⌘, 在独立 IDE 窗口里就在它自己里面开 / 关设置
+                this.wb.update(cx, |wb, cx| if wb.ide_settings { wb.close_settings(window, cx) } else { wb.open_settings_here(window, cx) });
+            }))
+            // 设置页开着时的键盘处理(上下切换分类、Esc 返回),与工作台根上的一致
+            .on_key_down(cx.listener(|this, ev: &KeyDownEvent, window, cx| {
+                if this.wb.read(cx).ide_settings && this.wb.update(cx, |wb, wcx| wb.settings_forms.is_some() && wb.settings_key(ev, window, wcx)) {
+                    cx.stop_propagation();
+                }
             }))
             .on_action(cx.listener(|this, _: &ToggleLeft, _, cx| { this.left_open = !this.left_open; cx.notify(); }))
             .on_action(cx.listener(|this, _: &ToggleRight, _, cx| { this.chat_open = !this.chat_open; cx.notify(); }))
             .size_full()
             .bg(t.background)
             .text_color(t.foreground)
-            .child(self.title_bar(project, fused, cx))
-            .child(
+            .when(in_settings, |d| d.child(div().flex_1().min_h_0().w_full().child(self.settings_host.clone())))
+            .when(!in_settings, |d| d.child(self.title_bar(project.clone(), fused, cx)))
+            .when(!in_settings, |d| d.child(
                 h_flex().flex_1().min_h_0().w_full()
                     .child(self.activity_bar(cx))
                     .child(
@@ -540,9 +551,9 @@ impl Render for IdeWindow {
                                 .into_any_element()
                         }),
                     ),
-            )
+            ))
             .when_some(self.quick.clone(), |d, p| d.child(p))
-            .child(ide_status::status_bar(project_name, branch, self.ide.read(cx).cursor_info(cx), self.ide.read(cx).lsp_summary(), mode, demo, self.bell(cx), { let this = cx.entity(); move |window, cx| { this.update(cx, |t, cx| t.toggle_branch_picker(window, cx)); } }, self.wb.read(cx).update_badge(), { let this = cx.entity(); move |window, cx| { this.update(cx, |t, cx| t.goto_line_dialog(window, cx)); } }, { let this = cx.entity(); move |window, cx| { this.update(cx, |t, cx| t.forward(window, cx, |wb, _, cx| wb.cycle_mode(cx))); } }, { let this = cx.entity(); move |window, cx| { this.update(cx, |t, cx| t.show_problems(window, cx)); } }, cx))
+            .when(!in_settings, |d| d.child(ide_status::status_bar(project_name, branch, self.ide.read(cx).cursor_info(cx), self.ide.read(cx).lsp_summary(), mode, demo, self.bell(cx), { let this = cx.entity(); move |window, cx| { this.update(cx, |t, cx| t.toggle_branch_picker(window, cx)); } }, self.wb.read(cx).update_badge(), { let this = cx.entity(); move |window, cx| { this.update(cx, |t, cx| t.goto_line_dialog(window, cx)); } }, { let this = cx.entity(); move |window, cx| { this.update(cx, |t, cx| t.forward(window, cx, |wb, _, cx| wb.cycle_mode(cx))); } }, { let this = cx.entity(); move |window, cx| { this.update(cx, |t, cx| t.show_problems(window, cx)); } }, cx)))
             .when_some(self.branch_picker.clone(), |d, p| d.child(p))
             .when(self.notice_open, |d| d.child(self.notice_panel(cx)))
             .children(crate::diagram_viewer::current(window, cx))

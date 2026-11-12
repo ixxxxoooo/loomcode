@@ -3,7 +3,7 @@
 //! @author ixxxxoooo
 
 use crate::ide_window::IdeWindow;
-use crate::workbench::{Page, RightTab};
+use crate::workbench::RightTab;
 use gpui_kit::assets::IconName;
 use gpui_kit::component::button::{Button, ButtonVariants};
 use gpui_kit::component::{ActiveTheme, Selectable, v_flex};
@@ -94,12 +94,9 @@ impl IdeWindow {
             })).child(item(SharedString::from(format!("act-{}", tab.key())), ic, tip, active)));
         }
         col.child(div().flex_1()).child(div().pb_2().child(
-            Button::new("act-settings").ghost().icon(IconName::Settings).tooltip("设置").on_click(cx.listener(|this, _, _, cx| {
-                this.wb.update(cx, |wb, cx| wb.set_page(Page::Settings, cx));
-                // 融合模式:设置是整窗页面,IDE 暂时让位但不退出(关掉设置回到 IDE);独立窗口则切到 Agent 窗口
-                if !this.wb.read(cx).settings.fused_ide {
-                    this.back_to_agent(cx);
-                }
+            Button::new("act-settings").ghost().icon(IconName::Settings).tooltip("设置").on_click(cx.listener(|this, _, window, cx| {
+                // 在当前窗口里打开:独立 IDE 窗口里整窗显示设置;融合模式是整窗页面,关掉后回到 IDE
+                this.wb.update(cx, |wb, cx| wb.open_settings_here(window, cx));
             })),
         ))
     }

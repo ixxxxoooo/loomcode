@@ -82,7 +82,9 @@ pub fn open_settings(cx: &mut App) {
     if let Some(wb) = cx.try_global::<crate::WorkbenchRef>().and_then(|r| r.0.upgrade()) {
         wb.update(cx, |wb, cx| {
             wb.select_settings_tab(crate::settings::SettingsTab::Providers, cx);
-            wb.set_page(crate::workbench::Page::Settings, cx);
+            // 在发起操作的窗口里打开(独立 IDE 窗口里就在它自己里面)
+            let in_ide = wb.ide_window.is_some_and(|h| cx.active_window().is_some_and(|a| a.window_id() == h.window_id()));
+            wb.open_settings_in(in_ide, cx);
         });
     }
 }

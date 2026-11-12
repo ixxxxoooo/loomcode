@@ -3,7 +3,7 @@
 //! @author ixxxxoooo
 
 use super::SettingsTab;
-use crate::workbench::{Page, Workbench};
+use crate::workbench::Workbench;
 use gpui_kit::*;
 
 impl Workbench {
@@ -39,7 +39,7 @@ impl Workbench {
                 if !self.field_value("settings_search", cx).is_empty() {
                     self.clear_settings_search(window, cx);
                 } else {
-                    self.set_page(Page::Chat, cx);
+                    self.close_settings(window, cx);
                 }
                 window.focus(&self.focus, cx);
                 true

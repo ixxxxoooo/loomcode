@@ -100,9 +100,15 @@ impl IdeWindow {
                     }),
                     PaletteAction::SetTheme(c) => this.wb.update(cx, |wb, cx| wb.update_settings(cx, |s| s.theme = c)),
                     // 其余通用命令交给工作台执行;会切到 Agent 窗口页面的(画布 / 自动化 / 浏览器 / 自定义 / 独立窗口里的设置)先离开 IDE
-                    other @ (PaletteAction::OpenSettings(_) | PaletteAction::OpenPage(_) | PaletteAction::OpenCustomize(_) | PaletteAction::CycleMode | PaletteAction::SwitchMode) => {
-                        let fused = this.wb.read(cx).settings.fused_ide;
-                        let leave = !matches!(other, PaletteAction::CycleMode | PaletteAction::SwitchMode) && !(fused && matches!(other, PaletteAction::OpenSettings(_)));
+                    // 设置:在 IDE 窗口自己里面打开(独立窗口整窗显示;融合模式是整窗页面)
+                    PaletteAction::OpenSettings(tab) => this.wb.update(cx, |wb, cx| {
+                        if let Some(t) = tab.and_then(|k| crate::settings::SettingsTab::from_name(&k)) {
+                            wb.settings_tab = t;
+                        }
+                        wb.open_settings_here(window, cx);
+                    }),
+                    other @ (PaletteAction::OpenPage(_) | PaletteAction::OpenCustomize(_) | PaletteAction::CycleMode | PaletteAction::SwitchMode) => {
+                        let leave = !matches!(other, PaletteAction::CycleMode | PaletteAction::SwitchMode);
                         cx.defer_in(window, move |this, window, cx| {
                             this.wb.update(cx, |wb, cx| wb.run_palette_action(other, window, cx));
                             if leave {

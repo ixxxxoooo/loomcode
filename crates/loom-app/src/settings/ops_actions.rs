@@ -196,7 +196,7 @@ impl Workbench {
                 };
                 let alive = this
                     .update(cx, |this, cx| {
-                        let open = this.page == crate::workbench::Page::Settings && this.settings_tab == super::SettingsTab::Diagnostics;
+                        let open = (this.page == crate::workbench::Page::Settings || this.ide_settings) && this.settings_tab == super::SettingsTab::Diagnostics;
                         let demo = this.demo;
                         let ops = &mut this.forms_mut().ops;
                         if !open {

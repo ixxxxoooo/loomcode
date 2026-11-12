@@ -2,7 +2,7 @@
 //!
 //! @author ixxxxoooo
 
-use crate::workbench::{Page, Workbench};
+use crate::workbench::Workbench;
 use gpui_kit::*;
 use loom_config::items::{Item, ItemKind};
 use std::path::Path;
@@ -18,7 +18,7 @@ impl Workbench {
         if self.active.as_ref().and_then(|id| self.views.get(id)).is_none() {
             self.new_session(self.target_project(), window, cx);
         }
-        self.set_page(Page::Chat, cx);
+        self.close_settings(window, cx);
         if let Some(composer) = self.active.as_ref().and_then(|id| self.views.get(id)).map(|v| v.composer.clone()) {
             composer.update(cx, |c, cx| c.insert_text(&text, window, cx));
         }

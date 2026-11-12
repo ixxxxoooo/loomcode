@@ -195,6 +195,8 @@ pub struct Workbench {
     pub ide_window: Option<AnyWindowHandle>,
     /// 独立 IDE 窗口的根视图(界面请求要转给它)
     pub ide_standalone: Option<WeakEntity<IdeWindow>>,
+    /// 设置页开在独立 IDE 窗口里(`page` 不动,Agent 窗口照常显示自己的页面)
+    pub ide_settings: bool,
     pub canvas: Entity<CanvasPage>,
     pub automation: Entity<AutomationPage>,
     pub browser: Entity<BrowserPage>,
@@ -348,6 +350,7 @@ impl Workbench {
             agent_window: Some(window.window_handle()),
             ide_window: None,
             ide_standalone: None,
+            ide_settings: false,
             canvas,
             automation,
             browser,
@@ -617,6 +620,38 @@ impl Workbench {
             self.focus_project = Some(p.path.clone());
             self.sync_panel(cx);
             cx.notify();
+        }
+    }
+
+    /// `window` 是否就是独立 IDE 窗口。
+    pub fn is_ide_window(&self, window: &Window) -> bool {
+        self.ide_window.is_some_and(|h| h.window_id() == window.window_handle().window_id())
+    }
+
+    /// 在发起操作的窗口里打开设置:独立 IDE 窗口里就在它自己里面打开,其余(Agent 窗口、融合 IDE)走 `Page::Settings`。
+    pub fn open_settings_here(&mut self, window: &Window, cx: &mut Context<Self>) {
+        self.open_settings_in(self.is_ide_window(window), cx);
+    }
+
+    /// 同上,`in_ide` 由调用方判断(没有窗口引用时用)。
+    pub fn open_settings_in(&mut self, in_ide: bool, cx: &mut Context<Self>) {
+        if in_ide {
+            self.reload_claude_cfg();
+            self.refresh_plugins();
+            self.ide_settings = true;
+            cx.notify();
+        } else {
+            self.set_page(Page::Settings, cx);
+        }
+    }
+
+    /// 关闭设置并回到发起窗口原来的界面(返回按钮、Esc)。
+    pub fn close_settings(&mut self, window: &Window, cx: &mut Context<Self>) {
+        if self.ide_settings && self.is_ide_window(window) {
+            self.ide_settings = false;
+            cx.notify();
+        } else {
+            self.set_page(Page::Chat, cx);
         }
     }
 
