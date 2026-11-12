@@ -96,7 +96,10 @@ impl IdeWindow {
         col.child(div().flex_1()).child(div().pb_2().child(
             Button::new("act-settings").ghost().icon(IconName::Settings).tooltip("设置").on_click(cx.listener(|this, _, _, cx| {
                 this.wb.update(cx, |wb, cx| wb.set_page(Page::Settings, cx));
-                this.back_to_agent(cx);
+                // 融合模式:设置是整窗页面,IDE 暂时让位但不退出(关掉设置回到 IDE);独立窗口则切到 Agent 窗口
+                if !this.wb.read(cx).settings.fused_ide {
+                    this.back_to_agent(cx);
+                }
             })),
         ))
     }

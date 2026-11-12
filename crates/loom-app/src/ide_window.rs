@@ -84,6 +84,9 @@ pub struct IdeWindow {
     /// 对话标签条的滚动句柄,以及上次已滚到可见处的 (当前标签, 标签数)
     pub(crate) chat_scroll: ScrollHandle,
     pub(crate) chat_revealed: std::cell::RefCell<Option<(Option<String>, usize)>>,
+    /// 详情面板(计划 / 子 Agent / 任务 / 命令输出,见 `ide_detail`)与当前显示的类别
+    pub(crate) detail: Entity<RightPanel>,
+    pub(crate) detail_view: Option<crate::ide_detail::Detail>,
 }
 
 impl IdeWindow {
@@ -145,6 +148,11 @@ impl IdeWindow {
         let focus = cx.focus_handle();
         window.focus(&focus, cx);
         let term = cx.new(|cx| crate::ide_terminal::BottomTerminal::new(panel.clone(), cx));
+        let detail = cx.new(|cx| {
+            let mut d = RightPanel::new(_root.clone(), demo, None, scm_events.clone(), window, cx);
+            d.show_tabs = false;
+            d
+        });
         // 调试用:LOOM_IDE_TERM=1 启动时就展开底部终端面板,方便截图
         let term_open = std::env::var("LOOM_IDE_TERM").is_ok_and(|v| v == "1");
         // 调试用:LOOM_DIFF=N 启动后打开 SCM 里第 N 个文件的差异标签
@@ -216,7 +224,7 @@ impl IdeWindow {
             .detach();
         }
         // 此时工作台可能正处于更新中,不在这里回读它;首次渲染时再同步
-        Self { wb, panel, ide, panel_root: String::new(), focus, left_open: true, chat_open: true, left_narrow: false, left_before: true, chat_narrow: false, chat_before: true, synced: None, _subs: subs, search, search_open: false, quick: None, _quick_sub: None, term_open, term, chat_tabs: wb_tabs, pinned: None, seen_enter: 0, chat_last_active: None, chat_empty: false, chat_wide: std::env::var("LOOM_CHAT_WIDE").is_ok(), notice_open: false, branch_picker: None, _branch_sub: None, history_picker: None, _history_sub: None, chat_scroll: ScrollHandle::new(), chat_revealed: Default::default(), split: cx.new(|_| gpui_kit::component::resizable::ResizableState::default()), vsplit: cx.new(|_| gpui_kit::component::resizable::ResizableState::default()), left_w: 260., chat_w: 420., term_h: 260., size_save_pending: false }
+        Self { wb, panel, ide, panel_root: String::new(), focus, left_open: true, chat_open: true, left_narrow: false, left_before: true, chat_narrow: false, chat_before: true, synced: None, _subs: subs, search, search_open: false, quick: None, _quick_sub: None, term_open, term, chat_tabs: wb_tabs, pinned: None, seen_enter: 0, chat_last_active: None, chat_empty: false, chat_wide: std::env::var("LOOM_CHAT_WIDE").is_ok(), notice_open: false, branch_picker: None, _branch_sub: None, history_picker: None, _history_sub: None, chat_scroll: ScrollHandle::new(), chat_revealed: Default::default(), detail, detail_view: None, split: cx.new(|_| gpui_kit::component::resizable::ResizableState::default()), vsplit: cx.new(|_| gpui_kit::component::resizable::ResizableState::default()), left_w: 260., chat_w: 420., term_h: 260., size_save_pending: false }
     }
 
     /// 让面板与根目录跟随工作台当前会话。
@@ -286,7 +294,7 @@ impl IdeWindow {
     /// 打开对话里点击的文件(固定标签,不是预览)。
     pub(crate) fn open_path(&mut self, path: &str, window: &mut Window, cx: &mut Context<Self>) {
         let p = std::path::PathBuf::from(path);
-        let full = if p.is_absolute() { p } else { std::path::PathBuf::from(self.wb.read(cx).active_project_path().unwrap_or_default()).join(p) };
+        let full = if p.is_absolute() { p } else { std::path::PathBuf::from({ let wb = self.wb.read(cx); self.pinned.clone().or_else(|| wb.active_project_path()).map(|p| wb.work_root(&p)).unwrap_or_default() }).join(p) };
         self.panel.update(cx, |p, _| p.files.reveal(&full));
         self.ide.update(cx, |v, cx| v.open(full, false, window, cx));
     }
@@ -315,23 +323,16 @@ impl IdeWindow {
         }
     }
 
-    /// ⌘N:IDE 窗口自己没有会话,转到 Agent 窗口新建会话并切到前台。
+    /// 独立窗口里的窗口级动作交给工作台(融合模式下动作冒泡到工作台自己处理)。
     ///
-    /// 融合模式下 IDE 嵌在工作台里,动作直接交给工作台处理。
-    fn new_agent_session(&mut self, cx: &mut Context<Self>) {
+    /// 工作台属于另一个窗口的更新链,所以一律推迟执行。
+    fn forward<F: FnOnce(&mut Workbench, &mut Window, &mut Context<Workbench>) + 'static>(&mut self, window: &mut Window, cx: &mut Context<Self>, f: F) {
         if self.wb.read(cx).settings.fused_ide {
             cx.propagate();
             return;
         }
         let wb = self.wb.clone();
-        let Some(handle) = wb.read(cx).agent_window else { return };
-        // 要更新另一个窗口里的工作台,推迟到当前事件之后,避免重复借用
-        cx.defer(move |cx| {
-            let _ = handle.update(cx, |_, window, cx| {
-                window.activate_window();
-                wb.update(cx, |wb, cx| wb.new_session(wb.target_project(), window, cx));
-            });
-        });
+        cx.defer_in(window, move |_, window, cx| wb.update(cx, |wb, cx| f(wb, window, cx)));
     }
 
     /// 标题栏:左侧侧栏开关 / 搜索 / 后退 / 前进、居中的项目名搜索框、右侧对话栏开关 + 回 Agent(与 Agent 窗口同位置)。
@@ -402,6 +403,7 @@ impl Render for IdeWindow {
         crate::notice::mark_ide(window, true, cx);
         self.sync_state(cx);
         self.sync_chat_tabs(cx);
+        self.sync_detail(cx);
         self.apply_responsive(f32::from(window.viewport_size().width));
         self.sync_layout(cx);
         let t = cx.theme().clone();
@@ -421,7 +423,10 @@ impl Render for IdeWindow {
         let chat_me = cx.entity().downgrade();
         let chat_col = div().id("ide-chat-host").size_full()
             .on_hover(move |on, window, _| crate::ide_chat_tabs::set_chat_hover(*on, window, &chat_me))
-            .child(v_flex().size_full().child(self.chat_tabs_bar(cx)).child(div().flex_1().min_h_0().child(if self.chat_empty || foreign { self.chat_empty_view(cx) } else { chat_panel(parts, branch.clone(), demo, cx) })))
+            .child(v_flex().size_full().child(self.chat_tabs_bar(cx)).child(div().flex_1().min_h_0().child(match self.detail_view.filter(|d| d.in_chat()) {
+                Some(kind) if !foreign => self.chat_detail(kind, cx),
+                _ => if self.chat_empty || foreign { self.chat_empty_view(cx) } else { chat_panel(parts, branch.clone(), demo, cx) },
+            })))
             .into_any_element();
         v_flex()
             .relative()
@@ -429,14 +434,16 @@ impl Render for IdeWindow {
             // 平滑滚动拦截层:必须是第一个子元素
             .child(crate::smooth_scroll::layer())
             .track_focus(&self.focus)
+            .on_key_down(cx.listener(|this, ev: &KeyDownEvent, window, cx| {
+                if ev.keystroke.key == "escape" && !ev.keystroke.modifiers.modified() && let Some(kind) = this.detail_view.filter(|d| d.in_chat()) {
+                    this.close_detail(kind, window, cx);
+                    cx.stop_propagation();
+                }
+            }))
             .on_action(cx.listener(|this, _: &SaveFile, _, cx| this.save(cx)))
             .on_action(cx.listener(|this, a: &OpenPath, window, cx| this.open_path(&a.path, window, cx)))
-            // 工具卡「在终端面板查看」:命令的只读标签在 Agent 右栏的终端面板里,转给工作台打开并提示
-            .on_action(cx.listener(|this, a: &crate::workbench::ViewAgentRun, window, cx| {
-                let (wb, id) = (this.wb.clone(), a.id.clone());
-                cx.defer(move |cx| wb.update(cx, |w, cx| w.show_agent_run(id, cx)));
-                crate::notice::info(window, cx, "已在 Agent 窗口右栏的「终端」里打开这条命令");
-            }))
+            // 工具卡「在终端面板查看」:在底部面板显示这条命令的输出
+            .on_action(cx.listener(|this, a: &crate::workbench::ViewAgentRun, window, cx| this.show_run(a.id.clone(), window, cx)))
             .on_action(cx.listener(|this, a: &crate::term_links::OpenTermPath, window, cx| {
                 this.open_at(std::path::PathBuf::from(&a.path), a.line.max(1), window, cx);
             }))
@@ -460,7 +467,16 @@ impl Render for IdeWindow {
             .on_action(cx.listener(|this, _: &crate::term_actions::ToggleTerminal, window, cx| this.toggle_term(window, cx)))
             .on_action(cx.listener(|this, _: &crate::term_actions::NewTerminal, window, cx| this.open_new_term(window, cx)))
             .on_action(cx.listener(|this, _: &ToggleIde, _, cx| this.back_to_agent(cx)))
-            .on_action(cx.listener(|this, _: &NewSession, _, cx| this.new_agent_session(cx)))
+            .on_action(cx.listener(|this, _: &NewSession, window, cx| this.new_chat(window, cx)))
+            .on_action(cx.listener(|this, _: &crate::workbench::CycleMode, window, cx| this.forward(window, cx, |wb, _, cx| wb.cycle_mode(cx))))
+            .on_action(cx.listener(|this, _: &crate::workbench::ForkActive, window, cx| this.forward(window, cx, |wb, window, cx| wb.fork_active_session(window, cx))))
+            .on_action(cx.listener(|this, _: &crate::workbench::SwitchMode, window, cx| this.forward(window, cx, |wb, window, cx| wb.request_switch_mode(window, cx))))
+            .on_action(cx.listener(|this, _: &crate::app_menu::AddProject, window, cx| this.forward(window, cx, |wb, window, cx| wb.add_project(window, cx))))
+            .on_action(cx.listener(|this, _: &crate::workbench::OpenSettings, _, cx| {
+                if this.wb.read(cx).settings.fused_ide { cx.propagate(); return; }
+                this.wb.update(cx, |wb, cx| wb.set_page(crate::workbench::Page::Settings, cx));
+                this.back_to_agent(cx);
+            }))
             .on_action(cx.listener(|this, _: &ToggleLeft, _, cx| { this.left_open = !this.left_open; cx.notify(); }))
             .on_action(cx.listener(|this, _: &ToggleRight, _, cx| { this.chat_open = !this.chat_open; cx.notify(); }))
             .size_full()
@@ -504,7 +520,10 @@ impl Render for IdeWindow {
                                         })
                                         .child(resizable_panel().size_range(px(120.)..Pixels::MAX).child(div().size_full().child(self.ide.clone())))
                                         .child(resizable_panel().size(px(self.term_h)).size_range(px(120.)..px(600.)).flex_none().visible(self.term_open)
-                                            .child(div().size_full().child(self.term.clone()))),
+                                            .child(div().size_full().child(match self.detail_view.filter(|d| !d.in_chat()) {
+                                                Some(kind) => self.bottom_detail(kind, cx),
+                                                None => self.term.clone().into_any_element(),
+                                            }))),
                                 ))
                                 .child(resizable_panel().size(px(self.chat_w)).size_range(px(crate::layout_rules::COMPOSER_MIN_W)..px(900.)).flex_none().fixed().visible(self.chat_open)
                                     .child(chat_col))

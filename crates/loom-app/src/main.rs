@@ -89,6 +89,7 @@ mod ide_search_rows;
 mod ide_search_view;
 mod ide_status;
 mod ide_terminal;
+mod ide_detail;
 mod ide_watch;
 mod ide_chat_tabs;
 mod ide_blame;
@@ -379,6 +380,7 @@ fn main() {
             KeyBinding::new("cmd-j", term_actions::ToggleTerminal, None),
             KeyBinding::new("ctrl-shift-`", term_actions::NewTerminal, None),
             KeyBinding::new("shift-tab", workbench::CycleMode, Some("Workbench")),
+            KeyBinding::new("shift-tab", workbench::CycleMode, Some("IdeWindow")),
         ]);
         open_main_window(demo, session_arg.clone(), cx);
         cx.activate(true);

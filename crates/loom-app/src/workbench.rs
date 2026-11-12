@@ -193,6 +193,8 @@ pub struct Workbench {
     pub agent_window: Option<AnyWindowHandle>,
     /// 独立 IDE 窗口句柄
     pub ide_window: Option<AnyWindowHandle>,
+    /// 独立 IDE 窗口的根视图(界面请求要转给它)
+    pub ide_standalone: Option<WeakEntity<IdeWindow>>,
     pub canvas: Entity<CanvasPage>,
     pub automation: Entity<AutomationPage>,
     pub browser: Entity<BrowserPage>,
@@ -345,6 +347,7 @@ impl Workbench {
             ide_enter: 0,
             agent_window: Some(window.window_handle()),
             ide_window: None,
+            ide_standalone: None,
             canvas,
             automation,
             browser,
@@ -726,11 +729,7 @@ impl Workbench {
             PaletteAction::ToggleLeft => { self.left_open = !self.left_open; cx.notify(); }
             PaletteAction::ToggleRight => { self.right_open = !self.right_open; cx.notify(); }
             PaletteAction::ToggleIde => self.toggle_ide(window, cx),
-            PaletteAction::CycleMode => {
-                if let Some(m) = self.active_model().cloned() {
-                    m.update(cx, |m, cx| { let next = m.state.mode.next(); m.set_mode(next, cx); });
-                }
-            }
+            PaletteAction::CycleMode => self.cycle_mode(cx),
             PaletteAction::OpenCustomize(tab) => {
                 if let Some(t) = settings::CustomizeTab::from_name(tab) {
                     self.customize_tab = t;
@@ -1351,8 +1350,39 @@ impl Workbench {
         self.repin_ide();
     }
 
+    /// 当前正在显示的 IDE(融合 IDE 在前台,或独立 IDE 窗口是活动窗口):根视图与它所在的窗口。
+    fn ide_target(&self, cx: &App) -> Option<(Entity<IdeWindow>, AnyWindowHandle)> {
+        if self.ide && self.page != Page::Settings {
+            let shell = self.ide_shell.clone()?;
+            return Some((shell, cx.active_window()?));
+        }
+        let (handle, active) = (self.ide_window?, cx.active_window()?);
+        if handle != active {
+            return None;
+        }
+        Some((self.ide_standalone.as_ref()?.upgrade()?, handle))
+    }
+
     /// 处理会话模型发来的界面请求;`source` 是发出请求的会话模型实体。
     fn on_ui_request(&mut self, source: Option<EntityId>, ev: &UiRequest, cx: &mut Context<Self>) {
+        // IDE 正在显示时,计划 / 子 Agent / 任务 / 改动的详情落在 IDE 自己的位置(右栏此时不可见,别去动它)
+        if let Some((ide, handle)) = self.ide_target(cx) {
+            let from_active = source.is_none_or(|s| Some(s) == self.active_model().map(|m| m.entity_id()));
+            let wanted = match ev {
+                UiRequest::OpenChanges | UiRequest::OpenChangeFile(_) | UiRequest::OpenSubagent(_) | UiRequest::OpenTasks(_) => true,
+                // 后台会话里出现的计划不抢当前界面
+                UiRequest::OpenPlan(_) => from_active,
+                _ => false,
+            };
+            if wanted {
+                let ev = ev.clone();
+                cx.defer(move |cx| {
+                    let _ = handle.update(cx, |_, window, cx| ide.update(cx, |w, cx| w.on_ui_request(ev, window, cx)));
+                });
+                cx.notify();
+                return;
+            }
+        }
         match ev {
             UiRequest::OpenChanges => {
                 self.right_open = true;
@@ -1383,12 +1413,22 @@ impl Workbench {
                 self.panel.update(cx, |p, cx| p.open_tasks(id, cx));
             }
             UiRequest::OpenFile(path) => {
-                self.right_open = true;
+                if self.ide_target(cx).is_none() {
+                    self.right_open = true;
+                }
                 // 没有窗口句柄:挂起,Workbench 下一次渲染时打开
                 self.pending_editor_open = Some((self.resolve_path(path), true));
                 self.panel.update(cx, |p, cx| p.show_files_tab(cx));
             }
             UiRequest::OpenCanvas(id) => {
+                // 画布是 Agent 窗口的页面:从 IDE 点进来要先回到 Agent
+                if self.ide_target(cx).is_some() {
+                    if self.settings.fused_ide {
+                        self.ide = false;
+                    } else if let Some(h) = self.agent_window {
+                        cx.defer(move |cx| { let _ = h.update(cx, |_, w, _| w.activate_window()); });
+                    }
+                }
                 self.page = Page::Canvas;
                 let id = id.clone();
                 self.canvas.update(cx, |c, cx| c.select(&id, cx));
@@ -1544,6 +1584,7 @@ impl Workbench {
             return;
         }
         let wb = cx.entity();
+        let reg = wb.clone();
         let demo = self.demo;
         let root = self.ide_project_path().unwrap_or_default();
         let tabs = self.ui_state.last.chat_tabs.clone();
@@ -1566,6 +1607,8 @@ impl Workbench {
                 let base = root.clone();
                 let ide = cx.new(|cx| IdeWindow::new(wb, editor, scm, demo, root, tabs, window, cx));
                 ide.update(cx, |w, cx| w.restore_layout(&layout, cx));
+                let weak = ide.downgrade();
+                cx.defer(move |cx| reg.update(cx, |this, _| this.ide_standalone = Some(weak)));
                 // 调试用:LOOM_FILE 在独立 IDE 窗口里直接打开该文件(相对路径按项目根补全)
                 if let Ok(f) = std::env::var("LOOM_FILE") {
                     let p = PathBuf::from(&f);
@@ -1596,7 +1639,7 @@ impl Workbench {
     /// 相对路径按当前项目补全。
     fn resolve_path(&self, path: &str) -> PathBuf {
         let p = PathBuf::from(path);
-        if p.is_absolute() { p } else { PathBuf::from(self.active_project_path().unwrap_or_default()).join(p) }
+        if p.is_absolute() { p } else { PathBuf::from(self.active_project_path().map(|p| self.work_root(&p)).unwrap_or_default()).join(p) }
     }
 
     /// 在 Agent 右栏的终端面板里打开一条命令的只读标签。
@@ -1664,6 +1707,20 @@ impl Workbench {
         } else {
             self.editor.update(cx, |v, cx| v.save(cx));
             self.panel.update(cx, |p, cx| p.reload_files(cx));
+        }
+    }
+
+    /// 从当前会话分叉出一个新会话(回合页脚的分支按钮)。Agent 与 IDE 窗口共用。
+    pub fn fork_active_session(&mut self, window: &mut Window, cx: &mut Context<Self>) {
+        let (Some(id), Some(ix)) = (self.active.clone(), self.current_project_ix()) else { return };
+        let Some(cwd) = self.projects.get(ix).map(|p| p.path.clone()) else { return };
+        self.fork_session(&id, &cwd, window, cx);
+    }
+
+    /// 循环切换当前会话的权限模式(⇧Tab)。
+    pub fn cycle_mode(&mut self, cx: &mut Context<Self>) {
+        if let Some(m) = self.active_model().cloned() {
+            m.update(cx, |m, cx| { let next = m.state.mode.next(); m.set_mode(next, cx); });
         }
     }
 
@@ -1832,11 +1889,7 @@ impl Workbench {
             // 会话流里 Diff 头的路径:融合 IDE 里由 IdeWindow 先接住,Agent 窗口走统一的打开文件入口
             .on_action(cx.listener(|this, a: &crate::ide_window::OpenPath, window, cx| this.open_file(a.path.clone(), window, cx)))
             .on_action(cx.listener(|this, a: &ViewAgentRun, _, cx| this.show_agent_run(a.id.clone(), cx)))
-            .on_action(cx.listener(|this, _: &ForkActive, window, cx| {
-                let (Some(id), Some(ix)) = (this.active.clone(), this.current_project_ix()) else { return };
-                let Some(cwd) = this.projects.get(ix).map(|p| p.path.clone()) else { return };
-                this.fork_session(&id, &cwd, window, cx);
-            }))
+            .on_action(cx.listener(|this, _: &ForkActive, window, cx| this.fork_active_session(window, cx)))
             .on_action(cx.listener(|this, _: &TogglePalette, window, cx| this.toggle_palette(window, cx)))
             .on_action(cx.listener(|this, _: &crate::ide::OpenCommandPalette, window, cx| this.toggle_palette(window, cx)))
             .on_action(cx.listener(|this, _: &crate::ide::ShowFileHistory, _, cx| {
@@ -1858,11 +1911,7 @@ impl Workbench {
             .on_action(cx.listener(|this, _: &crate::app_menu::AddProject, window, cx| this.add_project(window, cx)))
             .on_action(cx.listener(|this, _: &ToggleIde, window, cx| this.toggle_ide(window, cx)))
             .on_action(cx.listener(|this, _: &SwitchMode, window, cx| this.request_switch_mode(window, cx)))
-            .on_action(cx.listener(|this, _: &CycleMode, _, cx| {
-                if let Some(m) = this.active_model().cloned() {
-                    m.update(cx, |m, cx| { let next = m.state.mode.next(); m.set_mode(next, cx); });
-                }
-            }))
+            .on_action(cx.listener(|this, _: &CycleMode, _, cx| this.cycle_mode(cx)))
             .size_full()
             .bg(t.background)
             .text_color(t.foreground)

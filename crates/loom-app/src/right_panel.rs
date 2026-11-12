@@ -263,6 +263,19 @@ impl RightPanel {
         cx.notify();
     }
 
+    /// 只接上会话与项目根(不读文件树、不起文件监视):IDE 的详情面板用它显示计划 / 子 Agent / 任务 / 命令输出。
+    pub fn set_model_only(&mut self, model: Option<Entity<SessionModel>>, root: String, cx: &mut Context<Self>) {
+        if self.model.as_ref().map(|m| m.entity_id()) == model.as_ref().map(|m| m.entity_id()) && self.root == root {
+            return;
+        }
+        self._sub = model.as_ref().map(|m| cx.observe(m, |_, _, cx| cx.notify()));
+        self.model = model;
+        self.run_tabs.clear();
+        self.active_run = None;
+        self.root = root;
+        cx.notify();
+    }
+
     /// 订阅项目根目录的文件系统改动(`fs_watch`,同一个根全工作台共用一个监视器)。根没变就不重建;
     /// 换项目时丢弃旧任务(接收端随之关闭)。
     fn restart_watch(&mut self, cx: &mut Context<Self>) {
