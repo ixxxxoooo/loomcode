@@ -39,19 +39,19 @@ pub fn render_group(session: &Entity<SessionModel>, range: Range<usize>, cx: &Ap
     let text = summary(&tools);
     let s = session.clone();
     let k = key.clone();
-    let header = h_flex()
+    let header = crate::flow_style::step_row()
         .id(SharedString::from(format!("tgrp-{}", first.id)))
-        .h(px(crate::flow_style::ROW_H)).px_2().gap_2().items_center().rounded(px(6.)).cursor_pointer().self_start()
+        .cursor_pointer()
         .hover(|d| d.bg(t.list_hover))
         .on_click(move |_, _, cx| { s.update(cx, |m, cx| m.toggle(&k, cx)); })
-        .child(if running { crate::appearance::row_spinner(&format!("tgrp-sp-{}", first.id), cx) } else { icon(IconName::Layers, 14., t.muted_foreground).into_any_element() })
+        .child(crate::flow_style::icon_col(if running { crate::appearance::row_spinner(&format!("tgrp-sp-{}", first.id), cx) } else { icon(IconName::Layers, 13., t.muted_foreground).into_any_element() }))
         .child(div().text_size(px(13.)).text_color(t.muted_foreground).child(if running { crate::shimmer_text::shimmer_label(text, format!("tgrp-sh-{}", first.id), cx) } else { div().child(text).into_any_element() }))
         .when(failed > 0, |d| d.child(div().text_size(px(12.)).text_color(t.danger).child(format!("{failed} 项失败"))))
         .child(model.motion.chevron(&key, expanded, 12., t.muted_foreground));
     v_flex().w_full()
         .child(header)
         .when(!expanded && (running || live_tail), |d| d.child(latest_step(session, &tools, &key, running, cx)))
-        .when(expanded, |d| d.child(v_flex().w_full().pl(px(14.)).children(tools.iter().map(|tool| render_tool(session, tool, cx)))))
+        .when(expanded, |d| d.child(crate::flow_style::nested(cx).children(tools.iter().map(|tool| render_tool(session, tool, cx)))))
         .into_any_element()
 }
 
@@ -67,7 +67,7 @@ fn latest_step(session: &Entity<SessionModel>, tools: &[&ToolCall], key: &str, r
     let (s, k) = (session.clone(), key.to_string());
     let anim = || Animation::new(std::time::Duration::from_millis(200)).with_easing(ease_out_quint());
     let mut host = div().id(SharedString::from(format!("tstep-{key}")))
-        .relative().h(px(STEP_H)).ml(px(28.)).overflow_hidden().cursor_pointer()
+        .relative().h(px(STEP_H)).ml(px(crate::flow_style::TEXT_INSET)).overflow_hidden().cursor_pointer()
         .on_click(move |_, _, cx| { s.update(cx, |m, cx| m.toggle(&k, cx)); });
     if let Some(prev) = prev {
         host = host.child(

@@ -9,7 +9,7 @@ use crate::model::SessionModel;
 use crate::row_groups::agents_tally;
 use crate::ui::icon;
 use gpui_kit::assets::IconName;
-use gpui_kit::component::{ActiveTheme, h_flex, v_flex};
+use gpui_kit::component::{ActiveTheme, v_flex};
 use gpui_kit::prelude::FluentBuilder as _;
 use gpui_kit::*;
 use std::ops::Range;
@@ -36,10 +36,10 @@ pub fn render_group(session: &Entity<SessionModel>, range: Range<usize>, window:
     let stalled = cards.iter().filter(|c| c.stalled(now)).count();
     let (s, k) = (session.clone(), key.clone());
     let chip = |n: usize, text: &str, color: Hsla| div().text_size(px(12.)).text_color(color).child(format!("{n} {text}"));
-    let header = h_flex().id(SharedString::from(format!("agrp-{}", first.id))).self_start().h(px(crate::flow_style::ROW_H)).px_2().gap_2().items_center().rounded(px(6.)).cursor_pointer()
+    let header = crate::flow_style::step_row().id(SharedString::from(format!("agrp-{}", first.id))).cursor_pointer()
         .hover(|d| d.bg(cx.theme().list_hover))
         .on_click(move |_, _, cx| { s.update(cx, |m, cx| m.toggle(&k, cx)); })
-        .child(if running > 0 { crate::appearance::row_spinner(&format!("agrp-sp-{}", first.id), cx) } else { icon(IconName::Bot, 14., muted).into_any_element() })
+        .child(crate::flow_style::icon_col(if running > 0 { crate::appearance::row_spinner(&format!("agrp-sp-{}", first.id), cx) } else { icon(IconName::Bot, 13., muted).into_any_element() }))
         .child(div().text_size(px(13.)).text_color(if expanded { fg } else { muted }).child({ let label = format!("并行 {} 个子 Agent", cards.len()); if running > 0 { crate::shimmer_text::shimmer_label(label, format!("agrp-sh-{}", first.id), cx) } else { div().child(label).into_any_element() } }))
         .when(running > 0, |d| d.child(chip(running, "运行中", cx.theme().primary)))
         .when(done > 0, |d| d.child(chip(done, "已完成", success)))
@@ -51,7 +51,7 @@ pub fn render_group(session: &Entity<SessionModel>, range: Range<usize>, window:
         .child(header)
         .when(expanded, |d| {
             let body: Vec<AnyElement> = cards.iter().map(|c| crate::subagent_card::render(session, c, 0, window, cx)).collect();
-            d.child(v_flex().w_full().pl(px(14.)).gap_0p5().children(body))
+            d.child(crate::flow_style::nested(cx).gap_0p5().children(body))
         })
         .into_any_element()
 }

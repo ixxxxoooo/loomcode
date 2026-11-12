@@ -139,10 +139,18 @@ pub fn present(tool: &ToolCall) -> Present {
         is_path: path.is_some(),
     };
     match tool.kind {
-        ToolKind::Read => by_path("读取", match (line_range(input), read_lines(tool)) {
-            (Some(r), Some(n)) => Some(format!("{r} · {n}")),
-            (a, b) => a.or(b),
-        }),
+        ToolKind::Read => {
+            let lines = read_lines(tool);
+            let mut p = by_path("读取", match (line_range(input), lines.clone()) {
+                (Some(r), Some(n)) => Some(format!("{r} · {n}")),
+                (a, b) => a.or(b),
+            });
+            // 没有路径入参时对象取自标题,标题末尾的「· N 行」已经作为附注显示,不再重复
+            if let (false, Some(n)) = (p.is_path, lines) {
+                p.subject = p.subject.trim_end_matches(&format!(" · {n}")).to_string();
+            }
+            p
+        }
         ToolKind::Edit | ToolKind::Write => {
             let new_file = tool.name == "Write" || tool.content.iter().any(|c| matches!(c, ToolContent::Diff { old, .. } if old.is_empty()));
             by_path(if new_file { "写入" } else { "编辑" }, None)
@@ -266,6 +274,10 @@ mod tests {
         assert_eq!(present(&t).detail.as_deref(), Some("120 行"));
         t.input = serde_json::json!({"file_path": "/x/a.rs", "offset": 10, "limit": 20});
         assert_eq!(present(&t).detail.as_deref(), Some("L10-29 · 120 行"));
+        // 没有路径入参:对象取自标题,行数只在附注里出现一次
+        t.input = serde_json::json!({});
+        let p = present(&t);
+        assert_eq!((p.subject.as_str(), p.detail.as_deref()), ("a.rs", Some("120 行")));
     }
 
     #[::core::prelude::v1::test]

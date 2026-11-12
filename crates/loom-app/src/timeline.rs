@@ -5,7 +5,7 @@ use crate::model::SessionModel;
 use crate::tool_card;
 use crate::ui::{icon, pill};
 use gpui_kit::assets::IconName;
-use gpui_kit::component::{ActiveTheme, h_flex, v_flex};
+use gpui_kit::component::{ActiveTheme, v_flex};
 use gpui_kit::prelude::FluentBuilder as _;
 use gpui_kit::*;
 use loom_core::*;
@@ -74,13 +74,13 @@ fn render_working(session: &Entity<SessionModel>, cx: &App) -> AnyElement {
     let t = cx.theme();
     // 并行工具里有请求在等用户时,不再假装「处理中」
     if session.read(cx).state.awaiting_user() {
-        return h_flex().h(px(26.)).px_2().gap_2().items_center().text_size(px(13.)).text_color(t.warning)
-            .child(crate::ui::icon(gpui_kit::assets::IconName::CirclePause, 12., t.warning))
+        return crate::flow_style::plain_row().text_size(px(13.)).text_color(t.warning)
+            .child(crate::flow_style::icon_col(crate::ui::icon(gpui_kit::assets::IconName::CirclePause, 12., t.warning)))
             .child("等待你的批准")
             .into_any_element();
     }
-    h_flex().h(px(26.)).px_2().gap_2().items_center()
-        .child(crate::appearance::glyph_spinner("working", t.primary, cx))
+    crate::flow_style::plain_row()
+        .child(crate::flow_style::icon_col(crate::appearance::glyph_spinner("working", t.primary, cx)))
         .child(crate::shimmer_text::shimmer_label(crate::appearance::status_line(verb, started), "working-shimmer", cx))
         .text_size(px(13.)).text_color(t.muted_foreground)
         .into_any_element()
@@ -125,11 +125,13 @@ fn render_thinking(session: &Entity<SessionModel>, id: &str, text: &str, streami
     let expanded = toggled != by_default;
     let s = session.clone();
     let sid = id.to_string();
-    v_flex().w_full().gap_1()
+    v_flex().w_full()
         .child(
-            h_flex().id(SharedString::from(format!("think-{id}"))).gap_1p5().items_center().cursor_pointer().h(px(24.))
+            // 与工具行同一套骨架:图标列贴正文左边,悬停有底色(整行可点)
+            crate::flow_style::step_row().id(SharedString::from(format!("think-{id}"))).cursor_pointer()
+                .hover(|d| d.bg(t.list_hover))
                 .on_click(move |_, _, cx| { s.update(cx, |m, cx| m.toggle(&sid, cx)); })
-                .child(if streaming { crate::appearance::glyph_spinner(&format!("think-{id}"), t.primary, cx) } else { icon(IconName::Brain, 14., t.muted_foreground).into_any_element() })
+                .child(crate::flow_style::icon_col(if streaming { crate::appearance::glyph_spinner(&format!("think-{id}"), t.primary, cx) } else { icon(IconName::Brain, 13., t.muted_foreground).into_any_element() }))
                 .child(if streaming {
                     // 字号要在外层设(ShimmerText 自己不带),否则会用默认的大字号,和「已思考」(13px)对不上
                     div().text_size(px(13.)).text_color(t.muted_foreground)
@@ -141,7 +143,7 @@ fn render_thinking(session: &Entity<SessionModel>, id: &str, text: &str, streami
                 .child(session.read(cx).motion.chevron(id, expanded, 12., t.muted_foreground)),
         )
         .when(expanded && !streaming, |d| {
-            d.child(div().pl(px(20.)).text_size(px(13.)).text_color(t.muted_foreground).child(gpui_base::SelectableText::new(SharedString::from(format!("think-sel-{id}")), text.to_string())))
+            d.child(div().pl(px(crate::flow_style::TEXT_INSET)).pt(px(2.)).pb(px(4.)).text_size(px(13.)).line_height(px(20.)).text_color(t.muted_foreground).child(gpui_base::SelectableText::new(SharedString::from(format!("think-sel-{id}")), text.to_string())))
         })
         // 流式中:固定高度的尾部窗口贴底跟随、顶部渐隐(对标 Cursor),不随字数忽现忽隐
         .when(streaming && !text.trim().is_empty(), |d| d.child(thinking_tail(id, text, cx)))
@@ -159,11 +161,11 @@ fn thinking_tail(id: &str, text: &str, cx: &App) -> AnyElement {
     let sid = SharedString::from(format!("think-tail-{id}"));
     let handle = crate::code_box::handle_for(&sid);
     handle.scroll_to_bottom();
-    div().relative().pl(px(20.)).w_full()
+    div().relative().pl(px(crate::flow_style::TEXT_INSET)).w_full()
         .child(div().id(sid).w_full().max_h(px(THINK_TAIL_H)).overflow_y_scroll().track_scroll(&handle)
             .text_size(px(13.)).line_height(px(20.)).text_color(t.muted_foreground.opacity(0.85)).child(gpui_base::SelectableText::new(SharedString::from(format!("think-tail-sel-{id}")), text.to_string())))
         // 估算超出一窗(约 3 行)才加渐隐,短内容不遮第一行
-        .when(text.lines().count() > 3 || text.chars().count() > 150, |d| d.child(div().absolute().top_0().left(px(20.)).right_0().h(px(18.))
+        .when(text.lines().count() > 3 || text.chars().count() > 150, |d| d.child(div().absolute().top_0().left(px(crate::flow_style::TEXT_INSET)).right_0().h(px(18.))
             .bg(linear_gradient(180., linear_color_stop(t.background, 0.), linear_color_stop(t.background.opacity(0.), 1.)))))
         .into_any_element()
 }

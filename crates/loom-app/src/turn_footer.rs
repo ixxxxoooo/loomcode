@@ -55,7 +55,8 @@ pub fn render(session: &Entity<SessionModel>, id: &str, text: &str, meta: (Strin
     let (cid, ctext) = (id.to_string(), text.to_string());
     // 所有回合(含历史会话)一直显示,不依赖悬停
     let (meta, tip) = meta;
-    h_flex().h(px(FOOTER_H)).items_center().gap_1().mt_0p5()
+    // 按钮有 6px 内边距(悬停底色的留白),整条向左外扩 4px,让复制图标落在步骤行的图标列里、与正文左边对齐
+    h_flex().h(px(FOOTER_H)).items_center().gap_1().mt_0p5().ml(px(-4.))
         .child(
             h_flex().id(SharedString::from(format!("copy-{id}"))).h(px(22.)).px_1p5().gap_1().items_center().rounded(px(5.)).cursor_pointer()
                 .on_mouse_down(MouseButton::Left, |_, _, cx| cx.stop_propagation())

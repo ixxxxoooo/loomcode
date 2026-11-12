@@ -5,7 +5,7 @@
 
 use crate::model::SessionModel;
 use crate::row_groups::{Row, build_rows};
-use gpui_kit::component::{ActiveTheme, h_flex, v_flex};
+use gpui_kit::component::{ActiveTheme, v_flex};
 use gpui_kit::prelude::FluentBuilder as _;
 use gpui_kit::*;
 use loom_core::*;
@@ -46,7 +46,7 @@ pub fn render_digest(session: &Entity<SessionModel>, range: Range<usize>, window
     let tool_count = items.iter().filter(|i| matches!(i, TimelineItem::Tool(_))).count();
     let s = session.clone();
     let k = key.clone();
-    let header = h_flex().id(SharedString::from(format!("digest-{first_id}"))).group(SharedString::from(format!("dg-g-{first_id}"))).self_start().h(px(crate::flow_style::ROW_H)).px_2().gap_1p5().items_center().rounded(px(6.)).cursor_pointer().hover(|d| d.bg(hover))
+    let header = crate::flow_style::step_row().id(SharedString::from(format!("digest-{first_id}"))).group(SharedString::from(format!("dg-g-{first_id}"))).cursor_pointer().hover(|d| d.bg(hover))
         .on_click(move |_, _, cx| { s.update(cx, |m, cx| m.toggle(&k, cx)); })
         .child(div().text_size(px(13.)).text_color(if expanded { fg } else { muted }).child(format!("已工作 {}", work_text(secs))))
         .when(tool_count > 0, |d| d.child(div().text_size(px(11.5)).text_color(muted.opacity(0.75)).child(format!("{tool_count} 次工具"))))
@@ -63,7 +63,7 @@ pub fn render_digest(session: &Entity<SessionModel>, range: Range<usize>, window
                 Row::Agents(r) => crate::agent_group::render_group(session, range.start + r.start..range.start + r.end, window, cx),
                 Row::Digest(_) | Row::Working => div().into_any_element(),
             }).collect();
-            d.child(v_flex().w_full().pl(px(14.)).gap_1().children(body))
+            d.child(crate::flow_style::nested(cx).gap_1().children(body))
         })
         .into_any_element()
 }

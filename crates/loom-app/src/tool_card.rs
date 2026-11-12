@@ -129,23 +129,16 @@ pub fn render_tool(session: &Entity<SessionModel>, tool: &ToolCall, cx: &App) ->
         div().min_w_0().truncate().text_size(px(13.)).font_weight(FontWeight::MEDIUM).text_color(subject_color).child(live_text(p.subject.clone(), format!("tsh-o-{}", tool.id), running, cx)).into_any_element()
     };
     // 纯文字行(对齐 Cursor / OhMyAgent):贴合内容宽度,没有整行底色;箭头与「打开文件」悬停才出现;成功不打勾
-    let header = h_flex()
+    let header = crate::flow_style::step_row()
         .id(SharedString::from(format!("tool-{}", tool.id)))
         .group(group.clone())
-        .self_start()
-        .max_w_full()
-        .px_2()
-        .min_h(px(crate::flow_style::ROW_H))
-        .gap(px(7.))
-        .items_center()
-        .rounded(px(6.))
         .when(has_body, |d| d.cursor_pointer().hover(|d| d.bg(t.list_hover)))
         .when(has_body, |d| {
             d.on_click(move |_, _, cx| {
                 s.update(cx, |m, cx| m.toggle(&id, cx));
             })
         })
-        .child(div().w(px(16.)).flex().justify_center().child(icon(tool_icon(tool.kind), 12., if failed { t.danger } else { t.muted_foreground })))
+        .child(crate::flow_style::icon_col(icon(tool_icon(tool.kind), 12., if failed { t.danger } else { t.muted_foreground })))
         .when(!p.verb.is_empty(), |d| d.child(div().flex_none().text_size(px(12.)).text_color(t.muted_foreground).child(live_text(p.verb.clone(), format!("tsh-v-{}", tool.id), running, cx))))
         .child(subject)
         .when(!described, |d| d.when_some(p.detail.clone().filter(|x| !x.is_empty()), |d, x| {
@@ -244,7 +237,7 @@ pub fn render_tool(session: &Entity<SessionModel>, tool: &ToolCall, cx: &App) ->
                 }))
                 .into_any_element()
             });
-            d.child(v_flex().w_full().pl(px(30.)).pr_2().py_1().gap_1p5().children(params_block).children(file_rows).children(hit_rows).children(tool.content.iter().enumerate().filter(|_| file_list.is_none() && hit_list.is_none()).map(|(ix, c)| {
+            d.child(v_flex().w_full().pl(px(crate::flow_style::TEXT_INSET)).py_1().gap_1p5().children(params_block).children(file_rows).children(hit_rows).children(tool.content.iter().enumerate().filter(|_| file_list.is_none() && hit_list.is_none()).map(|(ix, c)| {
                 // 每块内容一个展开状态(键 `cb:<工具 id>:<第几块>`),长输出限高滚动
                 let key = format!("cb:{}:{ix}", tool.id);
                 let fold = crate::code_box::Fold {

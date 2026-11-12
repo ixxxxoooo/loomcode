@@ -7,7 +7,7 @@
 use crate::model::{SessionModel, UiRequest};
 use crate::ui::icon;
 use gpui_kit::assets::IconName;
-use gpui_kit::component::{ActiveTheme, h_flex};
+use gpui_kit::component::ActiveTheme;
 use gpui_kit::*;
 use loom_core::*;
 
@@ -80,10 +80,10 @@ pub fn render_note(session: &Entity<SessionModel>, task_id: &str, kind: TaskKind
         _ => t.muted_foreground,
     };
     let (s, id) = (session.clone(), task_id.to_string());
-    h_flex().id(SharedString::from(format!("tnote-{task_id}-{}", status.label()))).self_start().max_w_full().h(px(crate::flow_style::ROW_H)).px_2().gap_1p5().items_center().rounded(px(6.)).cursor_pointer()
+    crate::flow_style::step_row().id(SharedString::from(format!("tnote-{task_id}-{}", status.label()))).cursor_pointer()
         .hover(|d| d.bg(t.list_hover))
         .on_click(move |_, _, cx| { s.update(cx, |_, cx| cx.emit(UiRequest::OpenTasks(Some(id.clone())))); })
-        .child(icon(kind_icon(kind), 12., t.muted_foreground))
+        .child(crate::flow_style::icon_col(icon(kind_icon(kind), 12., t.muted_foreground)))
         .child(div().min_w_0().truncate().text_size(px(12.)).text_color(color).child(text.to_string()))
         .child(icon(status_icon(status), 12., task_color(status, cx)))
         .into_any_element()

@@ -50,8 +50,8 @@ pub fn render_notice(session: &Entity<SessionModel>, id: &str, level: NoticeLeve
     let t = cx.theme();
     // 「已中断」:用户自己的操作,只是一行灰字(对标 Claude Code 的 Interrupted 标记)
     if text == INTERRUPTED_TEXT {
-        return h_flex().h(px(crate::flow_style::ROW_H)).px_2().gap_1p5().items_center().text_size(px(12.)).text_color(t.muted_foreground)
-            .child(icon(IconName::CirclePause, 12., t.muted_foreground))
+        return crate::flow_style::plain_row().text_size(px(12.)).text_color(t.muted_foreground)
+            .child(crate::flow_style::icon_col(icon(IconName::CirclePause, 12., t.muted_foreground)))
             .child(format!("{text} · 可以直接输入新的指示"))
             .into_any_element();
     }
@@ -75,11 +75,19 @@ pub fn render_notice(session: &Entity<SessionModel>, id: &str, level: NoticeLeve
             .text_size(px(12.)).text_color(t.muted_foreground).hover(|d| d.bg(t.list_hover).text_color(t.foreground))
             .child(icon(ic, 12., t.muted_foreground)).child(label)
     };
-    h_flex().w_full().gap_2().pl_3().pr_2().py_1p5().rounded(px(8.)).bg(t.muted).items_start()
-        .border_l_2().border_color(color)
-        .child(div().mt(px(2.)).child(icon(ic, 14., color)))
+    // 分级:普通提示(切换模式、已压缩上下文……)只是过程里的一句旁白,画成和步骤行同一栅格的灰字;
+    // 警告 / 错误才是需要注意的卡片,用级别色的淡底与细描边(不再所有级别都是同样的灰底色条)
+    if level == NoticeLevel::Info {
+        return h_flex().w_full().min_h(px(crate::flow_style::ROW_H)).py(px(3.)).gap(px(crate::flow_style::ICON_GAP)).items_start()
+            .child(crate::flow_style::icon_col(icon(ic, 12., t.muted_foreground)).h(px(20.)))
+            .child(div().flex_1().min_w_0().text_size(px(12.5)).line_height(px(20.)).text_color(t.muted_foreground).child(gpui_base::SelectableText::new(SharedString::from(format!("notice-sel-{id}")), text.to_string())))
+            .into_any_element();
+    }
+    h_flex().w_full().gap_2().px(px(10.)).py(px(7.)).rounded(px(8.)).items_start()
+        .bg(color.opacity(0.07)).border_1().border_color(color.opacity(0.22))
+        .child(div().h(px(20.)).flex().items_center().child(icon(ic, 14., color)))
         // min_w_0:长英文报错在卡片内折行,不再溢出右侧
-        .child(div().flex_1().min_w_0().text_size(px(13.)).text_color(t.foreground).child(text.to_string()))
+        .child(div().flex_1().min_w_0().text_size(px(13.)).line_height(px(20.)).text_color(t.foreground).child(gpui_base::SelectableText::new(SharedString::from(format!("notice-sel-{id}")), text.to_string())))
         .when(level == NoticeLevel::Error, |d| d.child(h_flex().flex_none().gap_0p5()
             .when_some(retry_target, |d, uid| {
                 let s = session.clone();

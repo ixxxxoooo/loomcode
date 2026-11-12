@@ -57,11 +57,11 @@ pub fn render(session: &Entity<SessionModel>, card_data: &SubagentCard, depth: u
     let title = if card_data.description.is_empty() { card_data.agent_type.clone() } else { card_data.description.clone() };
     let stop_target = card_data.task_id.clone().filter(|_| active);
     let to_bg = card_data.task_id.clone().filter(|_| active && !card_data.background).map(|_| card_data.id.clone());
-    let head = h_flex().id(SharedString::from(format!("sub-{}", card_data.id))).w_full().px_2().py(px(5.)).gap_2().items_start().cursor_pointer()
+    let head = h_flex().id(SharedString::from(format!("sub-{}", card_data.id))).w_full().px(px(crate::flow_style::ROW_PAD)).ml(px(-crate::flow_style::ROW_PAD)).py(px(5.)).gap(px(crate::flow_style::ICON_GAP)).items_start().cursor_pointer()
         .hover(|d| d.bg(t.list_hover)).rounded(px(6.))
         // 点击整块:在右侧标签里打开完整对话;右侧箭头只展开 / 收起这里的内联预览
         .on_click(move |_, _, cx| { s.update(cx, |_, cx| cx.emit(UiRequest::OpenSubagent(id.clone()))); })
-        .child(div().w(px(16.)).h(px(20.)).flex().items_center().justify_center().child(icon(IconName::Bot, 14., icon_color)))
+        .child(crate::flow_style::icon_col(icon(IconName::Bot, 14., icon_color)).h(px(20.)))
         .child(v_flex().flex_1().min_w_0().gap(px(2.))
             .child(h_flex().gap_1p5().items_baseline()
                 .child(div().min_w_0().truncate().text_size(px(13.)).text_color(t.foreground).child(if active { crate::shimmer_text::shimmer_label(title, format!("sub-sh-{}", card_data.id), cx) } else { div().child(title).into_any_element() }))
@@ -103,7 +103,7 @@ pub fn render(session: &Entity<SessionModel>, card_data: &SubagentCard, depth: u
     );
     let mut col = v_flex().w_full().child(head);
     if expanded {
-        let mut body = v_flex().w_full().pl(px(26.)).pr_2().gap_1();
+        let mut body = crate::flow_style::nested(cx).gap_1();
         for child in &card_data.children {
             body = body.child(timeline::render_item(session, child, depth + 1, window, cx));
         }

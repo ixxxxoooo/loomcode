@@ -98,10 +98,10 @@ pub fn render_line(session: &Entity<SessionModel>, id: &str, items: &[TodoItem],
     let done = items.iter().filter(|i| i.status == TodoStatus::Completed).count();
     let changes = prev.map(|p| delta(p, items));
     let (s, key) = (session.clone(), id.to_string());
-    let mut head = h_flex().id(SharedString::from(format!("todo-line-{id}"))).self_start().max_w_full().h(px(crate::flow_style::ROW_H)).px_2().gap_2().items_center().rounded(px(6.)).cursor_pointer()
+    let mut head = crate::flow_style::step_row().id(SharedString::from(format!("todo-line-{id}"))).cursor_pointer()
         .hover(|d| d.bg(t.list_hover))
         .on_click(move |_, _, cx| { s.update(cx, |m, cx| m.toggle(&key, cx)); })
-        .child(icon(IconName::ListTodo, 13., t.muted_foreground))
+        .child(crate::flow_style::icon_col(icon(IconName::ListTodo, 13., t.muted_foreground)))
         .child(div().flex_none().text_size(px(13.)).text_color(t.muted_foreground).child(if prev.is_none() { format!("创建了 {} 项待办", items.len()) } else { "更新了待办".into() }))
         .child(div().flex_none().text_size(px(11.5)).text_color(t.muted_foreground.opacity(0.75)).child(format!("{done}/{}", items.len())));
     for d in changes.unwrap_or_default().into_iter().take(3) {
@@ -114,7 +114,7 @@ pub fn render_line(session: &Entity<SessionModel>, id: &str, items: &[TodoItem],
     }
     head = head.child(m.motion.chevron(id, expanded, 11., t.muted_foreground));
     v_flex().w_full().child(head)
-        .when(expanded, |d| d.child(div().pl(px(30.)).pr_2().py_1().child(list(id, items, cx))))
+        .when(expanded, |d| d.child(div().pl(px(crate::flow_style::TEXT_INSET)).pr_2().py_1().child(list(id, items, cx))))
         .into_any_element()
 }
 

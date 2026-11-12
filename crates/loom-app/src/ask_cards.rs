@@ -14,8 +14,8 @@ pub fn render_permission(req: &PermissionRequest, cx: &App) -> AnyElement {
     let t = cx.theme();
     let Some(chosen) = req.options.iter().find(|o| Some(&o.id) == req.resolved.as_ref()) else { return div().into_any_element() };
     let ok = matches!(chosen.kind, PermissionOptionKind::AllowOnce | PermissionOptionKind::AllowAlways);
-    h_flex().w_full().h(px(crate::flow_style::ROW_H)).px_2().gap_2().items_center().text_size(px(12.)).text_color(t.muted_foreground)
-        .child(icon(if ok { IconName::ShieldCheck } else { IconName::ShieldX }, 12., if ok { t.success } else { t.danger }))
+    crate::flow_style::plain_row().text_size(px(12.)).text_color(t.muted_foreground)
+        .child(crate::flow_style::icon_col(icon(if ok { IconName::ShieldCheck } else { IconName::ShieldX }, 12., if ok { t.success } else { t.danger })))
         .child(chosen.label.clone())
         .child(div().flex_1().min_w_0().truncate().child(req.tool.title.clone()))
         .into_any_element()

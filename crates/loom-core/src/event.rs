@@ -190,15 +190,37 @@ pub struct TurnStats {
     pub calls: Option<u32>,
 }
 
+/// Claude 模型 id → 「系列 版本」;不是 `claude-<系列>-<数字…>` 这种形状就返回 `None`。
+///
+/// 参数:`id` 已去掉日期后缀的模型 id。
+fn claude_name(id: &str) -> Option<String> {
+    let rest = id.strip_prefix("claude-")?;
+    let (mut family, mut version) = (None, Vec::new());
+    for part in rest.split('-') {
+        if !part.is_empty() && part.bytes().all(|b| b.is_ascii_digit()) {
+            version.push(part);
+        } else if family.is_none() && !part.is_empty() && part.bytes().all(|b| b.is_ascii_lowercase()) {
+            family = Some(part);
+        } else {
+            return None;
+        }
+    }
+    let family = family?;
+    let name = format!("{}{}", family[..1].to_uppercase(), &family[1..]);
+    Some(if version.is_empty() { name } else { format!("{name} {}", version.join(".")) })
+}
+
 impl TurnStats {
-    /// 模型显示名:去掉末尾的日期后缀(`claude-haiku-4-5-20251001` → `claude-haiku-4-5`)。
+    /// 模型显示名:去掉末尾的日期后缀,Claude 的模型 id 再写成「系列 版本」
+    /// (`claude-haiku-4-5-20251001` → `Haiku 4.5`,`claude-3-5-sonnet` → `Sonnet 3.5`);
+    /// 认不出的(第三方模型、带额外后缀的)保留去掉日期后的 id。
     pub fn model_label(&self) -> Option<String> {
         let m = self.model.as_deref().filter(|m| !m.is_empty() && !m.starts_with('<'))?;
         let base = match m.rsplit_once('-') {
             Some((head, tail)) if tail.len() == 8 && tail.bytes().all(|b| b.is_ascii_digit()) => head,
             _ => m,
         };
-        Some(base.to_string())
+        Some(claude_name(base).unwrap_or_else(|| base.to_string()))
     }
 
     /// 输入总量:未缓存 + 缓存读取 + 缓存写入。
@@ -275,7 +297,14 @@ mod turn_stats_tests {
     #[test]
     fn 简短文案与明细() {
         let s = TurnStats { model: Some("claude-haiku-4-5-20251001".into()), input: 4, output: 230, thinking: 149, cache_read: 35_613, cache_write: 19_732, cost_usd: Some(0.0044), api_ms: Some(4233), ttft_ms: Some(2916), calls: Some(2) };
-        assert_eq!(s.model_label().as_deref(), Some("claude-haiku-4-5"));
+        assert_eq!(s.model_label().as_deref(), Some("Haiku 4.5"));
+        let label = |m: &str| TurnStats { model: Some(m.into()), ..Default::default() }.model_label();
+        assert_eq!(label("claude-sonnet-5-5").as_deref(), Some("Sonnet 5.5"));
+        assert_eq!(label("claude-3-5-sonnet-20241022").as_deref(), Some("Sonnet 3.5"));
+        assert_eq!(label("claude-opus-4").as_deref(), Some("Opus 4"));
+        // 第三方模型、带额外后缀的保持原样
+        assert_eq!(label("glm-4.6").as_deref(), Some("glm-4.6"));
+        assert_eq!(label("claude-sonnet-4-5[1m]").as_deref(), Some("claude-sonnet-4-5[1m]"));
         assert_eq!(TurnStats { model: Some("<synthetic>".into()), ..Default::default() }.model_label(), None);
         assert_eq!(s.short_text(), "↑ 55.3k ↓ 230 · 缓存 64% · $0.004");
         let d = s.detail_text();
