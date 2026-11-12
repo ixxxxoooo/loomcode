@@ -292,9 +292,18 @@ impl IdeWindow {
     }
 
     /// 打开对话里点击的文件(固定标签,不是预览)。
-    pub(crate) fn open_path(&mut self, path: &str, window: &mut Window, cx: &mut Context<Self>) {
+    /// 相对路径按 IDE 固定项目的主目录补全为绝对路径。
+    pub(crate) fn resolve_path(&self, path: &str, cx: &App) -> std::path::PathBuf {
         let p = std::path::PathBuf::from(path);
-        let full = if p.is_absolute() { p } else { std::path::PathBuf::from({ let wb = self.wb.read(cx); self.pinned.clone().or_else(|| wb.active_project_path()).map(|p| wb.work_root(&p)).unwrap_or_default() }).join(p) };
+        if p.is_absolute() {
+            return p;
+        }
+        let wb = self.wb.read(cx);
+        std::path::PathBuf::from(self.pinned.clone().or_else(|| wb.active_project_path()).map(|p| wb.work_root(&p)).unwrap_or_default()).join(p)
+    }
+
+    pub(crate) fn open_path(&mut self, path: &str, window: &mut Window, cx: &mut Context<Self>) {
+        let full = self.resolve_path(path, cx);
         self.panel.update(cx, |p, _| p.files.reveal(&full));
         self.ide.update(cx, |v, cx| v.open(full, false, window, cx));
     }
@@ -445,7 +454,8 @@ impl Render for IdeWindow {
             // 工具卡「在终端面板查看」:在底部面板显示这条命令的输出
             .on_action(cx.listener(|this, a: &crate::workbench::ViewAgentRun, window, cx| this.show_run(a.id.clone(), window, cx)))
             .on_action(cx.listener(|this, a: &crate::term_links::OpenTermPath, window, cx| {
-                this.open_at(std::path::PathBuf::from(&a.path), a.line.max(1), window, cx);
+                let full = this.resolve_path(&a.path, cx);
+                this.open_at(full, a.line.max(1), window, cx);
             }))
             .on_action(cx.listener(|this, _: &QuickOpen, window, cx| this.toggle_quick(window, cx)))
             .on_action(cx.listener(|this, _: &GoToLine, window, cx| this.goto_line_dialog(window, cx)))

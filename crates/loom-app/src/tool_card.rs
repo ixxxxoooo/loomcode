@@ -214,6 +214,22 @@ pub fn render_tool(session: &Entity<SessionModel>, tool: &ToolCall, cx: &App) ->
             });
             // 搜索结果是纯文件列表(Glob、只列文件的 Grep)时画成可点击的文件行,点击在编辑器里打开
             let file_list = (tool.kind == ToolKind::Search).then(|| tool.content.iter().find_map(|c| if let ToolContent::Text(x) = c { path_list(x) } else { None })).flatten();
+            // 内容模式的命中行「路径:行号:内容」:每行可点,在编辑器里打开并跳到那一行
+            let hit_list = (tool.kind == ToolKind::Search && file_list.is_none()).then(|| tool.content.iter().find_map(|c| if let ToolContent::Text(x) = c { hit_lines(x) } else { None })).flatten();
+            let hit_base = s_input_dir(tool);
+            let hit_rows = hit_list.clone().map(|hits| {
+                v_flex().w_full().gap_0().children(hits.into_iter().enumerate().map(|(i, (file, line, snippet))| {
+                    let name = file.rsplit('/').next().unwrap_or(&file).to_string();
+                    // 相对路径:有绝对的搜索目录就拼上,否则原样交给打开入口(按项目根补全)
+                    let full = if file.starts_with('/') || hit_base.is_empty() { file.clone() } else { format!("{}/{file}", hit_base.trim_end_matches('/')) };
+                    h_flex().id(SharedString::from(format!("shit-{}-{i}", tool.id))).min_h(px(22.)).px_1().gap_2().items_center().rounded(px(4.)).cursor_pointer()
+                        .hover(|d| d.bg(t.list_hover))
+                        .on_click(move |_, window, cx| window.dispatch_action(Box::new(crate::term_links::OpenTermPath { path: full.clone(), line }), cx))
+                        .child(div().flex_none().text_size(px(12.)).font_family(MONO).text_color(t.primary).child(format!("{name}:{line}")))
+                        .child(div().min_w_0().truncate().text_size(px(12.)).font_family(MONO).text_color(t.muted_foreground).child(snippet.trim().to_string()))
+                }))
+                .into_any_element()
+            });
             let file_rows = file_list.clone().map(|files| {
                 let root = tool.locations.first().cloned().unwrap_or_default();
                 v_flex().w_full().gap_0().children(files.into_iter().enumerate().map(|(i, f)| {
@@ -228,7 +244,7 @@ pub fn render_tool(session: &Entity<SessionModel>, tool: &ToolCall, cx: &App) ->
                 }))
                 .into_any_element()
             });
-            d.child(v_flex().w_full().pl(px(30.)).pr_2().py_1().gap_1p5().children(params_block).children(file_rows).children(tool.content.iter().enumerate().filter(|_| file_list.is_none()).map(|(ix, c)| {
+            d.child(v_flex().w_full().pl(px(30.)).pr_2().py_1().gap_1p5().children(params_block).children(file_rows).children(hit_rows).children(tool.content.iter().enumerate().filter(|_| file_list.is_none() && hit_list.is_none()).map(|(ix, c)| {
                 // 每块内容一个展开状态(键 `cb:<工具 id>:<第几块>`),长输出限高滚动
                 let key = format!("cb:{}:{ix}", tool.id);
                 let fold = crate::code_box::Fold {
@@ -257,6 +273,30 @@ fn path_list(text: &str) -> Option<Vec<String>> {
     let files: Vec<String> = lines.map(str::to_string).collect();
     let looks = |l: &String| l.contains('/') && !l.contains(char::is_whitespace) && !l.split(':').skip(1).next().is_some_and(|m| m.chars().next().is_some_and(|c| c.is_ascii_digit()));
     (!files.is_empty() && files.len() <= 200 && files.iter().all(looks)).then_some(files)
+}
+
+/// 搜索结果若全是「路径:行号:内容」的命中行(带 `--` 分隔符 / 「Found N …」头也行),返回 (路径, 行号, 内容);
+/// 只要混有上下文行或其它格式就返回 `None`(退回原文),最多 200 条。
+fn hit_lines(text: &str) -> Option<Vec<(String, u32, String)>> {
+    let mut out = Vec::new();
+    for l in text.lines().map(str::trim_end).filter(|l| !l.trim().is_empty() && *l != "--" && !l.starts_with("Found ")) {
+        let mut it = l.splitn(3, ':');
+        let (file, line, rest) = (it.next()?, it.next()?, it.next().unwrap_or(""));
+        let line: u32 = line.parse().ok().filter(|n| *n > 0)?;
+        if file.is_empty() || file.contains(char::is_whitespace) || !(file.contains('/') || file.contains('.')) {
+            return None;
+        }
+        out.push((file.to_string(), line, rest.to_string()));
+        if out.len() > 200 {
+            return None;
+        }
+    }
+    (!out.is_empty()).then_some(out)
+}
+
+/// 搜索工具的目录入参(`path`),命中行里的相对路径按它补全;没有则空。
+fn s_input_dir(tool: &ToolCall) -> String {
+    tool.input.get("path").and_then(|v| v.as_str()).filter(|p| p.starts_with('/')).unwrap_or("").to_string()
 }
 
 /// 路径的上一级目录名(根目录 / 没有上一级返回 `None`)。
@@ -295,7 +335,17 @@ fn content_lang(tool: &ToolCall) -> String {
 
 #[cfg(test)]
 mod tests {
-    use super::{parent_dir, path_list};
+    use super::{hit_lines, parent_dir, path_list};
+
+    #[::core::prelude::v1::test]
+    fn 命中行解析() {
+        let hits = hit_lines("src/a.rs:10:fn main() {\nsrc/b.rs:2:let x: u32 = 1;").unwrap();
+        assert_eq!(hits[0], ("src/a.rs".into(), 10, "fn main() {".into()));
+        assert_eq!(hits[1].2, "let x: u32 = 1;");
+        // 上下文行(路径-行号-内容)不是命中行,整段退回原文
+        assert!(hit_lines("src/a.rs:10:x\nsrc/a.rs-11-y").is_none());
+        assert!(hit_lines("No matches found").is_none());
+    }
 
     #[::core::prelude::v1::test]
     fn 纯文件列表识别() {
