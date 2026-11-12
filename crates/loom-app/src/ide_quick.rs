@@ -53,6 +53,7 @@ impl IdeWindow {
         cmd("保存文件", "⌘S", IconName::Save, PaletteAction::Ide("save"));
         cmd("全部保存", "", IconName::Save, PaletteAction::Ide("save-all"));
         cmd("关闭标签", "⌘W", IconName::X, PaletteAction::Ide("close-tab"));
+        cmd("显示问题(错误 / 警告)", "", IconName::TriangleAlert, PaletteAction::Ide("problems"));
         cmd("跳转到行…", "⌃G", IconName::ArrowDownToLine, PaletteAction::Ide("goto-line"));
         cmd("在项目中搜索", "⇧⌘F", IconName::Search, PaletteAction::Ide("search"));
         cmd("源代码管理", "⌃⇧G", IconName::GitBranch, PaletteAction::Ide("scm"));
@@ -153,6 +154,7 @@ impl IdeWindow {
             "scm" => self.show_scm(window, cx),
             "terminal" => self.toggle_term(window, cx),
             "new-chat" => self.new_chat(window, cx),
+            "problems" => self.show_problems(window, cx),
             _ => {}
         }
     }

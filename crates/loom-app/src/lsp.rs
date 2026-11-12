@@ -336,6 +336,52 @@ fn fix_completion_edit(it: &mut lsp_types::CompletionItem, lines: &[&str]) {
     }
 }
 
+/// 「问题」面板的一条:错误或警告。
+#[derive(Debug, Clone, PartialEq)]
+pub struct Problem {
+    /// 行(1 起始)与列(1 起始,按字符)
+    pub line: u32,
+    pub col: u32,
+    pub error: bool,
+    pub message: String,
+    /// 服务器 / 规则来源(如 rustc、E0308),可空
+    pub source: String,
+}
+
+/// 从 LSP 诊断数组取出错误与警告(按行列排序),给「问题」面板用。
+pub fn problems_from(value: &Value, text: &str) -> Vec<Problem> {
+    let lines = split_lines(text);
+    let mut out: Vec<Problem> = value
+        .as_array()
+        .map(Vec::as_slice)
+        .unwrap_or_default()
+        .iter()
+        .filter_map(|d| serde_json::from_value::<lsp_types::Diagnostic>(d.clone()).ok())
+        .filter_map(|d| {
+            let error = match d.severity.unwrap_or(lsp_types::DiagnosticSeverity::ERROR) {
+                lsp_types::DiagnosticSeverity::ERROR => true,
+                lsp_types::DiagnosticSeverity::WARNING => false,
+                _ => return None,
+            };
+            let mut r = d.range;
+            fix_range(&mut r, &lines);
+            let code = d.code.map(|c| match c {
+                lsp_types::NumberOrString::Number(n) => n.to_string(),
+                lsp_types::NumberOrString::String(s) => s,
+            });
+            let source = match (d.source, code) {
+                (Some(s), Some(c)) => format!("{s}({c})"),
+                (Some(s), None) => s,
+                (None, Some(c)) => c,
+                (None, None) => String::new(),
+            };
+            Some(Problem { line: r.start.line + 1, col: r.start.character + 1, error, message: d.message, source })
+        })
+        .collect();
+    out.sort_by_key(|p| (p.line, p.col));
+    out
+}
+
 /// 把 LSP 诊断数组转成编辑器的诊断(范围按文档内容换算成字符列)。返回 `(诊断, 错误数, 警告数)`。
 pub fn convert_diagnostics(value: &Value, text: &str) -> (Vec<Diagnostic>, usize, usize) {
     let lines = split_lines(text);
@@ -504,6 +550,7 @@ impl IdeView {
         let text = doc.editor.read(cx).value().to_string();
         let (list, errors, warnings) = convert_diagnostics(diags, &text);
         doc.diag = (errors, warnings);
+        doc.problems = Rc::new(problems_from(diags, &text));
         let mut marks: Vec<(usize, bool)> = Vec::new();
         doc.editor.update(cx, |ed, cx| {
             let rope = ed.text().clone();
@@ -518,6 +565,13 @@ impl IdeView {
         marks.dedup();
         doc.diag_marks = Rc::new(marks);
         cx.notify();
+    }
+
+    /// 「问题」面板用:所有已打开文档里的错误与警告,按路径排序(没有问题的文件不列)。
+    pub fn all_problems(&self) -> Vec<(PathBuf, Rc<Vec<Problem>>)> {
+        let mut v: Vec<(PathBuf, Rc<Vec<Problem>>)> = self.docs.iter().filter(|(_, d)| !d.problems.is_empty()).map(|(p, d)| (p.clone(), d.problems.clone())).collect();
+        v.sort_by(|a, b| a.0.cmp(&b.0));
+        v
     }
 
     /// 状态栏用:当前文档的语言服务器摘要 `(名称与状态文字, 错误数, 警告数)`;当前文档没有接入服务器返回 `None`。

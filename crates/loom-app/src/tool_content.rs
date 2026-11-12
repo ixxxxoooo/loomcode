@@ -131,7 +131,13 @@ pub fn render_content(content: &ToolContent, run_id: Option<&str>, lang: &str, f
         }
         ToolContent::Image { label, path: Some(path) } if std::path::Path::new(path).is_file() => v_flex()
             .gap_1()
-            .child(img(std::path::PathBuf::from(path)).max_w_full().max_h(px(360.)).rounded(px(8.)).border_1().border_color(t.border))
+            .child({
+                let (p, l) = (path.clone(), label.clone());
+                div().id(SharedString::from(format!("tool-img-{path}"))).cursor_pointer().self_start().max_w_full()
+                    .tooltip(|window, cx| gpui_kit::component::tooltip::Tooltip::new("点击放大").build(window, cx))
+                    .on_click(move |_, window, cx| crate::lightbox::open(&p, &l, window, cx))
+                    .child(img(std::path::PathBuf::from(path)).max_w_full().max_h(px(360.)).rounded(px(8.)).border_1().border_color(t.border))
+            })
             .child(div().text_size(px(12.)).text_color(t.muted_foreground).child(label.clone()))
             .into_any_element(),
         ToolContent::Image { label, .. } => h_flex()

@@ -104,6 +104,28 @@ fn task_label(tool: &ToolCall) -> String {
     id.map(|i| i.chars().take(8).collect()).unwrap_or_default()
 }
 
+/// 工具名对应的中文动作(子 Agent 卡「正在 …」用);不认识的原样返回。
+pub fn action_verb(name: &str) -> String {
+    match name {
+        "Read" | "NotebookRead" => "读取文件",
+        "Edit" | "MultiEdit" | "NotebookEdit" => "编辑文件",
+        "Write" => "写入文件",
+        "Grep" => "搜索内容",
+        "Glob" => "查找文件",
+        "LS" => "列出目录",
+        "Bash" => "运行命令",
+        "BashOutput" | "TaskOutput" => "读取后台输出",
+        "WebFetch" => "获取网页",
+        "WebSearch" => "联网搜索",
+        "Task" | "Agent" => "派发子 Agent",
+        "TodoWrite" => "更新待办",
+        "ToolSearch" => "查找工具",
+        n if n.starts_with("mcp__") => return format!("调用 {}", n.splitn(3, "__").nth(1).unwrap_or(n)),
+        n => n,
+    }
+    .to_string()
+}
+
 /// 由工具调用算出展示信息。
 ///
 /// 参数:`tool` 工具调用。返回:动词 / 对象 / 附注。
@@ -244,6 +266,13 @@ mod tests {
         assert_eq!(present(&t).detail.as_deref(), Some("120 行"));
         t.input = serde_json::json!({"file_path": "/x/a.rs", "offset": 10, "limit": 20});
         assert_eq!(present(&t).detail.as_deref(), Some("L10-29 · 120 行"));
+    }
+
+    #[::core::prelude::v1::test]
+    fn 动作中文动词() {
+        assert_eq!(action_verb("Grep"), "搜索内容");
+        assert_eq!(action_verb("mcp__github__get_pr"), "调用 github");
+        assert_eq!(action_verb("Whatever"), "Whatever");
     }
 
     #[::core::prelude::v1::test]

@@ -532,7 +532,7 @@ impl Render for IdeWindow {
                     ),
             )
             .when_some(self.quick.clone(), |d, p| d.child(p))
-            .child(ide_status::status_bar(project_name, branch, self.ide.read(cx).cursor_info(cx), self.ide.read(cx).lsp_summary(), mode, demo, self.bell(cx), { let this = cx.entity(); move |window, cx| { this.update(cx, |t, cx| t.toggle_branch_picker(window, cx)); } }, self.wb.read(cx).update_badge(), { let this = cx.entity(); move |window, cx| { this.update(cx, |t, cx| t.goto_line_dialog(window, cx)); } }, { let this = cx.entity(); move |window, cx| { this.update(cx, |t, cx| t.forward(window, cx, |wb, _, cx| wb.cycle_mode(cx))); } }, cx))
+            .child(ide_status::status_bar(project_name, branch, self.ide.read(cx).cursor_info(cx), self.ide.read(cx).lsp_summary(), mode, demo, self.bell(cx), { let this = cx.entity(); move |window, cx| { this.update(cx, |t, cx| t.toggle_branch_picker(window, cx)); } }, self.wb.read(cx).update_badge(), { let this = cx.entity(); move |window, cx| { this.update(cx, |t, cx| t.goto_line_dialog(window, cx)); } }, { let this = cx.entity(); move |window, cx| { this.update(cx, |t, cx| t.forward(window, cx, |wb, _, cx| wb.cycle_mode(cx))); } }, { let this = cx.entity(); move |window, cx| { this.update(cx, |t, cx| t.show_problems(window, cx)); } }, cx))
             .when_some(self.branch_picker.clone(), |d, p| d.child(p))
             .when(self.notice_open, |d| d.child(self.notice_panel(cx)))
             .children(crate::diagram_viewer::current(window, cx))

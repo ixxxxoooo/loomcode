@@ -23,6 +23,8 @@ pub enum Detail {
     Subagent,
     Tasks,
     Run,
+    /// 问题(错误 / 警告)列表,不走详情面板,自己画
+    Problems,
 }
 
 impl Detail {
@@ -37,6 +39,7 @@ impl Detail {
             Self::Subagent => "子 Agent",
             Self::Tasks => "后台任务",
             Self::Run => "命令输出",
+            Self::Problems => "问题",
         }
     }
 }
@@ -98,6 +101,11 @@ impl IdeWindow {
         cx.notify();
     }
 
+    /// 打开底部的「问题」列表(状态栏的错误 / 警告数点击)。
+    pub(crate) fn show_problems(&mut self, window: &mut Window, cx: &mut Context<Self>) {
+        self.show_detail(Detail::Problems, window, cx);
+    }
+
     /// 关闭详情(回到对话 / 终端)。
     pub(crate) fn close_detail(&mut self, kind: Detail, window: &mut Window, cx: &mut Context<Self>) {
         if self.detail_view == Some(kind) {
@@ -124,6 +132,7 @@ impl IdeWindow {
     /// 底部面板的详情页(任务 / 命令输出):顶部「返回终端」条 + 内容。
     pub(crate) fn bottom_detail(&self, kind: Detail, cx: &mut Context<Self>) -> AnyElement {
         let t = cx.theme().clone();
+        let body = if kind == Detail::Problems { self.problems_view(cx) } else { self.detail.clone().into_any_element() };
         v_flex().size_full().bg(t.background)
             .child(
                 h_flex().h(px(30.)).flex_none().px_2().gap_1p5().items_center().border_b_1().border_color(t.border).bg(t.sidebar)
@@ -131,7 +140,52 @@ impl IdeWindow {
                         .on_click(cx.listener(move |this, _, window, cx| this.close_detail(kind, window, cx))))
                     .child(div().text_size(px(12.)).text_color(t.foreground).child(kind.label())),
             )
-            .child(div().flex_1().min_h_0().child(self.detail.clone()))
+            .child(div().flex_1().min_h_0().child(body))
             .into_any_element()
+    }
+
+    /// 「问题」列表:按文件分组,错误 / 警告图标 + 消息 + 来源 + 行:列,点击跳转。
+    fn problems_view(&self, cx: &mut Context<Self>) -> AnyElement {
+        const MAX_ROWS: usize = 500;
+        let t = cx.theme().clone();
+        let root = self.panel.read(cx).root.clone();
+        let groups = self.ide.read(cx).all_problems();
+        if groups.is_empty() {
+            return crate::ui::empty_state(IconName::CircleCheck, "没有问题", "已打开的文件里没有错误或警告(需要语言服务器已就绪)", cx).into_any_element();
+        }
+        let mut shown = 0usize;
+        let mut col = v_flex().id("problems-scroll").size_full().overflow_y_scroll().py_1();
+        for (gi, (path, items)) in groups.into_iter().enumerate() {
+            if shown >= MAX_ROWS {
+                break;
+            }
+            let rel = path.strip_prefix(&root).unwrap_or(&path).display().to_string();
+            let name = path.file_name().map(|n| n.to_string_lossy().to_string()).unwrap_or_default();
+            col = col.child(
+                h_flex().h(px(24.)).px_3().gap_1p5().items_center().text_size(px(12.))
+                    .child(crate::file_icons::file_icon_img(&name, false, false, 14.))
+                    .child(div().text_color(t.foreground).child(name))
+                    .child(div().min_w_0().truncate().text_color(t.muted_foreground).child(rel))
+                    .child(div().flex_none().text_size(px(11.)).text_color(t.muted_foreground).child(items.len().to_string())),
+            );
+            for (ii, p) in items.iter().enumerate() {
+                if shown >= MAX_ROWS {
+                    break;
+                }
+                shown += 1;
+                let (target, line, hover) = (path.clone(), p.line, t.list_hover);
+                let (ic, color) = if p.error { (IconName::CircleX, t.danger) } else { (IconName::TriangleAlert, t.warning) };
+                col = col.child(
+                    h_flex().id(SharedString::from(format!("prob-{gi}-{ii}"))).min_h(px(22.)).pl(px(34.)).pr_3().gap_2().items_start().cursor_pointer().text_size(px(12.))
+                        .hover(move |d| d.bg(hover))
+                        .on_click(cx.listener(move |this, _, window, cx| this.open_at(target.clone(), line, window, cx)))
+                        .child(div().mt(px(3.)).flex_none().child(crate::ui::icon(ic, 12., color)))
+                        .child(div().flex_1().min_w_0().text_color(t.foreground).child(p.message.lines().next().unwrap_or("").to_string()))
+                        .child(div().flex_none().text_color(t.muted_foreground).child(if p.source.is_empty() { String::new() } else { p.source.clone() }))
+                        .child(div().flex_none().text_color(t.muted_foreground).child(format!("[{}:{}]", p.line, p.col))),
+                );
+            }
+        }
+        col.into_any_element()
     }
 }

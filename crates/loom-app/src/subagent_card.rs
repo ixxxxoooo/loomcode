@@ -42,7 +42,7 @@ pub fn render(session: &Entity<SessionModel>, card_data: &SubagentCard, depth: u
         Some(if !card_data.summary.is_empty() {
             card_data.summary.clone()
         } else if !card_data.last_tool.is_empty() {
-            format!("正在 {}", card_data.last_tool)
+            format!("正在{}", crate::tool_present::action_verb(&card_data.last_tool))
         } else {
             card_data.children.last().map(|c| match c {
                 TimelineItem::Tool(x) => x.title.clone(),

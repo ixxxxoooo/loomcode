@@ -192,6 +192,13 @@ fn more() -> Script {
     b.tool("Glob", "查找 **/*.proto", json!({"pattern": "**/*.proto"}), vec![ToolContent::Text("(没有匹配)".into())]);
     b.tool("Grep", "搜索 TODO(内容模式)", json!({"pattern": "TODO", "output_mode": "content"}), vec![ToolContent::Text("src/main.rs:12: // TODO 处理错误\nsrc/router.rs:3: // TODO 缓存".into())]);
     b.tool("Skill", "技能 · pdf", json!({"skill": "pdf"}), vec![ToolContent::Text("已加载 pdf 技能".into())]);
+    b.tool("Grep", "搜索 unwrap_or_else", json!({"pattern": "unwrap_or_else", "path": "/sandbox/router-demo/src"}), vec![ToolContent::Text("No matches found".into())]);
+    b.tool("Glob", "查找 src/**/mod.rs", json!({"pattern": "src/**/mod.rs", "path": "/sandbox/router-demo"}), vec![ToolContent::Text("/sandbox/router-demo/src/net/mod.rs\n/sandbox/router-demo/src/store/mod.rs".into())]);
+    b.tool("Bash", "初始化并迁移", json!({"command": "set -e\ncargo build --release\ncargo run --bin migrate -- --dry-run\necho done", "description": "构建并试跑迁移"}), vec![ToolContent::Terminal { command: "set -e\ncargo build --release\ncargo run --bin migrate -- --dry-run\necho done".into(), output: "Finished release\ndry-run: 3 个迁移\ndone".into(), exit_code: Some(0) }]);
+    b.tool("BashOutput", "读取后台输出", json!({"bash_id": "bg_3f9a21c0"}), vec![ToolContent::Text("listening on :5173".into())]);
+    b.tool("Monitor", "监听 盯日志", json!({"description": "盯日志", "command": "tail -f app.log"}), vec![]);
+    b.tool("TaskCreate", "新建任务 补齐路由单测", json!({"subject": "补齐路由单测"}), vec![ToolContent::Text("已创建任务 #4".into())]);
+    b.tool("mcp__github__get_pr", "github · get_pr", json!({"repo": "acme/router", "number": 123}), vec![ToolContent::Text("{\"title\": \"修复路由缓存\", \"state\": \"open\", \"additions\": 42}".into())]);
     b.tool("ToolSearch", "工具搜索 · notebook", json!({"query": "notebook"}), vec![ToolContent::Text("NotebookEdit, NotebookRead".into())]);
     b.tool("LSP", "LSP · 跳转到定义 match_route", json!({"op": "definition"}), vec![ToolContent::Text("src/router.rs:12:8".into())]);
     b.tool("mcp__scheduler__cron_create", "定时任务 · 每日 09:00 跑测试", json!({"cron": "0 9 * * *"}), vec![ToolContent::Text("已创建 cron_7".into())]);

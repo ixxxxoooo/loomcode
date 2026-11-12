@@ -11,7 +11,7 @@ use gpui_kit::*;
 /// 构造状态栏。
 ///
 /// 参数:`project` 项目名;`branch` 当前分支;`info` 为 (行, 列, 语言, 是否 CRLF);`lsp` 为 (语言服务器状态文字, 错误数, 警告数);`mode` 权限模式文字;`bell` 最右侧的通知铃铛;`on_branch` 点分支名(弹出分支选择器);`demo` 是否演示模式(开发版 / 演示模式标识显示在最左,正对左下角的设置按钮)。
-pub fn status_bar(project: Option<String>, branch: Option<String>, info: Option<(u32, u32, &'static str, bool)>, lsp: Option<(String, usize, usize)>, mode: Option<String>, demo: bool, bell: AnyElement, on_branch: impl Fn(&mut Window, &mut App) + 'static, updating: Option<(String, String)>, on_pos: impl Fn(&mut Window, &mut App) + 'static, on_mode: impl Fn(&mut Window, &mut App) + 'static, cx: &App) -> impl IntoElement {
+pub fn status_bar(project: Option<String>, branch: Option<String>, info: Option<(u32, u32, &'static str, bool)>, lsp: Option<(String, usize, usize)>, mode: Option<String>, demo: bool, bell: AnyElement, on_branch: impl Fn(&mut Window, &mut App) + 'static, updating: Option<(String, String)>, on_pos: impl Fn(&mut Window, &mut App) + 'static, on_mode: impl Fn(&mut Window, &mut App) + 'static, on_problems: impl Fn(&mut Window, &mut App) + 'static, cx: &App) -> impl IntoElement {
     let t = cx.theme().clone();
     let muted = t.muted_foreground;
     // 不用 StatusBar 组件:它不保证内容垂直居中。左右两组都 items_center,整条固定 24px 高
@@ -44,9 +44,12 @@ pub fn status_bar(project: Option<String>, branch: Option<String>, info: Option<
                 .when_some(lsp, |d, (label, errors, warnings)| {
                     d.child(
                         h_flex()
+                            .id("status-problems")
+                            .h_full()
                             .gap_2()
                             .items_center()
                             .min_w_0()
+                            .when(errors + warnings > 0, |d| d.cursor_pointer().hover(|d| d.bg(t.list_hover)).on_click(move |_, window, cx| on_problems(window, cx)))
                             .when(errors > 0, |d| d.child(h_flex().flex_none().gap_1().items_center().text_color(t.danger).child(icon(IconName::CircleX, 11., t.danger)).child(errors.to_string())))
                             .when(warnings > 0, |d| d.child(h_flex().flex_none().gap_1().items_center().text_color(t.warning).child(icon(IconName::TriangleAlert, 11., t.warning)).child(warnings.to_string())))
                             .child(div().min_w_0().truncate().child(label)),

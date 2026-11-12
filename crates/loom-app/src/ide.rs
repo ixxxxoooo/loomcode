@@ -59,6 +59,8 @@ pub struct IdeDoc {
     pub(crate) diag: (usize, usize),
     /// 诊断所在行与是否错误(迷你地图刻度用)
     pub(crate) diag_marks: std::rc::Rc<Vec<(usize, bool)>>,
+    /// 错误与警告明细(「问题」面板用)
+    pub(crate) problems: std::rc::Rc<Vec<crate::lsp::Problem>>,
     /// 悬停卡片(语言服务器的悬停结果,自己渲染)
     pub(crate) hover: Option<crate::ide_hover::HoverCard>,
     /// 大纲(符号树)与刷新的防抖序号
@@ -521,7 +523,7 @@ pub(crate) fn build_doc(path: &Path, text: String, mtime: Option<std::time::Syst
         cx.notify();
     });
     let marks = None;
-    IdeDoc { editor, saved: true, crlf, mtime, stale: false, marks, minimap, mm_key: (theme, prefs.syntax_highlight), mm_gen: 0, hunks: Default::default(), pairs: crate::ide_pairs::PairState::new(language_for(path)), bracket_pair: None, bracket_marks: None, blame: Default::default(), blame_gen: 0, blame_fresh: false, lsp: None, lsp_gen: 0, diag: (0, 0), diag_marks: Default::default(), hover: None, outline: Default::default(), outline_gen: 0, _subs: vec![sub, sub2] }
+    IdeDoc { editor, saved: true, crlf, mtime, stale: false, marks, minimap, mm_key: (theme, prefs.syntax_highlight), mm_gen: 0, hunks: Default::default(), pairs: crate::ide_pairs::PairState::new(language_for(path)), bracket_pair: None, bracket_marks: None, blame: Default::default(), blame_gen: 0, blame_fresh: false, lsp: None, lsp_gen: 0, diag: (0, 0), diag_marks: Default::default(), problems: Default::default(), hover: None, outline: Default::default(), outline_gen: 0, _subs: vec![sub, sub2] }
 }
 
 /// 编辑器对宿主的通知。

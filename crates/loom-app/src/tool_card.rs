@@ -118,6 +118,8 @@ pub fn render_tool(session: &Entity<SessionModel>, tool: &ToolCall, cx: &App) ->
         h_flex().min_w_0().gap(px(5.)).items_center()
             .child(crate::file_icons::file_icon_img(&name, false, false, 14.))
             .child(div().min_w_0().truncate().text_size(px(13.)).font_weight(FontWeight::MEDIUM).text_color(subject_color).child(live_text(name, format!("tsh-n-{}", tool.id), running, cx)))
+            // 重名文件(mod.rs、index.ts)靠所在目录区分:淡色显示上一级目录名
+            .when_some(parent_dir(&p.subject), |d, dir| d.child(div().flex_none().text_size(px(11.)).text_color(t.muted_foreground.opacity(0.65)).child(dir)))
             .into_any_element()
     } else if tool.kind == ToolKind::Execute {
         div().min_w_0().truncate().text_size(px(12.)).font_family(MONO).text_color(subject_color).child(if running { crate::shimmer_text::shimmer_label(p.subject.lines().next().unwrap_or("").to_string(), format!("tsh-c-{}", tool.id), cx) } else { crate::code_hl::shell_text(p.subject.lines().next().unwrap_or(""), "", cx).into_any_element() }).into_any_element()
@@ -210,7 +212,23 @@ pub fn render_tool(session: &Entity<SessionModel>, tool: &ToolCall, cx: &App) ->
                     .child(crate::tool_content::render_content(&ToolContent::Text(text), Some(&format!("{}-params", tool.id)), "json", Some((SharedString::from(format!("tc-{}-params", tool.id)), fold, false)), cx))
                     .into_any_element()
             });
-            d.child(v_flex().w_full().pl(px(30.)).pr_2().py_1().gap_1p5().children(params_block).children(tool.content.iter().enumerate().map(|(ix, c)| {
+            // 搜索结果是纯文件列表(Glob、只列文件的 Grep)时画成可点击的文件行,点击在编辑器里打开
+            let file_list = (tool.kind == ToolKind::Search).then(|| tool.content.iter().find_map(|c| if let ToolContent::Text(x) = c { path_list(x) } else { None })).flatten();
+            let file_rows = file_list.clone().map(|files| {
+                let root = tool.locations.first().cloned().unwrap_or_default();
+                v_flex().w_full().gap_0().children(files.into_iter().enumerate().map(|(i, f)| {
+                    let name = f.rsplit('/').next().unwrap_or(&f).to_string();
+                    let rel = f.strip_prefix(&format!("{}/", root.trim_end_matches('/'))).unwrap_or(&f).to_string();
+                    let target = f.clone();
+                    h_flex().id(SharedString::from(format!("sfile-{}-{i}", tool.id))).h(px(22.)).px_1().gap_1p5().items_center().rounded(px(4.)).cursor_pointer()
+                        .hover(|d| d.bg(t.list_hover))
+                        .on_click(move |_, window, cx| window.dispatch_action(Box::new(crate::ide_window::OpenPath { path: target.clone() }), cx))
+                        .child(crate::file_icons::file_icon_img(&name, false, false, 13.))
+                        .child(div().min_w_0().truncate().text_size(px(12.)).font_family(MONO).text_color(t.foreground).child(rel))
+                }))
+                .into_any_element()
+            });
+            d.child(v_flex().w_full().pl(px(30.)).pr_2().py_1().gap_1p5().children(params_block).children(file_rows).children(tool.content.iter().enumerate().filter(|_| file_list.is_none()).map(|(ix, c)| {
                 // 每块内容一个展开状态(键 `cb:<工具 id>:<第几块>`),长输出限高滚动
                 let key = format!("cb:{}:{ix}", tool.id);
                 let fold = crate::code_box::Fold {
@@ -227,6 +245,25 @@ pub fn render_tool(session: &Entity<SessionModel>, tool: &ToolCall, cx: &App) ->
             })))
         })
         .into_any_element()
+}
+
+/// 搜索结果若是纯文件列表(可带开头的「Found N files」)就返回路径,否则 `None`:
+/// 每行必须像路径(含 `/`、没有空白、没有「:行号」),且不超过 200 个。
+fn path_list(text: &str) -> Option<Vec<String>> {
+    let mut lines = text.lines().map(str::trim).filter(|l| !l.is_empty()).peekable();
+    if lines.peek().is_some_and(|l| l.starts_with("Found ")) {
+        lines.next();
+    }
+    let files: Vec<String> = lines.map(str::to_string).collect();
+    let looks = |l: &String| l.contains('/') && !l.contains(char::is_whitespace) && !l.split(':').skip(1).next().is_some_and(|m| m.chars().next().is_some_and(|c| c.is_ascii_digit()));
+    (!files.is_empty() && files.len() <= 200 && files.iter().all(looks)).then_some(files)
+}
+
+/// 路径的上一级目录名(根目录 / 没有上一级返回 `None`)。
+fn parent_dir(path: &str) -> Option<String> {
+    let mut it = path.trim_end_matches('/').rsplit('/');
+    it.next()?;
+    it.next().filter(|d| !d.is_empty()).map(str::to_string)
 }
 
 /// 需要展示入参的工具(MCP、浏览器、其它)的入参 JSON(缩进排版);没有入参返回 `None`。
@@ -254,4 +291,25 @@ fn content_lang(tool: &ToolCall) -> String {
     let p = crate::tool_present::present(tool);
     let path = tool.locations.first().cloned().or_else(|| p.is_path.then(|| p.subject.clone()));
     path.map_or("text".into(), |p| crate::file_tree::language_for(std::path::Path::new(&p)).to_string())
+}
+
+#[cfg(test)]
+mod tests {
+    use super::{parent_dir, path_list};
+
+    #[::core::prelude::v1::test]
+    fn 纯文件列表识别() {
+        assert_eq!(path_list("Found 2 files\n/a/b.rs\n/a/c.rs").unwrap(), vec!["/a/b.rs", "/a/c.rs"]);
+        assert!(path_list("/a/b.rs:12:fn main").is_none());
+        assert!(path_list("No matches found").is_none());
+        assert!(path_list("").is_none());
+    }
+
+    #[::core::prelude::v1::test]
+    fn 上一级目录名() {
+        assert_eq!(parent_dir("/a/src/mod.rs").as_deref(), Some("src"));
+        assert_eq!(parent_dir("mod.rs"), None);
+        assert_eq!(parent_dir("/mod.rs"), None);
+        assert_eq!(parent_dir("a/mod.rs").as_deref(), Some("a"));
+    }
 }
