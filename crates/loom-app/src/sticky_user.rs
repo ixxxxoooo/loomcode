@@ -94,66 +94,88 @@ fn editing_row(session: &Entity<SessionModel>, eid: &str, cx: &App) -> Option<us
 
 /// 渲染吸附层(绝对定位在会话流顶部):吸顶卡 + 悬浮编辑卡。
 ///
+/// 这一层是一块零高度的画布,里面的卡片在**预绘制阶段**才决定画不画、画在哪。
+/// 为什么不在渲染阶段算:行的位置(`RowProbe`)是列表预绘制时才记下的,渲染阶段读到的是上一帧的。
+/// 滚动时每一帧都在动,按上一帧的位置摆卡片就总慢一帧——吸顶卡到顶的那一刻先被裁掉一截再弹回顶边,
+/// 被下一条消息顶出时两张卡之间的缝隙忽大忽小;悬浮编辑卡则跟不上它盖着的那条消息。
+/// 画布排在列表之后,它预绘制时本帧的行位置已经记好,在这里现场排版并定位,和列表同帧。
+///
 /// 参数:`session` 会话;`scroller` 滚动状态。
-pub fn render(session: &Entity<SessionModel>, scroller: &Entity<ChatScroll>, cx: &App) -> Option<AnyElement> {
-    let max_w = px(crate::timeline::content_max_w(cx));
-    let sc = scroller.read(cx);
-    // 悬浮编辑:编辑卡盖在消息原来的位置上向下展开(滚出顶部时盖在顶部),不推挤会话流。
-    // 可以同时有多张,各在各自消息的位置上,互不影响;后打开的盖在上面
-    let pinned: Vec<AnyElement> = crate::user_message::pinned_edit_ids(session, cx).into_iter().filter_map(|eid| {
-        let y = editing_row(session, &eid, cx).and_then(|r| sc.row_top(r)).unwrap_or(INSET).max(INSET);
-        let editor = crate::user_message::render_pinned_editor(session, &eid, editor_body_max(sc.viewport_height(), y), cx)?;
-        Some(
-            div().absolute().top(px(y)).left_0().right_0().px_3()
-                .child(div().w_full().px_1().flex().justify_center().child(div().w_full().max_w(max_w).child(editor)))
-                .into_any_element(),
+pub fn render(session: &Entity<SessionModel>, scroller: &Entity<ChatScroll>, _cx: &App) -> Option<AnyElement> {
+    let (session, scroller) = (session.clone(), scroller.clone());
+    Some(
+        canvas(
+            move |bounds, window, cx| {
+                // 先吸顶卡、后编辑卡:后排的盖在上面(绘制与命中测试都是)
+                let sticky = prepaint_sticky(&session, &scroller, bounds, window, cx);
+                let editors = prepaint_editors(&session, &scroller, bounds, window, cx);
+                (sticky, editors)
+            },
+            |_, (sticky, editors): (Option<(AnyElement, Bounds<Pixels>, Hsla)>, Vec<AnyElement>), window, cx| {
+                if let Some((mut el, band, bg)) = sticky {
+                    el.paint(window, cx);
+                    if band.size.height > px(0.) {
+                        window.paint_quad(fill(band, linear_gradient(180., linear_color_stop(bg, 0.), linear_color_stop(bg.opacity(0.), 1.))));
+                    }
+                }
+                for mut el in editors {
+                    el.paint(window, cx);
+                }
+            },
         )
-    }).collect();
-    // 吸顶卡照常显示:打开某条消息的编辑卡不影响顶部的吸顶卡(只有吸顶的正是这条被编辑的消息时,编辑卡已盖在顶部,才不画)
-    Some(div().absolute().top_0().left_0().right_0().child(sticky_layer(session.clone(), scroller.clone())).children(pinned).into_any_element())
+        .absolute().top_0().left_0().right_0().h(px(0.))
+        .into_any_element(),
+    )
 }
 
-/// 吸顶卡所在的层:一块零高度的画布,卡片在**预绘制阶段**才决定画不画、画在哪。
+/// 排版并定位吸顶卡,返回 (卡片, 下缘渐隐带的范围, 背景色);没有消息到顶、
+/// 或吸顶的正是被编辑的那条(编辑卡已盖在顶部)时返回 None。
+/// 卡片高度就是这里 `layout_as_root` 的结果,不用再拿上一帧量到的高度去估。
 ///
-/// 为什么不在渲染阶段算:行的位置(`RowProbe`)是列表预绘制时才记下的,渲染阶段读到的是上一帧的。
-/// 滚动时每一帧都在动,按上一帧的位置摆吸顶卡就总慢一帧——卡片到顶的那一刻先被裁掉一截再弹回顶边,
-/// 被下一条消息顶出时两张卡之间的缝隙忽大忽小,看起来就是「跳」。画布排在列表之后,
-/// 它预绘制时本帧的行位置已经记好,在这里现场排版并定位,和列表同帧。
-/// 卡片高度也在这里现场量(`layout_as_root` 的结果),不用再拿上一帧量到的高度去估。
-fn sticky_layer(session: Entity<SessionModel>, scroller: Entity<ChatScroll>) -> AnyElement {
-    canvas(
-        move |bounds, window, cx| {
-            let (target, next_top) = {
-                let sc = scroller.read(cx);
-                let m = session.read(cx);
-                let target = resolve(&m.rows, &m.state.items, sc.max_painted().unwrap_or(0), |r| sc.row_scrolled_past(r))?;
-                let next_top = target.next.and_then(|n| sc.row_top(n));
-                (target, next_top)
-            };
-            // 吸顶的正是被编辑的那条:编辑卡已盖在顶部,不再画
-            if crate::user_message::pinned_edit_ids(&session, cx).contains(&target.id) {
-                return None;
-            }
-            let mut el = sticky_element(&session, &target, bounds.size.width, cx);
-            let size = el.layout_as_root(gpui_kit::size(AvailableSpace::Definite(bounds.size.width), AvailableSpace::MinContent), window, cx);
-            let h = f32::from(size.height);
-            let push = push_offset(next_top, h);
-            let top = STICKY_TOP + push;
-            el.prepaint_at(point(bounds.left(), bounds.top() + px(top)), window, cx);
-            // 卡片下缘的渐隐带:正文从卡片下面平滑淡入;下一条用户消息靠近时收窄到两张卡之间的缝隙,不盖住它的上边框
-            let fade = fade_height(next_top, top + h);
-            let band = Bounds::new(point(bounds.left(), bounds.top() + px(top + h)), gpui_kit::size(bounds.size.width, px(fade)));
-            Some((el, band, cx.theme().background))
-        },
-        |_, state: Option<(AnyElement, Bounds<Pixels>, Hsla)>, window, cx| {
-            if let Some((mut el, band, bg)) = state {
-                el.paint(window, cx);
-                if band.size.height > px(0.) {
-                    window.paint_quad(fill(band, linear_gradient(180., linear_color_stop(bg, 0.), linear_color_stop(bg.opacity(0.), 1.))));
-                }
-            }
-        },
-    ).absolute().top_0().left_0().right_0().h(px(0.)).into_any_element()
+/// 参数:`bounds` 吸附层的范围(原点 = 会话流视口左上角,宽度 = 视口宽度)。
+fn prepaint_sticky(session: &Entity<SessionModel>, scroller: &Entity<ChatScroll>, bounds: Bounds<Pixels>, window: &mut Window, cx: &mut App) -> Option<(AnyElement, Bounds<Pixels>, Hsla)> {
+    let (target, next_top) = {
+        let sc = scroller.read(cx);
+        let m = session.read(cx);
+        let target = resolve(&m.rows, &m.state.items, sc.max_painted().unwrap_or(0), |r| sc.row_scrolled_past(r))?;
+        let next_top = target.next.and_then(|n| sc.row_top(n));
+        (target, next_top)
+    };
+    if crate::user_message::pinned_edit_ids(session, cx).contains(&target.id) {
+        return None;
+    }
+    let mut el = sticky_element(session, &target, bounds.size.width, cx);
+    let size = el.layout_as_root(gpui_kit::size(AvailableSpace::Definite(bounds.size.width), AvailableSpace::MinContent), window, cx);
+    let h = f32::from(size.height);
+    let top = STICKY_TOP + push_offset(next_top, h);
+    el.prepaint_at(point(bounds.left(), bounds.top() + px(top)), window, cx);
+    // 卡片下缘的渐隐带:正文从卡片下面平滑淡入;下一条用户消息靠近时收窄到两张卡之间的缝隙,不盖住它的上边框
+    let band = Bounds::new(point(bounds.left(), bounds.top() + px(top + h)), gpui_kit::size(bounds.size.width, px(fade_height(next_top, top + h))));
+    Some((el, band, cx.theme().background))
+}
+
+/// 排版并定位悬浮编辑卡:编辑卡盖在消息原来的位置上向下展开(滚出顶部时盖在顶部),不推挤会话流。
+/// 可以同时有多张,各在各自消息的位置上,互不影响;后打开的盖在上面。
+///
+/// 参数:`bounds` 吸附层的范围。
+fn prepaint_editors(session: &Entity<SessionModel>, scroller: &Entity<ChatScroll>, bounds: Bounds<Pixels>, window: &mut Window, cx: &mut App) -> Vec<AnyElement> {
+    let max_w = px(crate::timeline::content_max_w(cx));
+    let mut out = Vec::new();
+    for eid in crate::user_message::pinned_edit_ids(session, cx) {
+        let (y, viewport_h) = {
+            let sc = scroller.read(cx);
+            (editing_row(session, &eid, cx).and_then(|r| sc.row_top(r)).unwrap_or(INSET).max(INSET), sc.viewport_height())
+        };
+        let Some(editor) = crate::user_message::render_pinned_editor(session, &eid, editor_body_max(viewport_h, y), cx) else { continue };
+        // 外层容器与会话流的行写法一致,编辑卡与它盖住的消息卡等宽
+        let mut el = div().w(bounds.size.width).px_3()
+            .child(div().w_full().px_1().flex().justify_center().child(div().w_full().max_w(max_w).child(editor)))
+            .into_any_element();
+        el.layout_as_root(gpui_kit::size(AvailableSpace::Definite(bounds.size.width), AvailableSpace::MinContent), window, cx);
+        el.prepaint_at(point(bounds.left(), bounds.top() + px(y)), window, cx);
+        out.push(el);
+    }
+    out
 }
 
 /// 吸顶卡的元素:与会话流里的消息卡是同一个组件(同样的折叠 / 展开、悬停的回退 / 重试 / 复制、点击编辑),
