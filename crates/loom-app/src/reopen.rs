@@ -59,6 +59,24 @@ pub fn hide_self(cx: &mut App) {
     cx.hide();
 }
 
+/// 关闭 Agent 窗口(红色关闭按钮、⌘W)。
+///
+/// 独立 IDE 窗口开着时只把当前窗口藏起来(`orderOut`),IDE 窗口留在屏幕上;
+/// 否则隐藏整个应用(`cx.hide()` 会连带隐藏本进程的所有窗口,所以不能在 IDE 开着时用)。
+/// 藏起来的窗口之后由「再次打开」/ 程序坞 / 快捷键带回(`activate_window` 会重新显示它)。
+pub fn hide_agent_window(cx: &mut App) {
+    let ide_open = cx
+        .try_global::<crate::WorkbenchRef>()
+        .and_then(|r| r.0.upgrade())
+        .is_some_and(|wb| wb.read(cx).ide_window.is_some_and(|h| cx.windows().contains(&h)));
+    #[cfg(target_os = "macos")]
+    if ide_open && mac::hide_key_window() {
+        return;
+    }
+    let _ = ide_open;
+    hide_self(cx);
+}
+
 /// 把主窗口带回前台:取消隐藏、恢复最小化,没有主窗口就重建。
 ///
 /// 参数:`demo` 是否演示模式;`session` 启动时指定的会话(重建主窗口时沿用)。
@@ -455,6 +473,18 @@ mod mac {
                 let _: () = msg_send![w, orderFrontRegardless];
             }
         });
+    }
+
+    /// 只把当前的键盘窗口藏起来(不隐藏应用,其他窗口不受影响)。没有键盘窗口返回 `false`。
+    pub fn hide_key_window() -> bool {
+        let Some(mtm) = MainThreadMarker::new() else { return false };
+        let app = NSApplication::sharedApplication(mtm);
+        let w: Option<Retained<AnyObject>> = unsafe { msg_send![&*app, keyWindow] };
+        let Some(w) = w else { return false };
+        unsafe {
+            let _: () = msg_send![&*w, orderOut: Option::<&AnyObject>::None];
+        }
+        true
     }
 
     /// 对应用的每个窗口执行 `f`。

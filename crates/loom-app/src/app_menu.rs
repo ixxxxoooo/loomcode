@@ -104,7 +104,7 @@ fn close_window(cx: &mut App) {
     if ide.is_some_and(|h| h.window_id() == active.window_id()) {
         on_active_window(cx, |window, _| window.remove_window());
     } else {
-        crate::reopen::hide_self(cx);
+        crate::reopen::hide_agent_window(cx);
     }
 }
 
