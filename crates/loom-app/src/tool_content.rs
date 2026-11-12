@@ -39,6 +39,12 @@ fn sel_id(kind: &str, run_id: Option<&str>, fold: &Option<(SharedString, crate::
     SharedString::from(format!("{kind}-{:x}-sel", h.finish()))
 }
 
+/// 终端块头部显示的命令:多行命令(heredoc、`&&` 串)最多显示前 6 行,超出加「…」。
+fn command_preview(command: &str) -> String {
+    let lines: Vec<&str> = command.trim().lines().collect();
+    if lines.len() <= 6 { lines.join("\n") } else { format!("{}\n…(共 {} 行)", lines[..6].join("\n"), lines.len()) }
+}
+
 /// 渲染一个内容块。
 /// 参数:`run_id` 所属工具调用的 id;终端块用它显示「在终端面板查看」;`lang` 文本内容的语言(`text` 不着色);
 /// `fold` 限高滚动用的 (元素 id, 展开状态, 是否运行中贴底跟随),`None` 时不限高(只按行数截断)。
@@ -74,11 +80,11 @@ pub fn render_content(content: &ToolContent, run_id: Option<&str>, lang: &str, f
                     h_flex().gap_2().mb_1().items_start()
                         // 长命令在卡片内折行,不再把右侧的状态与「在终端面板查看」挤出去;
                         // 命令第一行与右侧状态簇同高(22),垂直居中对齐,折行后右侧仍贴着第一行
-                        .child(div().flex_1().min_w_0().line_height(px(22.)).text_color(t.muted_foreground).child(crate::code_hl::shell_text(command.lines().next().unwrap_or(""), "$ ", cx)))
+                        .child(div().flex_1().min_w_0().line_height(px(22.)).text_color(t.muted_foreground).child(crate::code_hl::shell_text(&command_preview(command), "$ ", cx)))
                         .child(h_flex().flex_none().h(px(22.)).gap_2().items_center()
-                        .when_some(*exit_code, |d, code| {
-                            let (fg, bg) = if code == 0 { (t.success, t.background) } else { (t.danger, t.background) };
-                            d.child(div().flex_none().child(pill(format!("退出码 {code}"), fg, bg)))
+                        // 成功(退出码 0)不显示,只在失败时标出退出码
+                        .when_some(exit_code.filter(|c| *c != 0), |d, code| {
+                            d.child(div().flex_none().child(pill(format!("退出码 {code}"), t.danger, t.background)))
                         })
                         .when_some(run_id.map(str::to_string), |d, id| {
                             // Agent 窗口直接打开右栏终端面板;IDE 窗口转给工作台并提示
@@ -96,10 +102,12 @@ pub fn render_content(content: &ToolContent, run_id: Option<&str>, lang: &str, f
         }
         ToolContent::Diff { path, old, new } => {
             let (lines, added, removed) = diff::compute(old, new);
+            // 工具卡里(带折叠状态)路径与增删数已在行标题上,这里不再重复;权限卡等没有行标题的场合保留
+            let show_head = fold.is_none();
             v_flex()
                 .w_full()
                 .gap_1()
-                .child(
+                .when(show_head, |d| d.child(
                     h_flex().gap_2().text_size(px(12.)).font_family(MONO)
                         .child({
                             // 点击路径:在编辑器里打开(IDE 窗口由 IdeWindow 处理,Agent 窗口由 Workbench 处理)
@@ -111,7 +119,7 @@ pub fn render_content(content: &ToolContent, run_id: Option<&str>, lang: &str, f
                         })
                         .child(div().text_color(t.success).child(format!("+{added}")))
                         .child(div().text_color(t.danger).child(format!("−{removed}"))),
-                )
+                ))
                 .child({
                     let el = diff::render(&lines, 120, crate::file_tree::language_for(std::path::Path::new(path)), cx);
                     match &fold {

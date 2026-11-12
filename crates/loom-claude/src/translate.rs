@@ -1349,6 +1349,19 @@ pub fn build_tool(id: &str, name: &str, input: &Value, cwd: &str) -> ToolCall {
         "WebSearch" => format!("搜索网页:{}", str_of(input, "query")),
         "ToolSearch" => format!("查找工具:{}", str_of(input, "query")),
         "EnterPlanMode" => "进入计划模式".into(),
+        "Skill" => format!("技能 · {}", str_of(input, "skill")),
+        "SlashCommand" => format!("命令 {}", str_of(input, "command")),
+        "LSP" => format!("代码智能 · {}", str_of(input, "operation")),
+        "TaskCreate" => format!("新建任务 {}", str_of(input, "subject")),
+        "TaskUpdate" => {
+            let status = str_of(input, "status");
+            let id = str_of(input, "taskId");
+            if status.is_empty() { format!("更新任务 {id}") } else { format!("更新任务 {id} → {status}") }
+        }
+        "TaskGet" => format!("查看任务 {}", str_of(input, "taskId")),
+        "TaskList" => "任务列表".into(),
+        "EnterWorktree" => format!("进入工作树 {}", str_of(input, "name")),
+        "ExitWorktree" => "退出工作树".into(),
         n if n.starts_with("mcp__") => {
             let mut parts = n.splitn(3, "__").skip(1);
             let server = parts.next().unwrap_or_default();
@@ -1399,6 +1412,15 @@ pub fn build_tool(id: &str, name: &str, input: &Value, cwd: &str) -> ToolCall {
 
 #[cfg(test)]
 mod tests {
+    #[test]
+    fn 其它工具有中文标题() {
+        let title = |name: &str, input: Value| build_tool("1", name, &input, "").title;
+        assert_eq!(title("Skill", json!({"skill": "pdf"})), "技能 · pdf");
+        assert_eq!(title("TaskCreate", json!({"subject": "写测试"})), "新建任务 写测试");
+        assert_eq!(title("TaskUpdate", json!({"taskId": "3", "status": "completed"})), "更新任务 3 → completed");
+        assert_eq!(title("LSP", json!({"operation": "goToDefinition"})), "代码智能 · goToDefinition");
+    }
+
     #[::core::prelude::v1::test]
     fn result_带出回合消耗统计() {
         let mut t = Translator::new("/x");

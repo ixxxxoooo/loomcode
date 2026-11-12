@@ -69,6 +69,13 @@ pub fn expands_by_default(tool: &ToolCall, density: ToolDensity) -> bool {
     }
 }
 
+/// 已处理的权限请求,时间线里已有同一个工具的行(工具行自己会显示「已拒绝」等状态):
+/// 「已允许 · 编辑 a.rs」单独占一行只是重复,隐藏。
+fn permission_echoed(items: &[TimelineItem], i: usize) -> bool {
+    let TimelineItem::Permission(p) = &items[i] else { return false };
+    p.resolved.is_some() && items.iter().any(|x| matches!(x, TimelineItem::Tool(t) if t.id == p.tool.id))
+}
+
 /// 回合在进行时,末尾是否需要「处理中」提示:最后一个条目没有在流式输出 / 没有运行中的工具 /
 /// 没有在等待用户(那些自己已经有动态指示);用户已处理完的权限 / 提问 / 计划卡不算。
 ///
@@ -143,7 +150,7 @@ pub fn build_rows(items: &[TimelineItem], working: bool, density: ToolDensity, d
     let mut i = 0;
     while i < items.len() {
         // 待处理的权限 / 提问在输入框上方显示,时间线里不占行
-        if crate::dock_cards::hidden_in_timeline(&items[i]) {
+        if crate::dock_cards::hidden_in_timeline(&items[i]) || permission_echoed(items, i) {
             i += 1;
             continue;
         }
@@ -258,6 +265,23 @@ mod tests {
         assert!(!build_rows(&running, false, ToolDensity::Standard, &d).iter().any(|r| matches!(r, Row::Digest(_))), "后台子 Agent 还在跑,不能被折叠");
         let done = vec![user("u1"), tool("1", ToolKind::Read, ToolStatus::Completed), TimelineItem::Subagent(C::new("s", "x", "d", S::Completed)), tool("2", ToolKind::Read, ToolStatus::Completed), text("answer")];
         assert!(build_rows(&done, false, ToolDensity::Standard, &d).iter().any(|r| matches!(r, Row::Digest(_))));
+    }
+
+    #[test]
+    fn 已处理的权限行在工具行存在时隐藏() {
+        use loom_core::{PermissionOption, PermissionOptionKind, PermissionRequest};
+        let t = tool("t1", ToolKind::Edit, ToolStatus::Completed);
+        let req = |tool_id: &str| TimelineItem::Permission(PermissionRequest {
+            id: "p".into(),
+            tool: match tool(tool_id, ToolKind::Edit, ToolStatus::Completed) { TimelineItem::Tool(t) => t, _ => unreachable!() },
+            options: vec![PermissionOption { id: "ok".into(), label: "允许".into(), kind: PermissionOptionKind::AllowOnce }],
+            resolved: Some("ok".into()),
+        });
+        let rows = build_rows(&[user("u"), req("t1"), t.clone()], false, ToolDensity::Standard, &Default::default());
+        assert_eq!(rows, vec![Row::Item(0), Row::Item(2)]);
+        // 时间线里没有对应的工具行时仍保留这行
+        let rows = build_rows(&[user("u"), req("zz")], false, ToolDensity::Standard, &Default::default());
+        assert_eq!(rows, vec![Row::Item(0), Row::Item(1)]);
     }
 
     #[test]

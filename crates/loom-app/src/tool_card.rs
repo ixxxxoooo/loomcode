@@ -88,7 +88,9 @@ pub fn render_tool(session: &Entity<SessionModel>, tool: &ToolCall, cx: &App) ->
     // 详细档下编辑与命令默认展开;手动点击反转默认状态
     let density = cx.try_global::<crate::UiPrefs>().map_or_else(Default::default, |p| p.tool_density);
     let detailed = crate::row_groups::expands_by_default(tool, density);
-    let has_body = !tool.content.is_empty();
+    // MCP / 浏览器 / 其它工具:展开后先给一块「参数」(入参的 JSON),不然看不出调用了什么
+    let params = params_json(tool);
+    let has_body = !tool.content.is_empty() || params.is_some();
     // 失败的命令默认展开,直接看到报错输出(详细档本来就展开);手动点击反转默认状态
     // 运行中的命令一旦有了实时输出也默认展开:长命令要能边等边看进度
     let live_exec = tool.status == ToolStatus::Running && tool.kind == ToolKind::Execute && has_body;
@@ -192,7 +194,23 @@ pub fn render_tool(session: &Entity<SessionModel>, tool: &ToolCall, cx: &App) ->
         .w_full()
         .child(header)
         .when(expanded && has_body, |d| {
-            d.child(v_flex().w_full().pl(px(30.)).pr_2().py_1().gap_1p5().children(tool.content.iter().enumerate().map(|(ix, c)| {
+            let params_block = params.clone().map(|text| {
+                let key = format!("cb:{}:params", tool.id);
+                let fold = crate::code_box::Fold {
+                    expanded: session.read(cx).is_expanded(&key),
+                    collapsed_h: None,
+                    copy: None,
+                    on_toggle: std::rc::Rc::new({
+                        let s = session.clone();
+                        move |_, cx| { s.update(cx, |m, cx| m.toggle(&key, cx)); }
+                    }),
+                };
+                v_flex().w_full().gap_0p5()
+                    .child(div().text_size(px(11.)).text_color(t.muted_foreground).child("参数"))
+                    .child(crate::tool_content::render_content(&ToolContent::Text(text), Some(&format!("{}-params", tool.id)), "json", Some((SharedString::from(format!("tc-{}-params", tool.id)), fold, false)), cx))
+                    .into_any_element()
+            });
+            d.child(v_flex().w_full().pl(px(30.)).pr_2().py_1().gap_1p5().children(params_block).children(tool.content.iter().enumerate().map(|(ix, c)| {
                 // 每块内容一个展开状态(键 `cb:<工具 id>:<第几块>`),长输出限高滚动
                 let key = format!("cb:{}:{ix}", tool.id);
                 let fold = crate::code_box::Fold {
@@ -211,10 +229,25 @@ pub fn render_tool(session: &Entity<SessionModel>, tool: &ToolCall, cx: &App) ->
         .into_any_element()
 }
 
+/// 需要展示入参的工具(MCP、浏览器、其它)的入参 JSON(缩进排版);没有入参返回 `None`。
+fn params_json(tool: &ToolCall) -> Option<String> {
+    if !matches!(tool.kind, ToolKind::Mcp | ToolKind::Browser | ToolKind::Other) {
+        return None;
+    }
+    let obj = tool.input.as_object().filter(|o| !o.is_empty())?;
+    serde_json::to_string_pretty(obj).ok()
+}
+
 /// 工具结果文本的语言:读 / 写单个文件时按扩展名,其他工具(搜索、列表等)不着色。
 ///
 /// 参数:`tool` 工具调用。返回:语言名,`text` 表示不着色。
 fn content_lang(tool: &ToolCall) -> String {
+    // MCP 等工具返回的 JSON 文本按 json 着色
+    if matches!(tool.kind, ToolKind::Mcp | ToolKind::Browser | ToolKind::Other)
+        && tool.content.iter().any(|c| matches!(c, ToolContent::Text(t) if { let t = t.trim_start(); (t.starts_with('{') || t.starts_with('[')) && serde_json::from_str::<serde_json::Value>(t).is_ok() }))
+    {
+        return "json".into();
+    }
     if !matches!(tool.kind, ToolKind::Read | ToolKind::Write) {
         return "text".into();
     }
