@@ -237,6 +237,8 @@ pub struct Workbench {
     pending_editor_open: Option<(PathBuf, bool)>,
     /// 开启融合模式时独立 IDE 窗口被收起:下一次渲染在本窗口进入融合 IDE(值 = 是否继续显示设置页)
     pending_enter_ide: Option<bool>,
+    /// 关闭融合模式时融合 IDE 正开着:下一次渲染把它作为独立 IDE 窗口打开(设置页留在本窗口)
+    pending_open_ide: bool,
 }
 
 impl Workbench {
@@ -376,6 +378,7 @@ impl Workbench {
             restore_expanded: Vec::new(),
             pending_editor_open: None,
             pending_enter_ide: None,
+            pending_open_ide: false,
         };
         // 编辑器状态变化(开关标签、光标移动)→ 防抖保存标签记忆
         let editor_sub = cx.observe(&editor, |this, _, cx| this.schedule_editor_memory(cx));
@@ -1680,6 +1683,10 @@ impl Workbench {
             });
         }
         if !self.settings.fused_ide {
+            // 融合 IDE 正开着:IDE 变成独立窗口接着用,本窗口回到 Agent(设置页这类整窗页面原样保留)
+            if self.ide && self.ide_window.is_none() {
+                self.pending_open_ide = true;
+            }
             self.ide = false;
         }
         cx.notify();
@@ -1865,6 +1872,13 @@ impl Workbench {
             if keep_settings {
                 self.page = Page::Settings;
             }
+        }
+        // 关闭融合模式后,融合 IDE 变成独立窗口;焦点留在正在操作的本窗口(设置页),不被新窗口抢走
+        if std::mem::take(&mut self.pending_open_ide) && !self.settings.fused_ide && self.ide_window.is_none() {
+            self.open_ide_window(window, cx);
+            let me = window.window_handle();
+            // 独立窗口本身是推迟创建的,再推迟一轮把焦点还给本窗口
+            cx.defer(move |cx| cx.defer(move |cx| { let _ = me.update(cx, |_, w, _| w.activate_window()); }));
         }
         // 没有窗口句柄时挂起的打开请求(UiRequest)在这里执行
         if let Some((path, pinned)) = self.pending_editor_open.take() {
