@@ -235,6 +235,8 @@ pub struct Workbench {
     pub restore_expanded: Vec<String>,
     /// 等待在渲染时(有窗口)打开的文件:(路径, 是否固定为正式标签)
     pending_editor_open: Option<(PathBuf, bool)>,
+    /// 开启融合模式时独立 IDE 窗口被收起:下一次渲染在本窗口进入融合 IDE(值 = 是否继续显示设置页)
+    pending_enter_ide: Option<bool>,
 }
 
 impl Workbench {
@@ -373,6 +375,7 @@ impl Workbench {
             ide_tree: None,
             restore_expanded: Vec::new(),
             pending_editor_open: None,
+            pending_enter_ide: None,
         };
         // 编辑器状态变化(开关标签、光标移动)→ 防抖保存标签记忆
         let editor_sub = cx.observe(&editor, |this, _, cx| this.schedule_editor_memory(cx));
@@ -1620,6 +1623,7 @@ impl Workbench {
         }
         let wb = cx.entity();
         let reg = wb.clone();
+        self.ide_settings = false;
         let demo = self.demo;
         let root = self.ide_project_path().unwrap_or_default();
         let tabs = self.ui_state.last.chat_tabs.clone();
@@ -1658,12 +1662,22 @@ impl Workbench {
         });
     }
 
-    /// 融合模式开关变化:开启时收起已打开的独立 IDE 窗口。
+    /// 融合模式开关变化:开启时收起已打开的独立 IDE 窗口,并在本窗口接着进入融合 IDE(设置页开着就继续显示设置)。
     pub fn on_fused_changed(&mut self, cx: &mut Context<Self>) {
         if self.settings.fused_ide
             && let Some(handle) = self.ide_window.take()
         {
-            let _ = handle.update(cx, |_, w, _| w.remove_window());
+            let keep_settings = std::mem::take(&mut self.ide_settings) || self.page == Page::Settings;
+            self.ide_standalone = None;
+            self.pending_enter_ide = Some(keep_settings);
+            // 这个调用往往发生在独立窗口自己的点击事件里(窗口正在更新),直接关会失败,所以推迟;之后把 Agent 窗口带到前台
+            let agent = self.agent_window;
+            cx.defer(move |cx| {
+                let _ = handle.update(cx, |_, w, _| w.remove_window());
+                if let Some(a) = agent {
+                    let _ = a.update(cx, |_, w, _| w.activate_window());
+                }
+            });
         }
         if !self.settings.fused_ide {
             self.ide = false;
@@ -1842,6 +1856,16 @@ impl Workbench {
     }
 
     fn render_inner(&mut self, window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
+        // 开启融合模式后,在本窗口接着进入融合 IDE(设置页开着就继续显示设置,返回后回到 IDE)
+        if let Some(keep_settings) = self.pending_enter_ide.take()
+            && self.settings.fused_ide
+            && !self.ide
+        {
+            self.toggle_ide(window, cx);
+            if keep_settings {
+                self.page = Page::Settings;
+            }
+        }
         // 没有窗口句柄时挂起的打开请求(UiRequest)在这里执行
         if let Some((path, pinned)) = self.pending_editor_open.take() {
             self.open_in_editor(path, pinned, window, cx);
