@@ -11,7 +11,7 @@ use gpui_kit::*;
 /// 构造状态栏。
 ///
 /// 参数:`project` 项目名;`branch` 当前分支;`info` 为 (行, 列, 语言, 是否 CRLF);`lsp` 为 (语言服务器状态文字, 错误数, 警告数);`mode` 权限模式文字;`bell` 最右侧的通知铃铛;`on_branch` 点分支名(弹出分支选择器);`demo` 是否演示模式(开发版 / 演示模式标识显示在最左,正对左下角的设置按钮)。
-pub fn status_bar(project: Option<String>, branch: Option<String>, info: Option<(u32, u32, &'static str, bool)>, lsp: Option<(String, usize, usize)>, mode: Option<String>, demo: bool, bell: AnyElement, on_branch: impl Fn(&mut Window, &mut App) + 'static, updating: Option<(String, String)>, cx: &App) -> impl IntoElement {
+pub fn status_bar(project: Option<String>, branch: Option<String>, info: Option<(u32, u32, &'static str, bool)>, lsp: Option<(String, usize, usize)>, mode: Option<String>, demo: bool, bell: AnyElement, on_branch: impl Fn(&mut Window, &mut App) + 'static, updating: Option<(String, String)>, on_pos: impl Fn(&mut Window, &mut App) + 'static, on_mode: impl Fn(&mut Window, &mut App) + 'static, cx: &App) -> impl IntoElement {
     let t = cx.theme().clone();
     let muted = t.muted_foreground;
     // 不用 StatusBar 组件:它不保证内容垂直居中。左右两组都 items_center,整条固定 24px 高
@@ -63,9 +63,19 @@ pub fn status_bar(project: Option<String>, branch: Option<String>, info: Option<
                         .tooltip(move |window, cx| gpui_kit::component::tooltip::Tooltip::new(tip.clone()).build(window, cx))
                         .child(icon(IconName::ArrowDown, 11., t.primary)).child(text),
                 ))
-                .when_some(mode, |d, m| d.child(div().child(format!("权限:{m}"))))
+                .when_some(mode, |d, m| d.child(
+                    div().id("status-mode").h_full().px_1().flex().items_center().cursor_pointer().tooltip(|window, cx| gpui_kit::component::tooltip::Tooltip::new("切换权限模式(⇧Tab)").build(window, cx))
+                        .hover(|d| d.bg(t.list_hover).text_color(t.foreground))
+                        .on_click(move |_, window, cx| on_mode(window, cx))
+                        .child(format!("权限:{m}")),
+                ))
                 .when_some(info, |d, (line, col, lang, crlf)| {
-                    d.child(format!("行 {line},列 {col}"))
+                    d.child(
+                        div().id("status-pos").h_full().px_1().flex().items_center().cursor_pointer().tooltip(|window, cx| gpui_kit::component::tooltip::Tooltip::new("跳转到行(⌃G)").build(window, cx))
+                            .hover(|d| d.bg(t.list_hover).text_color(t.foreground))
+                            .on_click(move |_, window, cx| on_pos(window, cx))
+                            .child(format!("行 {line},列 {col}")),
+                    )
                         .child(if lang == "text" { "纯文本".to_string() } else { lang.to_string() })
                         .child("UTF-8")
                         .child(if crlf { "CRLF" } else { "LF" })

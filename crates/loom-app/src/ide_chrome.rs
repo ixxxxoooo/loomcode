@@ -311,7 +311,7 @@ pub fn breadcrumbs(path: &Path, root: &str, saved: bool, note: Option<String>, b
 /// 没有打开文件时的欢迎页:常用快捷键。
 pub fn welcome(cx: &App) -> impl IntoElement {
     let t = cx.theme();
-    let hints = [("显示 / 隐藏侧栏", "⌘B"), ("显示 / 隐藏对话栏", "⌥⌘B"), ("查找 / 替换", "⌘F"), ("保存文件", "⌘S"), ("关闭标签", "⌘W"), ("切换标签", "⌥⌘← / →"), ("切换到 Agent", "⇧⌘E")];
+    let hints = [("快速打开文件", "⌘P"), ("命令面板", "⇧⌘P"), ("在项目中搜索", "⇧⌘F"), ("在文件中查找", "⌘F"), ("转到符号", "⇧⌘O"), ("显示 / 隐藏终端", "⌃`"), ("引用选中内容到对话", "⌘L"), ("显示 / 隐藏侧栏 / 对话栏", "⌘B / ⌥⌘B"), ("切换到 Agent", "⇧⌘E")];
     v_flex()
         .size_full()
         .overflow_hidden()

@@ -9,7 +9,7 @@ use crate::model::{SessionModel, UiRequest};
 use crate::palette::{Group, Palette, PaletteAction, PaletteEvent, PaletteItem};
 use crate::right_panel::{PanelEvent, RightPanel};
 use crate::settings::{self, SettingsTab};
-use crate::ui::{empty_state, icon};
+use crate::ui::empty_state;
 use crate::{sidebar, theme};
 use gpui_kit::assets::IconName;
 use gpui_kit::component::TitleBar;
@@ -723,7 +723,7 @@ impl Workbench {
     }
 
     /// 执行面板动作。
-    fn run_palette_action(&mut self, action: PaletteAction, window: &mut Window, cx: &mut Context<Self>) {
+    pub(crate) fn run_palette_action(&mut self, action: PaletteAction, window: &mut Window, cx: &mut Context<Self>) {
         match action {
             PaletteAction::NewSession => self.new_session(self.target_project(), window, cx),
             PaletteAction::ToggleLeft => { self.left_open = !self.left_open; cx.notify(); }
@@ -1744,15 +1744,9 @@ impl Workbench {
 
 }
 
-/// 渲染对话区(时间线 + 输入框 + 静态页脚),IDE 窗口使用。
-pub fn chat_panel(parts: Option<(Entity<SessionModel>, Entity<Composer>)>, branch: Option<String>, demo: bool, cx: &App) -> AnyElement {
-    let t = cx.theme().clone();
-    let footer = h_flex().h(px(26.)).px_1().items_center().text_size(px(12.)).text_color(t.muted_foreground)
-        .child(h_flex().gap_1().items_center().when_some(branch, |d, b| d.child(icon(IconName::GitBranch, 12., t.muted_foreground)).child(b)))
-        .child(div().flex_1())
-        .child(if demo { "" } else { "Claude Code" })
-        .into_any_element();
-    chat_panel_with_footer(parts, footer, false, cx)
+/// 渲染对话区(时间线 + 输入框),IDE 窗口使用。分支与运行模式已在状态栏里,这里不再放页脚,只留一点底部间距。
+pub fn chat_panel(parts: Option<(Entity<SessionModel>, Entity<Composer>)>, cx: &App) -> AnyElement {
+    chat_panel_with_footer(parts, div().h(px(4.)).into_any_element(), false, cx)
 }
 
 /// 渲染对话区(时间线 + 输入框),页脚由调用方提供。Agent 窗口用它放可点击的分支菜单。

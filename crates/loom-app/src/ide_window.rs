@@ -326,7 +326,7 @@ impl IdeWindow {
     /// 独立窗口里的窗口级动作交给工作台(融合模式下动作冒泡到工作台自己处理)。
     ///
     /// 工作台属于另一个窗口的更新链,所以一律推迟执行。
-    fn forward<F: FnOnce(&mut Workbench, &mut Window, &mut Context<Workbench>) + 'static>(&mut self, window: &mut Window, cx: &mut Context<Self>, f: F) {
+    pub(crate) fn forward<F: FnOnce(&mut Workbench, &mut Window, &mut Context<Workbench>) + 'static>(&mut self, window: &mut Window, cx: &mut Context<Self>, f: F) {
         if self.wb.read(cx).settings.fused_ide {
             cx.propagate();
             return;
@@ -425,7 +425,7 @@ impl Render for IdeWindow {
             .on_hover(move |on, window, _| crate::ide_chat_tabs::set_chat_hover(*on, window, &chat_me))
             .child(v_flex().size_full().child(self.chat_tabs_bar(cx)).child(div().flex_1().min_h_0().child(match self.detail_view.filter(|d| d.in_chat()) {
                 Some(kind) if !foreign => self.chat_detail(kind, cx),
-                _ => if self.chat_empty || foreign { self.chat_empty_view(cx) } else { chat_panel(parts, branch.clone(), demo, cx) },
+                _ => if self.chat_empty || foreign { self.chat_empty_view(cx) } else { chat_panel(parts, cx) },
             })))
             .into_any_element();
         v_flex()
@@ -532,7 +532,7 @@ impl Render for IdeWindow {
                     ),
             )
             .when_some(self.quick.clone(), |d, p| d.child(p))
-            .child(ide_status::status_bar(project_name, branch, self.ide.read(cx).cursor_info(cx), self.ide.read(cx).lsp_summary(), mode, demo, self.bell(cx), { let this = cx.entity(); move |window, cx| { this.update(cx, |t, cx| t.toggle_branch_picker(window, cx)); } }, self.wb.read(cx).update_badge(), cx))
+            .child(ide_status::status_bar(project_name, branch, self.ide.read(cx).cursor_info(cx), self.ide.read(cx).lsp_summary(), mode, demo, self.bell(cx), { let this = cx.entity(); move |window, cx| { this.update(cx, |t, cx| t.toggle_branch_picker(window, cx)); } }, self.wb.read(cx).update_badge(), { let this = cx.entity(); move |window, cx| { this.update(cx, |t, cx| t.goto_line_dialog(window, cx)); } }, { let this = cx.entity(); move |window, cx| { this.update(cx, |t, cx| t.forward(window, cx, |wb, _, cx| wb.cycle_mode(cx))); } }, cx))
             .when_some(self.branch_picker.clone(), |d, p| d.child(p))
             .when(self.notice_open, |d| d.child(self.notice_panel(cx)))
             .children(crate::diagram_viewer::current(window, cx))

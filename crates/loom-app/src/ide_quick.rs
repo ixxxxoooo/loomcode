@@ -59,6 +59,13 @@ impl IdeWindow {
         cmd("显示 / 隐藏终端", "⌘J", IconName::SquareTerminal, PaletteAction::Ide("terminal"));
         cmd("新建对话会话", "", IconName::Plus, PaletteAction::Ide("new-chat"));
         cmd("主题:切换…", &format!("当前:{}", crate::theme::preview(crate::prefs(cx).theme).0), IconName::Palette, PaletteAction::PickTheme);
+        cmd("打开设置", "⌘,", IconName::Settings, PaletteAction::OpenSettings(None));
+        cmd("切换权限模式", "⇧Tab", IconName::Shield, PaletteAction::CycleMode);
+        cmd("打开 Canvas 画布", "", IconName::LayoutDashboard, PaletteAction::OpenPage("canvas"));
+        cmd("打开自动化", "", IconName::Timer, PaletteAction::OpenPage("automation"));
+        cmd("打开内置浏览器", "", IconName::Globe, PaletteAction::OpenPage("browser"));
+        cmd("打开自定义(插件 / MCP / 技能 / 命令…)", "", IconName::SlidersHorizontal, PaletteAction::OpenPage("customize"));
+        cmd("切换运行模式(重启)", "演示 ↔ 真实", IconName::Repeat, PaletteAction::SwitchMode);
         cmd("切换到 Agent", "⇧⌘E", IconName::MessageSquare, PaletteAction::ToggleIde);
         cmd("显示 / 隐藏侧栏", "⌘B", IconName::PanelLeft, PaletteAction::ToggleLeft);
         cmd("显示 / 隐藏对话栏", "⌥⌘B", IconName::PanelRight, PaletteAction::ToggleRight);
@@ -91,6 +98,17 @@ impl IdeWindow {
                         v.focus_active(window, cx);
                     }),
                     PaletteAction::SetTheme(c) => this.wb.update(cx, |wb, cx| wb.update_settings(cx, |s| s.theme = c)),
+                    // 其余通用命令交给工作台执行;会切到 Agent 窗口页面的(画布 / 自动化 / 浏览器 / 自定义 / 独立窗口里的设置)先离开 IDE
+                    other @ (PaletteAction::OpenSettings(_) | PaletteAction::OpenPage(_) | PaletteAction::OpenCustomize(_) | PaletteAction::CycleMode | PaletteAction::SwitchMode) => {
+                        let fused = this.wb.read(cx).settings.fused_ide;
+                        let leave = !matches!(other, PaletteAction::CycleMode | PaletteAction::SwitchMode) && !(fused && matches!(other, PaletteAction::OpenSettings(_)));
+                        cx.defer_in(window, move |this, window, cx| {
+                            this.wb.update(cx, |wb, cx| wb.run_palette_action(other, window, cx));
+                            if leave {
+                                this.back_to_agent(cx);
+                            }
+                        });
+                    }
                     _ => {}
                 }
                 cx.notify();
